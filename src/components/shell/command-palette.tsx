@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useGlobalSearch } from '@/hooks/use-global-search';
 import { fmtInr } from '@/lib/gst';
+import { Skeleton } from '@/components/ui/skeleton';
 
 type Action = { key: string; name: string; hint: string; icon: React.ReactNode; run: () => void };
 
@@ -29,7 +30,7 @@ export function CommandPalette({
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const { data } = useGlobalSearch(query);
+  const { data, isFetching } = useGlobalSearch(query);
 
   useEffect(() => {
     function isTypingTarget(target: EventTarget | null) {
@@ -169,7 +170,21 @@ export function CommandPalette({
               })}
             </>
           )}
-          {q && rows.length === matchedActions.length && matchedProducts.length === 0 && matchedCustomers.length === 0 && matchedInvoices.length === 0 && (
+          {q && isFetching && !data && (
+            // Only for the very first search of this palette session — once
+            // placeholderData carries over from a prior query, the stale
+            // results stay visible while the next one fetches instead of
+            // flickering to a skeleton and back.
+            <div className="space-y-1.5 p-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-3 px-3 py-2.5">
+                  <Skeleton className="h-8 w-8 flex-shrink-0 rounded-sm2" />
+                  <Skeleton className="h-3 flex-1" />
+                </div>
+              ))}
+            </div>
+          )}
+          {q && !isFetching && rows.length === matchedActions.length && matchedProducts.length === 0 && matchedCustomers.length === 0 && matchedInvoices.length === 0 && (
             <div className="p-9 text-center text-[12.5px] text-ink-faint">No matches for &quot;{query}&quot;</div>
           )}
         </div>

@@ -43,6 +43,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { StateSelect } from '@/components/ui/location-field';
+import { Skeleton } from '@/components/ui/skeleton';
 import { InvoiceSheet } from '@/components/invoices/invoice-sheet';
 import { hashColor, initials } from '@/lib/avatar';
 import { PAPER_STYLE } from '@/lib/paper-theme';
@@ -114,6 +115,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [custQuery, setCustQuery] = useState('');
   const [custResults, setCustResults] = useState<Customer[]>([]);
+  const [custLoading, setCustLoading] = useState(false);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showCustomItemForm, setShowCustomItemForm] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
@@ -180,8 +182,11 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
 
   useEffect(() => {
     if (customer) return;
+    setCustLoading(true);
     const t = setTimeout(() => {
-      searchCustomersForBilling(custQuery).then(setCustResults);
+      searchCustomersForBilling(custQuery)
+        .then(setCustResults)
+        .finally(() => setCustLoading(false));
     }, 200);
     return () => clearTimeout(t);
   }, [custQuery, customer]);
@@ -414,19 +419,30 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
                   />
                 </div>
                 <div className="mt-1.5 max-h-56 overflow-y-auto rounded-lg2 border border-line bg-surface shadow-elevated">
-                  {custResults.map((c) => (
-                    <button
-                      key={c.id}
-                      onClick={() => setCustomer(c)}
-                      className="flex w-full items-center gap-2.5 border-b border-line px-3 py-2.5 text-left last:border-0 hover:bg-brand-light"
-                    >
-                      <span className="flex h-[30px] w-[30px] flex-shrink-0 items-center justify-center rounded-full text-[11.5px] font-extrabold text-white" style={{ background: hashColor(c.name) }}>
-                        {initials(c.name)}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-[12.5px] font-bold text-ink">{c.name}</span>
-                      <span className="flex-shrink-0 text-[11px] text-ink-faint">{c.phone || c.state}</span>
-                    </button>
-                  ))}
+                  {custLoading ? (
+                    <div className="space-y-1.5 p-2">
+                      {Array.from({ length: 3 }).map((_, i) => (
+                        <div key={i} className="flex items-center gap-2.5 px-1 py-1.5">
+                          <Skeleton className="h-[30px] w-[30px] flex-shrink-0 rounded-full" />
+                          <Skeleton className="h-3 flex-1" />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    custResults.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => setCustomer(c)}
+                        className="flex w-full items-center gap-2.5 border-b border-line px-3 py-2.5 text-left last:border-0 hover:bg-brand-light"
+                      >
+                        <span className="flex h-[30px] w-[30px] flex-shrink-0 items-center justify-center rounded-full text-[11.5px] font-extrabold text-white" style={{ background: hashColor(c.name) }}>
+                          {initials(c.name)}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-[12.5px] font-bold text-ink">{c.name}</span>
+                        <span className="flex-shrink-0 text-[11px] text-ink-faint">{c.phone || c.state}</span>
+                      </button>
+                    ))
+                  )}
                   <button onClick={() => setShowQuickAdd(true)} className="flex w-full items-center gap-1.5 border-t border-line px-3 py-2.5 text-left text-[12.5px] font-bold text-brand hover:bg-brand-light">
                     <Plus size={13} /> Add &quot;{custQuery || 'someone new'}&quot; as a new customer
                   </button>
@@ -547,7 +563,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
       </p>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-[720px]">
+        <DialogContent className="max-w-[720px]" mobileFullScreen>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Eye size={16} className="text-brand" /> Invoice preview

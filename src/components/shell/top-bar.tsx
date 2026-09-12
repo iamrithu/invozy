@@ -14,6 +14,7 @@ import { useGlobalSearch } from '@/hooks/use-global-search';
 import { useAppDispatch } from '@/lib/redux/hooks';
 import { requestTour } from '@/lib/redux/ui-slice';
 import { fmtInr } from '@/lib/gst';
+import { Skeleton } from '@/components/ui/skeleton';
 
 export function TopBar({ company }: { company: { name: string; logoUrl: string | null } }) {
   const router = useRouter();
@@ -24,13 +25,13 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
   const [addProductOpen, setAddProductOpen] = useState(false);
   const [addCustomerOpen, setAddCustomerOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const { data } = useGlobalSearch(search);
+  const { data, isFetching } = useGlobalSearch(search);
 
   const hasResults = !!search.trim();
   const products = data?.products ?? [];
   const customers = data?.customers ?? [];
   const invoices = data?.invoices ?? [];
-  const noMatches = hasResults && products.length === 0 && customers.length === 0 && invoices.length === 0;
+  const noMatches = hasResults && !isFetching && products.length === 0 && customers.length === 0 && invoices.length === 0;
 
   function goTo(path: string) {
     setSearch('');
@@ -106,6 +107,16 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
                   </button>
                 ))}
               </>
+            )}
+            {hasResults && isFetching && !data && (
+              <div className="space-y-1.5 p-2">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-2.5 px-3 py-2">
+                    <Skeleton className="h-3.5 w-3.5 flex-shrink-0 rounded-sm2" />
+                    <Skeleton className="h-3 flex-1" />
+                  </div>
+                ))}
+              </div>
             )}
             {noMatches && <div className="p-4 text-center text-[12px] text-ink-faint">No matches for &quot;{search}&quot;</div>}
           </div>

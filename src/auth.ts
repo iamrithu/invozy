@@ -57,7 +57,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const email = String(credentials?.email ?? '').trim();
         const password = String(credentials?.password ?? '');
         const adminEmail = process.env.ADMIN_EMAIL;
-        const adminHash = process.env.ADMIN_PASSWORD_HASH;
+        // Some hosts' env-var UIs (e.g. Vercel's dashboard) don't unescape a
+        // shell-escaped "\$" the way Next's local .env loader does, so a hash
+        // copy-pasted verbatim from .env can arrive here with literal
+        // backslashes and never match. A real bcrypt hash never contains a
+        // backslash, so stripping them is always safe.
+        const adminHash = process.env.ADMIN_PASSWORD_HASH?.replace(/\\\$/g, '$');
         if (!email || !password || !adminEmail || !adminHash) return null;
 
         try {

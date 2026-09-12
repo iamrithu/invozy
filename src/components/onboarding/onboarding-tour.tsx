@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Joyride, STATUS, type Step, type EventData } from 'react-joyride';
+import { Joyride, STATUS, EVENTS, type Step, type EventData } from 'react-joyride';
 import { completeOnboarding } from '@/actions/onboarding';
 import { useAppSelector } from '@/lib/redux/hooks';
 
@@ -39,14 +39,41 @@ function useResponsiveNav() {
   return { isDesktopNav, hasSearchBox };
 }
 
+/** Polls for a target selector to actually exist (and have layout, i.e. not
+ * `display:none`) before resolving, instead of guessing a fixed delay after
+ * navigation. `force-dynamic` routes doing real Prisma-backed fetches
+ * routinely take longer than any fixed sleep would assume — especially on a
+ * cold Vercel serverless invocation — so this waits for the real thing.
+ * Capped so it always resolves before Joyride's own `beforeTimeout`, which
+ * would otherwise show the step's tooltip pointing at nothing. */
+function waitForTarget(selector: string, timeoutMs = 7000): Promise<void> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    function check() {
+      const el = document.querySelector(selector);
+      if (el && (el as HTMLElement).offsetParent !== null) {
+        resolve();
+        return;
+      }
+      if (Date.now() - start > timeoutMs) {
+        resolve(); // let Joyride's own targetWaitTimeout handle a genuinely missing target
+        return;
+      }
+      setTimeout(check, 100);
+    }
+    check();
+  });
+}
+
 /** Every step declares the route its target lives on. The `before` hook
  * (attached to all of them, not just the transition points) checks the
  * current path and navigates there first if needed — this makes both
  * forward AND "Back" button navigation between the dashboard steps and the
  * invoice-builder steps work, since Joyride re-runs `before` whenever a step
- * is about to show, regardless of direction. `targetWaitTimeout` below gives
- * the new route's page a few seconds to mount before Joyride gives up on
- * finding the target.
+ * is about to show, regardless of direction. It then waits for the step's
+ * own target to actually exist (see waitForTarget) rather than guessing a
+ * fixed delay, so a slow route transition doesn't leave the tour dimmed and
+ * looking stuck.
  *
  * Responsive: below the sidebar's md: breakpoint, the three nav steps
  * target the bottom-nav's equivalent items instead (see data-tour on
@@ -57,12 +84,12 @@ function useTourSteps(isDesktopNav: boolean, hasSearchBox: boolean): TourStep[] 
   const router = useRouter();
 
   return useMemo(() => {
-    function before(route: string) {
+    function before(route: string, target: string) {
       return async () => {
         if (typeof window !== 'undefined' && window.location.pathname !== route) {
           router.push(route);
-          await new Promise((resolve) => setTimeout(resolve, 400));
         }
+        await waitForTarget(target);
       };
     }
 
@@ -151,27 +178,23 @@ function useTourSteps(isDesktopNav: boolean, hasSearchBox: boolean): TourStep[] 
       },
     ];
 
-    return steps.map((s) => ({ ...s, before: before(s.route) }));
+    return steps.map((s) => ({ ...s, before: before(s.route, s.target as string) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDesktopNav, hasSearchBox]);
 }
 
-/** Auto-starts once for a brand-new user (see the `start` prop, sourced from
- * `User.onboardedAt` server-side) and can be replayed anytime via the
- * `requestTour` Redux action (wired to the account menu's "Replay tour").
- * Spans two routes (dashboard + the invoice builder) and adapts its targets
- * to the current viewport — see useTourSteps / useResponsiveNav. */
-export function OnboardingTour({ start }: { start: boolean }) {
+/** Replayable anytime via the `requestTour` Redux action — dispatched by the
+ * account menu's "Replay tour" item, and by the first-login WelcomeCard's
+ * "Take the guided tour" button. First-run triggering itself lives in
+ * WelcomeCard now, not here, so this component only reacts to that one
+ * signal. Spans two routes (dashboard + the invoice builder) and adapts its
+ * targets to the current viewport — see useTourSteps / useResponsiveNav. */
+export function OnboardingTour() {
   const { isDesktopNav, hasSearchBox } = useResponsiveNav();
   const steps = useTourSteps(isDesktopNav, hasSearchBox);
   const [run, setRun] = useState(false);
   const tourRequestId = useAppSelector((s) => s.ui.tourRequestId);
   const lastRequestId = useRef(tourRequestId);
-
-  useEffect(() => {
-    if (start) setRun(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (tourRequestId !== lastRequestId.current) {
@@ -183,7 +206,14 @@ export function OnboardingTour({ start }: { start: boolean }) {
   function handleEvent(data: EventData) {
     if (data.status === STATUS.FINISHED || data.status === STATUS.SKIPPED) {
       setRun(false);
-      if (start) completeOnboarding();
+      completeOnboarding();
+    }
+    // Joyride has no ERROR status in this version — a missing target surfaces
+    // only as this event type, and it auto-advances on its own (uncontrolled
+    // usage) after targetWaitTimeout. We just make it visible instead of
+    // silently invisible, for whenever this needs debugging.
+    if (data.type === EVENTS.TARGET_NOT_FOUND) {
+      console.warn('[onboarding-tour] target not found, Joyride will auto-advance:', data.step?.target);
     }
   }
 
