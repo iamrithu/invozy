@@ -1,0 +1,195 @@
+// Arctic Blocks — Prisma schema
+// Mirrors backend-documentation.md §2 exactly. Single-company assumption
+// for now (see that doc's "Open Items" for the multi-tenant path).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id            String     @id @default(cuid())
+  name          String
+  domain        String?
+  // Nullable — a brand-new signup doesn't have these yet; filled in later
+  // via the Company settings page. See src/lib/get-company.ts callers,
+  // which already null-guard everything here the same way domain/upi/terms
+  // always have been.
+  address       String?
+  state         String
+  district      String?
+  gstin         String?
+  pan           String?
+  phone         String?
+  email         String?
+  bankName      String?
+  bankAcc       String?
+  ifsc          String?
+  branch        String?
+  upi           String?
+  cgstRate      Decimal    @default(9)
+  sgstRate      Decimal    @default(9)
+  igstRate      Decimal    @default(18)
+  cgstEnabled   Boolean    @default(true)
+  sgstEnabled   Boolean    @default(true)
+  igstEnabled   Boolean    @default(true)
+  invoicePrefix String     @default("INV")
+  invoiceFY     String
+  nextInvoiceNo Int        @default(1)
+  terms         String?
+  logoUrl       String?
+  themeColor    String     @default("red")
+  createdAt     DateTime   @default(now())
+  users         User[]
+  products      Product[]
+  customers     Customer[]
+  invoices      Invoice[]
+}
+
+model User {
+  id           String               @id @default(cuid())
+  email        String?              @unique
+  phone        String?              @unique
+  passwordHash String
+  role         Role                 @default(OWNER)
+  companyId    String
+  company      Company              @relation(fields: [companyId], references: [id])
+  createdAt    DateTime             @default(now())
+  onboardedAt  DateTime?
+  resetTokens  PasswordResetToken[]
+
+  @@index([companyId])
+}
+
+/// One row per login identifier (email/phone, or the fixed admin email) —
+/// tracks recent failures so repeated wrong passwords lock the identifier
+/// out for a cooldown instead of allowing unlimited brute-force attempts.
+model LoginAttempt {
+  identifier  String    @id
+  failCount   Int       @default(0)
+  lockedUntil DateTime?
+  updatedAt   DateTime  @updatedAt
+}
+
+/// Self-serve "forgot password" tokens — single-use, short-lived, always
+/// tied to one User (only tenant OWNERs have a User row; the super-admin
+/// account lives in env vars and isn't part of this flow).
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+enum Role {
+  OWNER
+  SUPER_ADMIN
+}
+
+model Product {
+  id           String        @id @default(cuid())
+  companyId    String
+  company      Company       @relation(fields: [companyId], references: [id])
+  name         String
+  category     String
+  unit         String
+  price        Decimal
+  hsn          String        @default("2201")
+  packQty      Int?
+  active       Boolean       @default(true)
+  desc         String?
+  images       String[]      @default([])
+  invoiceItems InvoiceItem[]
+
+  @@index([companyId, category])
+}
+
+model Customer {
+  id          String    @id @default(cuid())
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id])
+  name        String
+  contact     String?
+  phone       String?
+  email       String?
+  state       String
+  district    String?
+  gstin       String?
+  address     String?
+  terms       String    @default("Due on receipt")
+  creditLimit Decimal   @default(0)
+  guest       Boolean   @default(false)
+  invoices    Invoice[]
+
+  @@index([companyId, guest])
+}
+
+model Invoice {
+  id                   String        @id @default(cuid())
+  companyId            String
+  company              Company       @relation(fields: [companyId], references: [id])
+  number               String
+  date                 DateTime
+  due                  DateTime
+  customerId           String
+  customer             Customer      @relation(fields: [customerId], references: [id])
+  status               InvoiceStatus @default(DRAFT)
+  overallDiscountType  DiscountType  @default(PERCENT)
+  overallDiscountValue Decimal       @default(0)
+  items                InvoiceItem[]
+  payments             Payment[]
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+  @@index([customerId])
+}
+
+model InvoiceItem {
+  id        String   @id @default(cuid())
+  invoiceId String
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  // Nullable — an ad-hoc/custom line item (not from the product catalog)
+  // has no backing Product row. `name`/`hsn`/`unit`/`rate` are always
+  // snapshotted here regardless, so nothing ever needs to read through
+  // this relation to render an invoice.
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id])
+  name      String
+  hsn       String
+  unit      String
+  qty       Decimal
+  rate      Decimal
+  discount  Decimal  @default(0)
+}
+
+model Payment {
+  id        String   @id @default(cuid())
+  invoiceId String
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amount    Decimal
+  date      DateTime
+  mode      String?
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+}
+
+enum DiscountType {
+  PERCENT
+  FLAT
+}

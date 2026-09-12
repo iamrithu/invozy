@@ -1,0 +1,160 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* shadcn/ui tokens, mapped 1:1 onto the app's existing brand palette
+   (tailwind.config.ts) so generated components inherit the theme instead
+   of shadcn's default zinc/slate look. */
+@layer base {
+  :root {
+    /* Brand palette — the single source of truth every Tailwind color key
+       (brand/gold/green/ink/surface/bg/line) resolves to. Light values here
+       are Zomato's documented brand hexes converted to HSL. */
+    --bg: 0 0% 97%;
+    --surface: 0 0% 100%;
+    --surface-alt: 0 0% 94%;
+    --line: 0 0% 92%;
+    --ink: 0 0% 11%;
+    --ink-body: 231 14% 28%;
+    --ink-soft: 229 7% 45%;
+    --ink-faint: 0 0% 61%;
+    --brand: 355 75% 55%;
+    --brand-dark: 355 73% 46%;
+    --brand-light: 354 63% 94%;
+    --gold: 40 86% 52%;
+    --gold-soft: 42 89% 93%;
+    --green: 134 52% 47%;
+    --green-soft: 140 52% 94%;
+    /* Fixed near-black "chrome" — floating bars, tooltips, the block-ice
+       tile — deliberately does NOT follow the theme (unlike --ink), the
+       same way the reference design keeps a couple of always-dark UI
+       accents regardless of light/dark mode. */
+    --chrome: 0 0% 11%;
+
+    /* shadcn/ui semantic tokens, mapped onto the brand palette above so
+       generated components inherit the theme instead of a default look. */
+    --background: var(--bg);
+    --foreground: var(--ink);
+    --card: var(--surface);
+    --card-foreground: var(--ink);
+    --popover: var(--surface);
+    --popover-foreground: var(--ink);
+    --primary: var(--brand);
+    --primary-foreground: 0 0% 100%;
+    --secondary: var(--surface-alt);
+    --secondary-foreground: var(--ink);
+    --muted: var(--surface-alt);
+    --muted-foreground: var(--ink-soft);
+    --accent: var(--brand-light);
+    --accent-foreground: var(--brand-dark);
+    --destructive: var(--brand-dark);
+    --destructive-foreground: 0 0% 100%;
+    --border: var(--line);
+    --input: var(--line);
+    --ring: var(--brand);
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    --bg: 0 0% 8%;
+    --surface: 0 0% 12%;
+    --surface-alt: 0 0% 17%;
+    --line: 0 0% 24%;
+    --ink: 0 0% 96%;
+    --ink-body: 0 0% 85%;
+    --ink-soft: 0 0% 63%;
+    --ink-faint: 0 0% 46%;
+    --brand: 355 80% 62%;
+    --brand-dark: 355 75% 54%;
+    --brand-light: 355 35% 20%;
+    --gold: 40 80% 60%;
+    --gold-soft: 40 40% 18%;
+    --green: 134 45% 52%;
+    --green-soft: 134 35% 16%;
+    --accent-foreground: 355 75% 78%;
+  }
+}
+
+html,
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--ink-body));
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Numbers, HSN codes, GSTINs — always tabular/mono, matching the prototype's
+   convention of using monospace anywhere alignment/precision matters. */
+.font-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes bump {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.25);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.animate-bump {
+  animation: bump 0.25s ease;
+}
+
+@keyframes total-pulse {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.14);
+    color: hsl(var(--brand));
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.animate-total-pulse {
+  animation: total-pulse 0.4s ease;
+  display: inline-block;
+}
+
+/* Professional print/PDF output for invoices (via the browser's native
+   print-to-PDF, no image/canvas capture involved) — everything outside the
+   invoice sheet is hidden, the sheet fills the printed page edge-to-edge,
+   its table header repeats on every page, and rows never split across a
+   page break. Applied to both the invoice detail page and the invoice
+   builder's preview dialog (see .invoice-print usages). */
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm 12mm;
+  }
+  body * {
+    visibility: hidden;
+  }
+  .invoice-print,
+  .invoice-print * {
+    visibility: visible;
+  }
+  .invoice-print {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  .invoice-print table thead {
+    display: table-header-group;
+  }
+  .invoice-print table tr {
+    break-inside: avoid;
+  }
+}
