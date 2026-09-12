@@ -82,7 +82,7 @@ export function InvoiceSheet({
   onRemoveLine?: (lineId: string) => void;
 }) {
   return (
-    <div className="rounded-b-lg2 border border-t-0 border-line bg-white p-[26px] pt-[26px] text-ink-body shadow-card">
+    <div className="rounded-b-lg2 border border-t-0 border-line bg-white p-[26px] pt-[26px] text-ink-body shadow-card print:rounded-none print:border-none print:shadow-none">
       <div className="flex flex-wrap items-start justify-between gap-4 border-b-2 border-ink pb-4">
         <div className="flex items-start gap-3">
           {company.logoUrl && (
@@ -97,8 +97,8 @@ export function InvoiceSheet({
             </div>
           </div>
         </div>
-        <div className="rounded-lg2 border border-line bg-bg px-3.5 py-2.5 text-right">
-          <div className="text-[10px] font-extrabold uppercase tracking-[0.08em] text-brand">Tax invoice</div>
+        <div className="rounded-lg2 border border-line bg-bg px-3.5 py-2.5 text-right print:rounded-none print:border-black print:bg-transparent">
+          <div className="text-[10px] font-extrabold uppercase tracking-[0.08em] text-brand print:text-black">Tax invoice</div>
           <div className="mt-1 font-mono text-[15px] font-extrabold text-ink">{invoiceNumber ?? 'Draft'}</div>
           <div className="mt-1.5 text-[11px] leading-relaxed text-ink-soft">
             Date <span className="font-mono text-ink-body">{date}</span>
@@ -125,15 +125,15 @@ export function InvoiceSheet({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="mt-4 w-full text-[12px]">
+        <table className="mt-4 w-full text-[12px] print:border-collapse">
           <thead>
-            <tr className="border-b-2 border-ink text-left text-[10px] font-bold uppercase tracking-wide text-ink-faint">
-              <th className="pb-1.5 pr-1.5">Item</th>
-              <th className="pb-1.5 pr-1.5 font-mono">HSN</th>
-              <th className="pb-1.5 pr-1.5 text-right">Qty</th>
-              <th className="pb-1.5 pr-1.5 text-right font-mono">Rate</th>
+            <tr className="border-b-2 border-ink text-left text-[10px] font-bold uppercase tracking-wide text-ink-faint print:text-black">
+              <th className="pb-1.5 pr-1.5 print:border print:border-black print:px-2 print:py-1.5">Item</th>
+              <th className="pb-1.5 pr-1.5 font-mono print:border print:border-black print:px-2 print:py-1.5">HSN</th>
+              <th className="pb-1.5 pr-1.5 text-right print:border print:border-black print:px-2 print:py-1.5">Qty</th>
+              <th className="pb-1.5 pr-1.5 text-right font-mono print:border print:border-black print:px-2 print:py-1.5">Rate</th>
               {editable && <th className="pb-1.5 pr-1.5 text-right">Disc%</th>}
-              <th className="pb-1.5 pr-1.5 text-right font-mono">Amount</th>
+              <th className="pb-1.5 pr-1.5 text-right font-mono print:border print:border-black print:px-2 print:py-1.5">Amount</th>
               {editable && <th className="pb-1.5" />}
             </tr>
           </thead>
@@ -149,21 +149,21 @@ export function InvoiceSheet({
                 const lineTaxable = l.qty * l.rate * (1 - l.discount / 100);
                 const pieceHint = l.packQty && Number(l.packQty) > 0 ? `≈${Number(l.packQty) * l.qty} pcs` : null;
                 return (
-                  <tr key={l.lineId} className="border-b border-line even:bg-bg">
-                    <td className="whitespace-nowrap py-2 pr-1.5">
+                  <tr key={l.lineId} className="border-b border-line">
+                    <td className="whitespace-nowrap py-2 pr-1.5 print:border print:border-black print:px-2 print:py-1.5">
                       <span className="inline-flex items-center gap-1.5">
                         {l.name}
                         {!l.productId && (
-                          <span title="Not from your product catalog" className="rounded-full bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-ink-faint">
+                          <span title="Not from your product catalog" className="rounded-full bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-ink-faint print:hidden">
                             Custom
                           </span>
                         )}
-                        {!l.hsn && <AlertTriangle size={11} className="flex-shrink-0 text-gold" aria-label="No HSN code" />}
+                        {!l.hsn && <AlertTriangle size={11} className="flex-shrink-0 text-gold print:hidden" aria-label="No HSN code" />}
                       </span>
                       {editable && !l.discount && pieceHint && <div className="text-[10.5px] font-medium text-ink-faint">{pieceHint}</div>}
                     </td>
-                    <td className="whitespace-nowrap py-2 pr-1.5 font-mono">{l.hsn || '—'}</td>
-                    <td className="whitespace-nowrap py-2 pr-1.5 text-right">
+                    <td className="whitespace-nowrap py-2 pr-1.5 font-mono print:border print:border-black print:px-2 print:py-1.5">{l.hsn || '—'}</td>
+                    <td className="whitespace-nowrap py-2 pr-1.5 text-right print:border print:border-black print:px-2 print:py-1.5">
                       {editable ? (
                         <div className="inline-flex items-center gap-1 rounded-full bg-bg p-0.5">
                           <button onClick={() => onDecrement?.(l.lineId)} aria-label={`Decrease ${l.name} quantity`} className="flex h-[18px] w-[18px] items-center justify-center rounded-full border border-line bg-surface text-ink-soft hover:border-brand hover:text-brand">
@@ -182,7 +182,7 @@ export function InvoiceSheet({
                         </span>
                       )}
                     </td>
-                    <td className="whitespace-nowrap py-2 pr-1.5 text-right">
+                    <td className="whitespace-nowrap py-2 pr-1.5 text-right print:border print:border-black print:px-2 print:py-1.5">
                       {editable ? (
                         <input
                           type="number"
@@ -209,7 +209,7 @@ export function InvoiceSheet({
                         />
                       </td>
                     )}
-                    <td className="whitespace-nowrap py-2 pr-1.5 text-right font-mono">{fmtInr(lineTaxable)}</td>
+                    <td className="whitespace-nowrap py-2 pr-1.5 text-right font-mono print:border print:border-black print:px-2 print:py-1.5">{fmtInr(lineTaxable)}</td>
                     {editable && (
                       <td className="whitespace-nowrap py-2">
                         <button onClick={() => onRemoveLine?.(l.lineId)} aria-label={`Remove ${l.name}`} className="flex h-[22px] w-[22px] items-center justify-center rounded-full text-ink-faint hover:bg-brand-light hover:text-brand-dark">
@@ -248,7 +248,7 @@ export function InvoiceSheet({
       )}
 
       <div className="mt-2 flex justify-end">
-        <div className="w-full max-w-[280px] rounded-md2 border border-line bg-bg p-3 text-[12px]">
+        <div className="w-full max-w-[280px] rounded-md2 border border-line bg-bg p-3 text-[12px] print:rounded-none print:border-black print:bg-transparent">
           <TotalsRow k="Subtotal" v={fmtInr(totals.subtotal)} />
           {totals.overallDiscountAmount > 0 && <TotalsRow k={`Discount${discountType === 'PERCENT' ? ` (${discountValue}%)` : ''}`} v={`−${fmtInr(totals.overallDiscountAmount)}`} negative />}
           <TotalsRow k="Taxable value" v={fmtInr(totals.taxable)} />
@@ -261,7 +261,7 @@ export function InvoiceSheet({
             </>
           )}
           <TotalsRow k="Round off" v={`${totals.roundOff >= 0 ? '+' : ''}${fmtInr(totals.roundOff)}`} />
-          <div className="mt-1.5 flex justify-between border-t-2 border-ink pt-2 text-[14px] font-extrabold text-brand-dark">
+          <div className="mt-1.5 flex justify-between border-t-2 border-ink pt-2 text-[14px] font-extrabold text-brand-dark print:text-black">
             <span>Total due</span>
             <span key={totals.total} className="animate-total-pulse font-mono">
               {fmtInr(totals.total)}
@@ -272,7 +272,7 @@ export function InvoiceSheet({
       </div>
 
       {totals.total > 0 && (
-        <div className="mt-3 rounded-md2 bg-brand-light px-3.5 py-2.5 text-[11.5px] text-brand-dark">
+        <div className="mt-3 rounded-md2 bg-brand-light px-3.5 py-2.5 text-[11.5px] text-brand-dark print:rounded-none print:border print:border-black print:bg-transparent print:text-black">
           Amount in words: <b className="text-ink">Rupees {numberToWords(totals.total)} Only</b>
         </div>
       )}
@@ -311,7 +311,7 @@ export function InvoiceSheet({
 
 function TotalsRow({ k, v, negative, good }: { k: string; v: string; negative?: boolean; good?: boolean }) {
   return (
-    <div className={`flex justify-between px-1.5 py-1 ${negative ? 'text-brand-dark' : good ? 'font-bold text-green' : 'text-ink-soft'}`}>
+    <div className={`flex justify-between px-1.5 py-1 print:text-black ${negative ? 'text-brand-dark' : good ? 'font-bold text-green' : 'text-ink-soft'}`}>
       <span>{k}</span>
       <span className="font-mono">{v}</span>
     </div>

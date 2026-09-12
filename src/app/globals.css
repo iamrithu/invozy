@@ -134,6 +134,14 @@ body {
     size: A4;
     margin: 14mm 12mm;
   }
+  /* visibility (not display) is what lets .invoice-print opt back in from
+     an otherwise-hidden ancestor chain — display:none can't be undone by a
+     descendant. But visibility:hidden alone preserves layout height, so a
+     tall normal-flow page (the invoice builder's UI, in particular) would
+     still occupy its full height and produce blank trailing pages. Callers
+     are expected to wrap their non-printable UI in a `print:hidden` (real
+     display:none) container as a sibling of `.invoice-print`, collapsing
+     that height directly — see src/app/(app)/invoices/new/builder-client.tsx. */
   body * {
     visibility: hidden;
   }

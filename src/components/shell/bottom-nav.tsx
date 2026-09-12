@@ -7,9 +7,9 @@ import { LayoutDashboard, Package, Users, Receipt, MoreHorizontal, BarChart3, Bu
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 const NAV = [
-  { href: '/dashboard', label: 'Home', icon: LayoutDashboard },
-  { href: '/products', label: 'Products', icon: Package },
-  { href: '/customers', label: 'Customers', icon: Users },
+  { href: '/dashboard', label: 'Home', icon: LayoutDashboard, tour: 'mobile-nav-dashboard' },
+  { href: '/products', label: 'Products', icon: Package, tour: 'mobile-nav-products' },
+  { href: '/customers', label: 'Customers', icon: Users, tour: 'mobile-nav-customers' },
   { href: '/invoices', label: 'Invoices', icon: Receipt },
 ];
 
@@ -43,6 +43,7 @@ export function BottomNav() {
             <Link
               key={item.href}
               href={item.href}
+              data-tour={item.tour}
               className={clsx('flex min-w-[54px] flex-col items-center gap-0.5 rounded-md2 px-1.5 py-1 text-[9.5px] font-bold', active ? 'text-brand' : 'text-ink-faint')}
             >
               <Icon size={19} />

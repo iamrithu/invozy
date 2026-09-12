@@ -336,7 +336,12 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
   );
 
   return (
-    <div>
+    <>
+      {/* Everything below is the interactive builder UI — collapsed to
+          display:none at print time (not just visibility:hidden) so its
+          height doesn't produce blank trailing pages; the dedicated
+          print-only sheet is a sibling further down. */}
+      <div className="print:hidden">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => router.push('/invoices')}>
@@ -354,7 +359,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
             <Clock size={12} /> Due
             <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="border-none bg-transparent font-mono text-[11.5px] text-ink-body outline-none" />
           </div>
-          <Button variant="secondary" size="sm" onClick={() => setPreviewOpen(true)}>
+          <Button data-tour="preview-btn" variant="secondary" size="sm" onClick={() => setPreviewOpen(true)}>
             <Eye size={13} /> Preview
           </Button>
         </div>
@@ -364,7 +369,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(320px,380px)_1fr]">
         <div className="flex flex-col gap-3.5">
-          <div className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
+          <div data-tour="bill-to" className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
             <div className="mb-2.5 flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wide text-ink-faint">
               <Users size={13} className="text-brand" /> Bill to
             </div>
@@ -454,7 +459,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
             )}
           </div>
 
-          <div className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
+          <div data-tour="add-products" className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
             <div className="mb-2.5 flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wide text-ink-faint">
               <Package size={13} className="text-brand" /> Add products
             </div>
@@ -488,23 +493,25 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
                 ))
               )}
             </div>
-            {showCustomItemForm ? (
-              <AddCustomItemForm
-                onAdd={addCustomLine}
-                onCancel={() => setShowCustomItemForm(false)}
-              />
-            ) : (
-              <button
-                onClick={() => setShowCustomItemForm(true)}
-                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg2 border border-dashed border-line py-2 text-[11.5px] font-bold text-ink-faint hover:border-brand hover:text-brand"
-              >
-                <Tag size={12} /> Bill something not in your catalog
-              </button>
-            )}
+            <div data-tour="custom-item">
+              {showCustomItemForm ? (
+                <AddCustomItemForm
+                  onAdd={addCustomLine}
+                  onCancel={() => setShowCustomItemForm(false)}
+                />
+              ) : (
+                <button
+                  onClick={() => setShowCustomItemForm(true)}
+                  className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg2 border border-dashed border-line py-2 text-[11.5px] font-bold text-ink-faint hover:border-brand hover:text-brand"
+                >
+                  <Tag size={12} /> Bill something not in your catalog
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="relative max-w-[720px]" style={PAPER_STYLE}>
+        <div data-tour="invoice-sheet" className="relative max-w-[720px]" style={PAPER_STYLE}>
           <div className="h-[5px] rounded-t-lg2 bg-brand" />
           {sheet}
         </div>
@@ -527,7 +534,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
 
       {error && <p className="mt-3 text-[12.5px] font-bold text-destructive">{error}</p>}
 
-      <div className="mt-3.5 flex flex-wrap justify-end gap-2.5">
+      <div data-tour="save-buttons" className="mt-3.5 flex flex-wrap justify-end gap-2.5">
         <Button variant="outline" onClick={() => save(false)} disabled={saving}>
           <FileText size={13} /> Save as draft
         </Button>
@@ -546,7 +553,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
               <Eye size={16} className="text-brand" /> Invoice preview
             </DialogTitle>
           </DialogHeader>
-          <div className="invoice-print max-h-[70vh] overflow-y-auto" style={PAPER_STYLE}>
+          <div className="max-h-[70vh] overflow-y-auto" style={PAPER_STYLE}>
             <InvoiceSheet
               company={company}
               customer={customer}
@@ -584,7 +591,32 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
           amountDue={totals.total}
         />
       )}
-    </div>
+      </div>
+
+      {/* Print/PDF source of truth — invisible on screen, shown only by the
+          @media print rules in globals.css. A sibling of the print:hidden
+          wrapper above (not inside the Dialog, which is `position: fixed`
+          and breaks print pagination — fixed-position elements are
+          repositioned per-page by the browser's print engine, which was
+          producing garbled multi-page output; nor inside the print:hidden
+          div itself, whose display:none would hide this too). Always
+          reflects live state, so "Download / print" from the dialog just
+          calls window.print(). */}
+      <div className="invoice-print hidden print:block" style={PAPER_STYLE}>
+        <InvoiceSheet
+          company={company}
+          customer={customer}
+          date={date}
+          due={due}
+          lines={lines}
+          totals={totals}
+          totalSavings={totalSavings}
+          discountType={discountType}
+          discountValue={discountValue}
+          editable={false}
+        />
+      </div>
+    </>
   );
 }
 

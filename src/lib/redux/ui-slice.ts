@@ -13,10 +13,14 @@ function loadCollapsed(): boolean {
 
 type UiState = {
   sidebarCollapsed: boolean;
+  // Incremented each time "Replay tour" is clicked — OnboardingTour watches
+  // this to restart itself on demand, independent of the first-login trigger.
+  tourRequestId: number;
 };
 
 const initialState: UiState = {
   sidebarCollapsed: false,
+  tourRequestId: 0,
 };
 
 const uiSlice = createSlice({
@@ -42,8 +46,11 @@ const uiSlice = createSlice({
         /* localStorage unavailable */
       }
     },
+    requestTour(state) {
+      state.tourRequestId += 1;
+    },
   },
 });
 
-export const { sidebarHydrated, setSidebarCollapsed, toggleSidebar } = uiSlice.actions;
+export const { sidebarHydrated, setSidebarCollapsed, toggleSidebar, requestTour } = uiSlice.actions;
 export default uiSlice.reducer;

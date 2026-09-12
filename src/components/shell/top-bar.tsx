@@ -4,17 +4,20 @@ import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
-import { Search, Bell, Plus, Building2, ChevronDown, Package, Users, Receipt, LogOut, UserCog } from 'lucide-react';
+import { Search, Bell, Plus, Building2, ChevronDown, Package, Users, Receipt, LogOut, UserCog, Compass } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
 import { CommandPalette } from '@/components/shell/command-palette';
 import { ThemeToggle } from '@/components/shell/theme-toggle';
 import { ProductFormDialog } from '@/components/products/product-form-dialog';
 import { CustomerFormDialog } from '@/components/customers/customer-form-dialog';
 import { useGlobalSearch } from '@/hooks/use-global-search';
+import { useAppDispatch } from '@/lib/redux/hooks';
+import { requestTour } from '@/lib/redux/ui-slice';
 import { fmtInr } from '@/lib/gst';
 
 export function TopBar({ company }: { company: { name: string; logoUrl: string | null } }) {
   const router = useRouter();
+  const dispatch = useAppDispatch();
   const { data: session } = useSession();
   const [search, setSearch] = useState('');
   const [showResults, setShowResults] = useState(false);
@@ -50,7 +53,7 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
         <span className="max-w-[84px] truncate whitespace-nowrap text-[12.5px] font-extrabold text-ink sm:max-w-[160px] sm:text-[16px]">{company.name}</span>
       </Link>
 
-      <div ref={containerRef} className="relative hidden max-w-[320px] flex-1 sm:block">
+      <div ref={containerRef} data-tour="search" className="relative hidden max-w-[320px] flex-1 sm:block">
         <div className="flex items-center gap-2 rounded-sm2 border border-line bg-surface-alt px-3 py-2 text-ink-faint">
           <Search size={15} />
           <input
@@ -119,7 +122,7 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
         <Bell size={16} className="hidden sm:block" />
       </button>
 
-      <div className="flex flex-shrink-0">
+      <div className="flex flex-shrink-0" data-tour="new-invoice">
         <Link
           href="/invoices/new"
           className="flex items-center gap-1.5 rounded-l-pill rounded-r-none border-r border-white/25 bg-brand px-2 py-1.5 text-[13px] font-bold text-white shadow-btn transition-colors hover:bg-brand-dark sm:px-4 sm:py-2"
@@ -153,7 +156,11 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button aria-label="Account menu" className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-brand-light text-[11px] font-extrabold text-brand-dark sm:h-9 sm:w-9 sm:text-[12px]">
+          <button
+            aria-label="Account menu"
+            data-tour="account-menu"
+            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-brand-light text-[11px] font-extrabold text-brand-dark sm:h-9 sm:w-9 sm:text-[12px]"
+          >
             {(session?.user?.email ?? 'U').slice(0, 1).toUpperCase()}
           </button>
         </DropdownMenuTrigger>
@@ -162,6 +169,9 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => router.push('/account')}>
             <UserCog size={14} /> My account
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => dispatch(requestTour())}>
+            <Compass size={14} /> Replay tour
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => signOut({ callbackUrl: '/login' })}>

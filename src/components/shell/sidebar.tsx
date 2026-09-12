@@ -10,9 +10,9 @@ import { useAppDispatch, useAppSelector } from '@/lib/redux/hooks';
 import { sidebarHydrated, toggleSidebar } from '@/lib/redux/ui-slice';
 
 const NAV = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/products', label: 'Products', icon: Package },
-  { href: '/customers', label: 'Customers', icon: Users },
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, tour: 'nav-dashboard' },
+  { href: '/products', label: 'Products', icon: Package, tour: 'nav-products' },
+  { href: '/customers', label: 'Customers', icon: Users, tour: 'nav-customers' },
   { href: '/invoices', label: 'Invoices', icon: Receipt },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
   { href: '/company', label: 'Company', icon: Building2 },
@@ -43,6 +43,7 @@ export function Sidebar() {
               key={item.href}
               href={item.href}
               title={item.label}
+              data-tour={item.tour}
               className={clsx(
                 'flex items-center gap-3 overflow-hidden whitespace-nowrap rounded-md2 px-3 py-2.5 text-[13px] font-bold transition-colors',
                 collapsed && 'justify-center px-2',

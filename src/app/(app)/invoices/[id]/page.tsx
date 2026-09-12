@@ -61,7 +61,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
       </div>
 
       <div className="invoice-print mx-auto max-w-[760px]" style={PAPER_STYLE}>
-        <div className="h-[5px] rounded-t-lg2 bg-brand" />
+        <div className="h-[5px] rounded-t-lg2 bg-brand print:hidden" />
         <InvoiceSheet
           company={{ ...company, cgstRate: Number(company.cgstRate), sgstRate: Number(company.sgstRate), igstRate: Number(company.igstRate) }}
           customer={invoice.customer}
