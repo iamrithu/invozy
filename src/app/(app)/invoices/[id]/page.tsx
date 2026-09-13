@@ -14,7 +14,10 @@ export const dynamic = 'force-dynamic';
 export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const [invoice, company] = await Promise.all([
-    prisma.invoice.findUnique({ where: { id }, include: { customer: true, items: true, payments: true } }),
+    prisma.invoice.findUnique({
+      where: { id },
+      include: { customer: true, items: { include: { product: { select: { packQty: true } } } }, payments: true },
+    }),
     getCompany(),
   ]);
   if (!invoice) notFound();
@@ -27,6 +30,10 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     qty: Number(it.qty),
     rate: Number(it.rate),
     discount: Number(it.discount),
+    // The product's current pack size, best-effort — not snapshotted at
+    // invoice time, so it can drift if edited later (same as elsewhere in
+    // the app, this is always an approximate display hint, never billed on).
+    packQty: it.product?.packQty ?? null,
   }));
 
   const totals = computeTotals(

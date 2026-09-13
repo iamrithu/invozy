@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Package, Tag, Ruler, IndianRupee, Boxes, FileText, Eye, EyeOff, Trash2, Check, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { Field } from '@/components/ui/field';
@@ -49,6 +49,10 @@ export function ProductFormDialog({
   const [unit, setUnit] = useState(product?.unit ?? prefill?.unit ?? 'kg');
   const [price, setPrice] = useState(product?.price?.toString() ?? prefill?.price ?? '');
   const [packQty, setPackQty] = useState(product?.packQty?.toString() ?? '');
+  // Stored `price` is always per-`unit` (e.g. per box) — this only controls
+  // what the price input currently *displays*/accepts, converting on toggle
+  // so the underlying per-unit price is preserved either way.
+  const [priceMode, setPriceMode] = useState<'unit' | 'piece'>('unit');
   const [images, setImages] = useState<PendingImages>({ existing: product?.images ?? [], files: [] });
   const [error, setError] = useState<string | undefined>();
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -62,19 +66,44 @@ export function ProductFormDialog({
 
   const priceNum = parseFloat(price) || 0;
   const packQtyNum = parseInt(packQty, 10) || 0;
-  const perPiece = priceNum > 0 && packQtyNum > 0 ? priceNum / packQtyNum : null;
+  const perPiece = priceMode === 'unit' && priceNum > 0 && packQtyNum > 0 ? priceNum / packQtyNum : null;
+  const perUnit = priceMode === 'piece' && priceNum > 0 && packQtyNum > 0 ? priceNum * packQtyNum : null;
 
   function resetForCreate() {
     setCategory('');
     setUnit('kg');
     setPrice('');
     setPackQty('');
+    setPriceMode('unit');
     setImages({ existing: [], files: [] });
   }
+
+  /** Toggling doesn't just relabel the input — it converts the number
+   * already typed so the underlying per-unit price stays the same. */
+  function switchPriceMode(mode: 'unit' | 'piece') {
+    if (mode === priceMode) return;
+    if (packQtyNum > 0 && priceNum > 0) {
+      const converted = mode === 'piece' ? priceNum / packQtyNum : priceNum * packQtyNum;
+      setPrice((Math.round(converted * 10000) / 10000).toString());
+    }
+    setPriceMode(mode);
+  }
+
+  // Falling back out of "per piece" once the conversion no longer makes
+  // sense (unit switched to Piece, or pieces-per-unit was cleared) — keeps
+  // the price field's label/value from getting stuck on a stale mode.
+  useEffect(() => {
+    if (priceMode === 'piece' && (unit === 'Piece' || packQtyNum <= 0)) setPriceMode('unit');
+  }, [priceMode, unit, packQtyNum]);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
+    // The `price` input may currently hold a per-piece figure — the server
+    // always expects price-per-`unit` (e.g. per box), so convert back here.
+    if (priceMode === 'piece' && packQtyNum > 0) {
+      formData.set('price', String(priceNum * packQtyNum));
+    }
     images.existing.forEach((url) => formData.append('images', url));
     images.files.forEach((file) => formData.append('newImages', file));
     setError(undefined);
@@ -141,7 +170,39 @@ export function ProductFormDialog({
                 options={(UNITS.includes(unit) ? UNITS : [unit, ...UNITS]).map((u) => ({ value: u }))}
               />
               <div>
-                <Field label="Price per unit (₹)" name="price" type="number" icon={IndianRupee} mono value={price} onChange={(e) => setPrice(e.target.value)} error={fieldErrors.price} />
+                {unit !== 'Piece' && packQtyNum > 0 && (
+                  <div className="mb-1 flex justify-end gap-1">
+                    <button
+                      type="button"
+                      onClick={() => switchPriceMode('unit')}
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors ${priceMode === 'unit' ? 'bg-brand text-white' : 'bg-surface-alt text-ink-faint'}`}
+                    >
+                      Per {unit}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => switchPriceMode('piece')}
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors ${priceMode === 'piece' ? 'bg-brand text-white' : 'bg-surface-alt text-ink-faint'}`}
+                    >
+                      Per piece
+                    </button>
+                  </div>
+                )}
+                <Field
+                  label={priceMode === 'piece' ? 'Price per piece (₹)' : `Price per ${unit} (₹)`}
+                  name="price"
+                  type="number"
+                  icon={IndianRupee}
+                  mono
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  error={fieldErrors.price}
+                />
+                {perUnit !== null && (
+                  <p className="mt-1 text-[11px] font-bold text-brand-dark">
+                    ≈ {fmtInr(perUnit)} per {unit}
+                  </p>
+                )}
               </div>
               {unit !== 'Piece' && (
                 <div>

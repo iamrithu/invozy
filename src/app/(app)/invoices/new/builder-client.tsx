@@ -231,6 +231,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
 
   const lineDiscountTotal = lines.reduce((s, l) => s + l.qty * l.rate * (l.discount / 100), 0);
   const totalSavings = lineDiscountTotal + totals.overallDiscountAmount;
+  const totalUnits = lines.reduce((s, l) => s + l.qty, 0);
 
   function addProduct(p: Product) {
     setLines((prev) => {
@@ -248,10 +249,10 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
       return prev.map((x) => (x.productId === productId ? { ...x, qty: x.qty - 1 } : x));
     });
   }
-  function addCustomLine(data: { name: string; unit: string; qty: number; rate: number; productId?: string }) {
+  function addCustomLine(data: { name: string; unit: string; qty: number; rate: number; productId?: string; packQty?: number | null }) {
     setLines((prev) => [
       ...prev,
-      { lineId: crypto.randomUUID(), productId: data.productId ?? null, name: data.name, unit: data.unit, qty: data.qty, rate: data.rate, discount: 0 },
+      { lineId: crypto.randomUUID(), productId: data.productId ?? null, name: data.name, unit: data.unit, qty: data.qty, rate: data.rate, discount: 0, packQty: data.packQty ?? null },
     ]);
     toast.success(`${data.name} added`);
   }
@@ -539,8 +540,8 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
             <ShoppingCart size={13} />
           </span>
           <span className="flex-1 text-[12px] font-semibold leading-tight">
-            <b className="font-mono">{lines.length}</b> product{lines.length !== 1 ? 's' : ''} · <b className="font-mono">{lines.reduce((s, l) => s + l.qty, 0)}</b> unit
-            {lines.reduce((s, l) => s + l.qty, 0) !== 1 ? 's' : ''} &nbsp;·&nbsp; <b className="font-mono">{fmtInr(totals.total)}</b>
+            <b className="font-mono">{lines.length}</b> product{lines.length !== 1 ? 's' : ''} · <b className="font-mono">{Math.round(totalUnits * 100) / 100}</b> unit
+            {totalUnits !== 1 ? 's' : ''} &nbsp;·&nbsp; <b className="font-mono">{fmtInr(totals.total)}</b>
           </span>
           <button onClick={() => setPreviewOpen(true)} className="flex flex-shrink-0 items-center gap-1.5 rounded-full bg-brand px-3.5 py-2 text-[11.5px] font-extrabold text-white">
             <ArrowRight size={12} /> View
@@ -702,20 +703,28 @@ function AddCustomItemForm({
   onAdd,
   onCancel,
 }: {
-  onAdd: (data: { name: string; unit: string; qty: number; rate: number; productId?: string }) => void;
+  onAdd: (data: { name: string; unit: string; qty: number; rate: number; productId?: string; packQty?: number | null }) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState('');
   const [unit, setUnit] = useState('pc');
   const [qty, setQty] = useState('1');
   const [rate, setRate] = useState('');
+  // Optional — set only for a bulk unit (e.g. a box) sold with a fixed
+  // piece count, so "extra pieces" below can express a partial unit.
+  const [packQty, setPackQty] = useState('');
+  const [pieces, setPieces] = useState('0');
   const [saveAsProduct, setSaveAsProduct] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const createProduct = useCreateProduct();
 
+  const packQtyNum = parseInt(packQty, 10) || 0;
+
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const qtyNum = parseFloat(qty) || 0;
+    const boxesNum = parseFloat(qty) || 0;
+    const piecesNum = packQtyNum > 0 ? Math.max(0, Math.min(packQtyNum - 1, parseInt(pieces, 10) || 0)) : 0;
+    const qtyNum = packQtyNum > 0 ? boxesNum + piecesNum / packQtyNum : boxesNum;
     const rateNum = parseFloat(rate) || 0;
     if (!name.trim()) {
       setError('Name is required');
@@ -734,6 +743,7 @@ function AddCustomItemForm({
       formData.set('category', 'Uncategorized');
       formData.set('unit', unit.trim() || 'pc');
       formData.set('price', String(rateNum));
+      if (packQtyNum > 0) formData.set('packQty', String(packQtyNum));
       const result = await createProduct.mutateAsync(formData);
       if (result.error) {
         setError(result.error);
@@ -744,11 +754,13 @@ function AddCustomItemForm({
       toast.success('Added to your catalog too');
     }
 
-    onAdd({ name: name.trim(), unit: unit.trim() || 'pc', qty: qtyNum, rate: rateNum, productId });
+    onAdd({ name: name.trim(), unit: unit.trim() || 'pc', qty: qtyNum, rate: rateNum, productId, packQty: packQtyNum > 0 ? packQtyNum : undefined });
     setName('');
     setUnit('pc');
     setQty('1');
     setRate('');
+    setPackQty('');
+    setPieces('0');
     setSaveAsProduct(false);
   }
 
@@ -759,8 +771,12 @@ function AddCustomItemForm({
         <Field label="Unit" name="unit" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="pc, kg, box…" />
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <Field label="Qty" name="qty" type="number" value={qty} onChange={(e) => setQty(e.target.value)} mono />
+        <Field label={packQtyNum > 0 ? `${unit || 'Box'} count` : 'Qty'} name="qty" type="number" value={qty} onChange={(e) => setQty(e.target.value)} mono />
         <Field label="Rate (₹)" name="rate" type="number" value={rate} onChange={(e) => setRate(e.target.value)} mono />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Pieces per unit (optional)" name="packQty" type="number" value={packQty} onChange={(e) => setPackQty(e.target.value)} mono />
+        {packQtyNum > 0 && <Field label="+ extra loose pieces" name="pieces" type="number" value={pieces} onChange={(e) => setPieces(e.target.value)} mono />}
       </div>
       <label className="flex items-center gap-2 text-[11.5px] font-semibold text-ink-soft">
         <input type="checkbox" checked={saveAsProduct} onChange={(e) => setSaveAsProduct(e.target.checked)} className="h-3.5 w-3.5 rounded-sm2 border-line accent-brand" />
