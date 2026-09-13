@@ -10,7 +10,6 @@ const LineSchema = z.object({
   // Nullable — an ad-hoc/custom line item isn't backed by a catalog Product.
   productId: z.string().nullable(),
   name: z.string(),
-  hsn: z.string(),
   unit: z.string(),
   qty: z.coerce.number().positive(),
   rate: z.coerce.number().min(0),
@@ -114,7 +113,6 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
           create: data.items.map((l) => ({
             productId: l.productId,
             name: l.name, // snapshot — see schema.prisma comment
-            hsn: l.hsn,
             unit: l.unit,
             qty: l.qty,
             rate: l.rate,
@@ -273,7 +271,7 @@ export async function duplicateInvoice(id: string) {
         status: 'DRAFT',
         overallDiscountType: src.overallDiscountType,
         overallDiscountValue: src.overallDiscountValue,
-        items: { create: src.items.map((it) => ({ productId: it.productId, name: it.name, hsn: it.hsn, unit: it.unit, qty: it.qty, rate: it.rate, discount: it.discount })) },
+        items: { create: src.items.map((it) => ({ productId: it.productId, name: it.name, unit: it.unit, qty: it.qty, rate: it.rate, discount: it.discount })) },
       },
     });
   });

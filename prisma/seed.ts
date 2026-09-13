@@ -43,18 +43,18 @@ async function main() {
 
   const products = await Promise.all(
     [
-      { name: 'Ice Block 25kg', category: 'Block ice', unit: 'block', price: 180, hsn: '2201' },
-      { name: 'Ice Slab 50kg', category: 'Block ice', unit: 'slab', price: 320, hsn: '2201' },
-      { name: 'Premium Block Ice 15kg', category: 'Block ice', unit: 'kg', price: 110, hsn: '2201' },
-      { name: 'Ice Cube 5kg bag', category: 'Cube ice', unit: 'bag', price: 60, hsn: '2201', packQty: 40 },
-      { name: 'Standard Cube Ice 10kg', category: 'Cube ice', unit: 'bag', price: 47, hsn: '2201' },
-      { name: 'Party Pack Cube Ice 5kg', category: 'Cube ice', unit: 'bag', price: 152, hsn: '2201' },
-      { name: 'Crushed Ice 10kg', category: 'Crushed ice', unit: 'bag', price: 95, hsn: '2201' },
-      { name: 'Bulk Crushed Ice 15kg', category: 'Crushed ice', unit: 'box', price: 54, hsn: '2201' },
-      { name: 'Fresh Cut Crushed Ice 50kg', category: 'Crushed ice', unit: 'box', price: 89, hsn: '2201' },
-      { name: 'Dry Ice 1kg', category: 'Dry ice', unit: 'kg', price: 140, hsn: '2851' },
-      { name: 'Rapid Chill Dry Ice 25kg', category: 'Dry ice', unit: 'block', price: 236, hsn: '2851', packQty: 24 },
-      { name: 'Export Grade Dry Ice 20kg', category: 'Other', unit: 'block', price: 61, hsn: '2851' },
+      { name: 'Ice Block 25kg', category: 'Block ice', unit: 'block', price: 180 },
+      { name: 'Ice Slab 50kg', category: 'Block ice', unit: 'slab', price: 320 },
+      { name: 'Premium Block Ice 15kg', category: 'Block ice', unit: 'kg', price: 110 },
+      { name: 'Ice Cube 5kg bag', category: 'Cube ice', unit: 'bag', price: 60, packQty: 40 },
+      { name: 'Standard Cube Ice 10kg', category: 'Cube ice', unit: 'bag', price: 47 },
+      { name: 'Party Pack Cube Ice 5kg', category: 'Cube ice', unit: 'bag', price: 152 },
+      { name: 'Crushed Ice 10kg', category: 'Crushed ice', unit: 'bag', price: 95 },
+      { name: 'Bulk Crushed Ice 15kg', category: 'Crushed ice', unit: 'box', price: 54 },
+      { name: 'Fresh Cut Crushed Ice 50kg', category: 'Crushed ice', unit: 'box', price: 89 },
+      { name: 'Dry Ice 1kg', category: 'Dry ice', unit: 'kg', price: 140 },
+      { name: 'Rapid Chill Dry Ice 25kg', category: 'Dry ice', unit: 'block', price: 236, packQty: 24 },
+      { name: 'Export Grade Dry Ice 20kg', category: 'Other', unit: 'block', price: 61 },
     ].map((p) => prisma.product.create({ data: { ...p, companyId: company.id } }))
   );
 
@@ -78,8 +78,8 @@ async function main() {
       overallDiscountValue: 5,
       items: {
         create: [
-          { productId: products[3].id, name: products[3].name, hsn: products[3].hsn, unit: products[3].unit, qty: 41, rate: Number(products[3].price), discount: 0 },
-          { productId: products[9].id, name: products[9].name, hsn: products[9].hsn, unit: products[9].unit, qty: 10, rate: Number(products[9].price), discount: 0 },
+          { productId: products[3].id, name: products[3].name, unit: products[3].unit, qty: 41, rate: Number(products[3].price), discount: 0 },
+          { productId: products[9].id, name: products[9].name, unit: products[9].unit, qty: 10, rate: Number(products[9].price), discount: 0 },
         ],
       },
     },

@@ -85,7 +85,7 @@ body {
   box-sizing: border-box;
 }
 
-/* Numbers, HSN codes, GSTINs — always tabular/mono, matching the prototype's
+/* Numbers and GSTINs — always tabular/mono, matching the prototype's
    convention of using monospace anywhere alignment/precision matters. */
 .font-tabular {
   font-variant-numeric: tabular-nums;

@@ -48,7 +48,7 @@ import { InvoiceSheet } from '@/components/invoices/invoice-sheet';
 import { hashColor, initials } from '@/lib/avatar';
 import { PAPER_STYLE } from '@/lib/paper-theme';
 
-type Product = { id: string; name: string; category: string; unit: string; price: string | number; hsn: string; packQty?: number | null };
+type Product = { id: string; name: string; category: string; unit: string; price: string | number; packQty?: number | null };
 type Company = {
   name: string;
   address: string;
@@ -82,7 +82,7 @@ type Customer = {
 // productId is null for an ad-hoc/custom line item not backed by a catalog
 // Product — lineId (stable, client-generated) is the real key everywhere
 // since multiple custom lines would otherwise collide on a shared `null`.
-type Line = { lineId: string; productId: string | null; name: string; hsn: string; unit: string; qty: number; rate: number; discount: number; packQty?: number | null };
+type Line = { lineId: string; productId: string | null; name: string; unit: string; qty: number; rate: number; discount: number; packQty?: number | null };
 
 const CATEGORY_TILE: Record<string, string> = {
   'Block ice': 'bg-chrome text-white',
@@ -237,7 +237,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
       const existing = prev.find((l) => l.productId === p.id);
       if (existing) return prev.map((l) => (l.productId === p.id ? { ...l, qty: l.qty + 1 } : l));
       toast.success(`${p.name} added`);
-      return [...prev, { lineId: crypto.randomUUID(), productId: p.id, name: p.name, hsn: p.hsn, unit: p.unit, qty: 1, rate: Number(p.price), discount: 0, packQty: p.packQty }];
+      return [...prev, { lineId: crypto.randomUUID(), productId: p.id, name: p.name, unit: p.unit, qty: 1, rate: Number(p.price), discount: 0, packQty: p.packQty }];
     });
   }
   function decrementProductId(productId: string) {
@@ -248,10 +248,10 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
       return prev.map((x) => (x.productId === productId ? { ...x, qty: x.qty - 1 } : x));
     });
   }
-  function addCustomLine(data: { name: string; hsn: string; unit: string; qty: number; rate: number; productId?: string }) {
+  function addCustomLine(data: { name: string; unit: string; qty: number; rate: number; productId?: string }) {
     setLines((prev) => [
       ...prev,
-      { lineId: crypto.randomUUID(), productId: data.productId ?? null, name: data.name, hsn: data.hsn, unit: data.unit, qty: data.qty, rate: data.rate, discount: 0 },
+      { lineId: crypto.randomUUID(), productId: data.productId ?? null, name: data.name, unit: data.unit, qty: data.qty, rate: data.rate, discount: 0 },
     ]);
     toast.success(`${data.name} added`);
   }
@@ -702,11 +702,10 @@ function AddCustomItemForm({
   onAdd,
   onCancel,
 }: {
-  onAdd: (data: { name: string; hsn: string; unit: string; qty: number; rate: number; productId?: string }) => void;
+  onAdd: (data: { name: string; unit: string; qty: number; rate: number; productId?: string }) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState('');
-  const [hsn, setHsn] = useState('');
   const [unit, setUnit] = useState('pc');
   const [qty, setQty] = useState('1');
   const [rate, setRate] = useState('');
@@ -735,7 +734,6 @@ function AddCustomItemForm({
       formData.set('category', 'Uncategorized');
       formData.set('unit', unit.trim() || 'pc');
       formData.set('price', String(rateNum));
-      if (hsn.trim()) formData.set('hsn', hsn.trim());
       const result = await createProduct.mutateAsync(formData);
       if (result.error) {
         setError(result.error);
@@ -746,9 +744,8 @@ function AddCustomItemForm({
       toast.success('Added to your catalog too');
     }
 
-    onAdd({ name: name.trim(), hsn: hsn.trim(), unit: unit.trim() || 'pc', qty: qtyNum, rate: rateNum, productId });
+    onAdd({ name: name.trim(), unit: unit.trim() || 'pc', qty: qtyNum, rate: rateNum, productId });
     setName('');
-    setHsn('');
     setUnit('pc');
     setQty('1');
     setRate('');
@@ -761,16 +758,10 @@ function AddCustomItemForm({
         <Field label="Name" name="name" value={name} onChange={(e) => setName(e.target.value)} />
         <Field label="Unit" name="unit" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="pc, kg, box…" />
       </div>
-      <div className="grid grid-cols-3 gap-2">
-        <Field label="HSN (optional)" name="hsn" value={hsn} onChange={(e) => setHsn(e.target.value)} mono />
+      <div className="grid grid-cols-2 gap-2">
         <Field label="Qty" name="qty" type="number" value={qty} onChange={(e) => setQty(e.target.value)} mono />
         <Field label="Rate (₹)" name="rate" type="number" value={rate} onChange={(e) => setRate(e.target.value)} mono />
       </div>
-      {!hsn.trim() && (
-        <p className="flex items-start gap-1.5 text-[10.5px] text-ink-faint">
-          <AlertTriangle size={11} className="mt-0.5 flex-shrink-0 text-gold" /> No HSN — you may need one for GST filing, but it&apos;s not required to bill.
-        </p>
-      )}
       <label className="flex items-center gap-2 text-[11.5px] font-semibold text-ink-soft">
         <input type="checkbox" checked={saveAsProduct} onChange={(e) => setSaveAsProduct(e.target.checked)} className="h-3.5 w-3.5 rounded-sm2 border-line accent-brand" />
         Save this as a product for next time

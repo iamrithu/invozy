@@ -24,7 +24,6 @@ type Product = {
   category: string;
   unit: string;
   price: string | number;
-  hsn: string;
   packQty: number | null;
   active: boolean;
   desc: string | null;
@@ -45,7 +44,7 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  const [addPrefill, setAddPrefill] = useState<{ name?: string; hsn?: string; unit?: string; price?: string } | undefined>();
+  const [addPrefill, setAddPrefill] = useState<{ name?: string; unit?: string; price?: string } | undefined>();
 
   // Arriving from the dashboard's "you keep billing this by hand" nudge —
   // open the add-product dialog pre-filled instead of a blank form.
@@ -54,7 +53,6 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
     if (!name) return;
     setAddPrefill({
       name,
-      hsn: searchParams.get('addHsn') ?? undefined,
       unit: searchParams.get('addUnit') ?? undefined,
       price: searchParams.get('addRate') ?? undefined,
     });
@@ -272,10 +270,9 @@ function ProductDetail({ product, onEdit, onDeleted }: { product: Product; onEdi
         </div>
       )}
 
-      <div className="mb-4 grid grid-cols-3 gap-2.5">
+      <div className="mb-4 grid grid-cols-2 gap-2.5">
         <Stat label="Price" value={fmtInr(Number(product.price))} />
         <Stat label="Per piece" value={perPiece !== null ? fmtInr(perPiece) : '—'} />
-        <Stat label="HSN" value={product.hsn} mono />
       </div>
 
       <div className="space-y-2 rounded-lg2 border border-dashed border-line p-3.5 text-[12.5px]">

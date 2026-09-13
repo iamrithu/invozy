@@ -13,7 +13,6 @@ const ProductSchema = z.object({
   category: z.string().min(1),
   unit: z.string().min(1),
   price: z.coerce.number().min(0),
-  hsn: z.string().default('2201'),
   packQty: z.coerce.number().int().min(0).optional().nullable(),
   desc: z.string().optional().nullable(),
 });
@@ -164,11 +163,11 @@ export async function getFrequentCustomItems(threshold = 3) {
     by: ['name'],
     where: { productId: null, invoice: { companyId: company.id } },
     _count: { name: true },
-    _max: { hsn: true, unit: true, rate: true },
+    _max: { unit: true, rate: true },
   });
   return rows
     .filter((r) => r._count.name >= threshold)
-    .map((r) => ({ name: r.name, count: r._count.name, hsn: r._max.hsn ?? '', unit: r._max.unit ?? '', rate: Number(r._max.rate ?? 0) }))
+    .map((r) => ({ name: r.name, count: r._count.name, unit: r._max.unit ?? '', rate: Number(r._max.rate ?? 0) }))
     .sort((a, b) => b.count - a.count);
 }
 
@@ -186,7 +185,7 @@ export async function deleteProduct(id: string) {
   if (!product) throw new Error('Product not found.');
 
   // No cascade from InvoiceItem here on purpose: an invoice that already
-  // billed this product keeps its line intact (name/rate/hsn are snapshotted
+  // billed this product keeps its line intact (name/rate are snapshotted
   // onto InvoiceItem — see schema.prisma). Deleting the catalog entry must
   // never rewrite history on a sent invoice.
   const usedOnInvoice = await prisma.invoiceItem.findFirst({ where: { productId: id } });

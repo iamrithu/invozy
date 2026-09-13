@@ -62,7 +62,7 @@ export default async function DashboardPage() {
 
       {frequentCustomItems.length > 0 && (
         <Link
-          href={`/products?addName=${encodeURIComponent(frequentCustomItems[0].name)}&addHsn=${encodeURIComponent(frequentCustomItems[0].hsn)}&addUnit=${encodeURIComponent(frequentCustomItems[0].unit)}&addRate=${frequentCustomItems[0].rate}`}
+          href={`/products?addName=${encodeURIComponent(frequentCustomItems[0].name)}&addUnit=${encodeURIComponent(frequentCustomItems[0].unit)}&addRate=${frequentCustomItems[0].rate}`}
           className="flex items-center gap-3 rounded-lg2 border border-gold bg-gold-soft p-3 transition-colors hover:border-gold/60"
         >
           <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-gold text-white">

@@ -1,4 +1,4 @@
-import { Minus, Plus, Trash2, AlertTriangle } from 'lucide-react';
+import { Minus, Plus, Trash2 } from 'lucide-react';
 import { computeTotals, fmtInr } from '@/lib/gst';
 import { numberToWords } from '@/lib/number-to-words';
 
@@ -33,7 +33,6 @@ export type InvoiceSheetLine = {
   lineId: string;
   productId?: string | null;
   name: string;
-  hsn: string;
   unit: string;
   qty: number;
   rate: number;
@@ -129,7 +128,6 @@ export function InvoiceSheet({
           <thead>
             <tr className="border-b-2 border-ink text-left text-[10px] font-bold uppercase tracking-wide text-ink-faint print:text-black">
               <th className="pb-1.5 pr-1.5 print:border print:border-black print:px-2 print:py-1.5">Item</th>
-              <th className="pb-1.5 pr-1.5 font-mono print:border print:border-black print:px-2 print:py-1.5">HSN</th>
               <th className="pb-1.5 pr-1.5 text-right print:border print:border-black print:px-2 print:py-1.5">Qty</th>
               <th className="pb-1.5 pr-1.5 text-right font-mono print:border print:border-black print:px-2 print:py-1.5">Rate</th>
               {editable && <th className="pb-1.5 pr-1.5 text-right">Disc%</th>}
@@ -140,7 +138,7 @@ export function InvoiceSheet({
           <tbody>
             {lines.length === 0 ? (
               <tr>
-                <td colSpan={editable ? 7 : 5} className="py-6 text-center text-ink-faint">
+                <td colSpan={editable ? 6 : 4} className="py-6 text-center text-ink-faint">
                   No line items yet — add products from the left.
                 </td>
               </tr>
@@ -158,11 +156,9 @@ export function InvoiceSheet({
                             Custom
                           </span>
                         )}
-                        {!l.hsn && <AlertTriangle size={11} className="flex-shrink-0 text-gold print:hidden" aria-label="No HSN code" />}
                       </span>
                       {editable && !l.discount && pieceHint && <div className="text-[10.5px] font-medium text-ink-faint">{pieceHint}</div>}
                     </td>
-                    <td className="whitespace-nowrap py-2 pr-1.5 font-mono print:border print:border-black print:px-2 print:py-1.5">{l.hsn || '—'}</td>
                     <td className="whitespace-nowrap py-2 pr-1.5 text-right print:border print:border-black print:px-2 print:py-1.5">
                       {editable ? (
                         <div className="inline-flex items-center gap-1 rounded-full bg-bg p-0.5">

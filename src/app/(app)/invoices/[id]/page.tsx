@@ -23,7 +23,6 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     lineId: it.id,
     productId: it.productId,
     name: it.name,
-    hsn: it.hsn,
     unit: it.unit,
     qty: Number(it.qty),
     rate: Number(it.rate),

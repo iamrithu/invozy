@@ -21,7 +21,6 @@ type Product = {
   category: string;
   unit: string;
   price: string | number;
-  hsn: string;
   packQty: number | null;
   active: boolean;
   desc: string | null;
@@ -43,14 +42,13 @@ export function ProductFormDialog({
   /** Pre-fills a brand-new product's fields (e.g. promoting a repeated
    * custom invoice line item into the catalog) — real defaultValues, not
    * just a placeholder hint. */
-  prefill?: { name?: string; hsn?: string; unit?: string; price?: string };
+  prefill?: { name?: string; unit?: string; price?: string };
   onDeleted?: () => void;
 }) {
   const [category, setCategory] = useState(product?.category ?? '');
   const [unit, setUnit] = useState(product?.unit ?? prefill?.unit ?? 'kg');
   const [price, setPrice] = useState(product?.price?.toString() ?? prefill?.price ?? '');
   const [packQty, setPackQty] = useState(product?.packQty?.toString() ?? '');
-  const [hsn] = useState(product?.hsn ?? prefill?.hsn ?? '2201');
   const [images, setImages] = useState<PendingImages>({ existing: product?.images ?? [], files: [] });
   const [error, setError] = useState<string | undefined>();
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -127,7 +125,6 @@ export function ProductFormDialog({
           </DialogFormHeader>
 
           <DialogFormBody>
-            <input type="hidden" name="hsn" value={hsn} />
             <div className="grid grid-cols-2 gap-3">
               <Field label="Name" name="name" icon={Package} defaultValue={product?.name ?? prefill?.name} error={fieldErrors.name} />
               <div>
