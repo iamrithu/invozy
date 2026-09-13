@@ -18,7 +18,10 @@ const DialogOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      'fixed inset-0 z-50 bg-black/40 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+      // z-[100]: must clear the app shell's fixed chrome (bottom-nav/top-bar
+      // dropdowns sit at z-[60]) or a full-screen mobile dialog's footer
+      // renders visually underneath the bottom nav bar.
+      'fixed inset-0 z-[100] bg-black/40 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
       className
     )}
     {...props}
@@ -35,7 +38,7 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 rounded-xl2 border border-line bg-surface p-6 shadow-elevated duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
+        'fixed left-[50%] top-[50%] z-[100] grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 rounded-xl2 border border-line bg-surface p-6 shadow-elevated duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
         // Opt-in: only dialogs that pass this (e.g. the invoice preview)
         // become full-screen below md — small confirms and the image
         // lightbox never set it, so they stay centered/compact everywhere.
@@ -71,7 +74,7 @@ const DialogFormContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed inset-0 z-50 flex h-full max-h-full w-full max-w-full flex-col overflow-hidden rounded-none border-0 bg-surface p-0 shadow-elevated duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
+        'fixed inset-0 z-[100] flex h-full max-h-full w-full max-w-full flex-col overflow-hidden rounded-none border-0 bg-surface p-0 shadow-elevated duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
         'md:inset-auto md:left-[50%] md:top-[50%] md:h-auto md:max-h-[85vh] md:w-[calc(100%-2rem)] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl2 md:border md:border-line',
         wide ? 'md:max-w-[640px]' : 'md:max-w-[520px]',
         className
