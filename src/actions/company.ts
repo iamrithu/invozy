@@ -21,6 +21,7 @@ const CompanySchema = z.object({
   gstin: z.string().optional().nullable(),
   pan: z.string().optional().nullable(),
   phone: z.string().optional().nullable(),
+  altPhone: z.string().optional().nullable(),
   // No `email` here on purpose — it's exclusively derived from the signed-in
   // user's account email (see src/actions/account.ts's updateMyProfile),
   // so there's exactly one place to change it and it can never drift.
@@ -51,11 +52,8 @@ const CompanySchema = z.object({
   nicSandbox: z.coerce.boolean().optional(),
   nicUsername: z.string().optional().nullable(),
   nicClientId: z.string().optional().nullable(),
-  // CLASSIC template's Prepared by / Verified by / Authorised Signatory row —
-  // all optional, blank means the printed row stays blank for physical
-  // signing (matching the reference Tally invoice).
-  preparedByName: z.string().optional().nullable(),
-  verifiedByName: z.string().optional().nullable(),
+  // CLASSIC template's Authorised Signatory row — optional, blank means the
+  // printed row stays blank for physical signing.
   signatoryName: z.string().optional().nullable(),
 });
 

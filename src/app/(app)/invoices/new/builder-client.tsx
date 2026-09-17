@@ -75,8 +75,8 @@ type Company = {
   fssaiNo?: string | null;
   pincode?: string | null;
   pan?: string | null;
-  preparedByName?: string | null;
-  verifiedByName?: string | null;
+  phone?: string | null;
+  altPhone?: string | null;
   signatoryName?: string | null;
   signatureUrl?: string | null;
 };

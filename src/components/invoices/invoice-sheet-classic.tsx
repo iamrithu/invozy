@@ -11,6 +11,8 @@ export type ClassicCompany = {
   state: string;
   fssaiNo?: string | null;
   pincode?: string | null;
+  phone?: string | null;
+  altPhone?: string | null;
   bankName?: string | null;
   bankAcc?: string | null;
   ifsc?: string | null;
@@ -23,8 +25,6 @@ export type ClassicCompany = {
   cgstEnabled: boolean;
   sgstEnabled: boolean;
   igstEnabled: boolean;
-  preparedByName?: string | null;
-  verifiedByName?: string | null;
   signatoryName?: string | null;
   signatureUrl?: string | null;
 };
@@ -38,6 +38,7 @@ export type ClassicCustomer = {
   pincode?: string | null;
   contact?: string | null;
   phone?: string | null;
+  altPhone?: string | null;
 };
 
 export type ClassicLine = {
@@ -63,34 +64,18 @@ export type ClassicEway = {
   distanceKm?: number | null;
 };
 
-/** Standard Tally-style reference fields on the header grid below — pure
- * print/reference, no GST math or NIC payload depends on any of these. See
- * src/actions/invoices.ts's updateDispatchDetails. */
-export type ClassicDispatch = {
-  deliveryNote?: string | null;
-  deliveryNoteDate?: string | null;
-  buyersOrderNo?: string | null;
-  buyersOrderDate?: string | null;
-  dispatchDocNo?: string | null;
-  otherReferences?: string | null;
-  billOfLadingNo?: string | null;
-  destination?: string | null;
-};
-
 /** The CLASSIC (Tally/ERP-style) GST tax invoice — a distinct layout from
  * InvoiceSheet, selected per-Company via Company.invoiceTemplate. Mirrors a
- * real dairy-distributor tax invoice: IRN/QR + Ack block, the standard
- * Tally reference-field grid, buyer FSSAI/contact, HSN/SAC + batch item
- * table (with per-line and overall discount, and an optional secondary-
- * quantity column), HSN-wise tax summary with its own "Tax Amount (in
- * words)" line, Bank Details/Terms (from Company settings), declaration,
- * and a Prepared-by/Verified-by/Authorised-Signatory signature row. See
+ * real dairy-distributor tax invoice: IRN/QR + Ack block, buyer FSSAI/
+ * contact, HSN/SAC item table (with per-line and overall discount, and an
+ * optional secondary-quantity column), HSN-wise tax summary with its own
+ * "Tax Amount (in words)" line, Bank Details/Terms (from Company settings),
+ * declaration, and a Customer's Sign / Authorised Signatory row. See
  * invoice-eway-bill-sheet.tsx for the companion printed e-Way Bill page. */
 export function InvoiceSheetClassic({
   company,
   customer,
   date,
-  createdAt,
   invoiceNumber,
   lines,
   totals,
@@ -101,7 +86,6 @@ export function InvoiceSheetClassic({
   ackDate,
   qrImageDataUrl,
   eway,
-  dispatch,
   editable,
   onUpdateLine,
   onIncrement,
@@ -113,9 +97,6 @@ export function InvoiceSheetClassic({
   company: ClassicCompany;
   customer: ClassicCustomer | null;
   date: string;
-  /** Formatted "at HH:MM" suffix (from Invoice.createdAt) for the "Date Time
-   * Of Invoice" row — omitted (row still shown, blank) if not supplied. */
-  createdAt?: string | null;
   invoiceNumber?: string;
   lines: ClassicLine[];
   totals: ReturnType<typeof computeTotals>;
@@ -126,7 +107,6 @@ export function InvoiceSheetClassic({
   ackDate?: string | null;
   qrImageDataUrl?: string | null;
   eway?: ClassicEway | null;
-  dispatch?: ClassicDispatch | null;
   editable: boolean;
   onUpdateLine?: (lineId: string, patch: Partial<ClassicLine>) => void;
   onIncrement?: (lineId: string) => void;
@@ -163,7 +143,7 @@ export function InvoiceSheetClassic({
   );
   const hasAltQty = lines.some((l) => l.altUnit && l.altQtyPerUnit);
   const altUnitLabel = lines.find((l) => l.altUnit)?.altUnit ?? '';
-  const footTdColSpan = (editable ? 8 : 7) + (hasAltQty ? 1 : 0);
+  const footTdColSpan = (editable ? 7 : 6) + (hasAltQty ? 1 : 0);
 
   return (
     <div className="rounded-b-lg2 border border-t-0 border-line bg-white p-5 text-[11.5px] leading-normal text-ink-body shadow-card print:rounded-none print:border-none print:p-0 print:shadow-none">
@@ -183,6 +163,12 @@ export function InvoiceSheetClassic({
               <div>State Name : {company.state}</div>
               {company.pan && <div>PAN : {company.pan}</div>}
               {company.fssaiNo && <div>FSSAI License Number : {company.fssaiNo}</div>}
+              {company.phone && (
+                <div className="font-mono font-tabular">
+                  Mobile : {company.phone}
+                  {company.altPhone ? `, ${company.altPhone}` : ''}
+                </div>
+              )}
             </div>
           </div>
           <div className="text-right">
@@ -214,28 +200,23 @@ export function InvoiceSheetClassic({
                 <div>State Name : {customer.state}</div>
                 {customer.fssaiNo && <div>FSSAI No. : {customer.fssaiNo}</div>}
                 {customer.contact && <div>Contact person : {customer.contact}</div>}
-                {customer.phone && <div>Contact : {customer.phone}</div>}
+                {customer.phone && (
+                  <div className="font-mono font-tabular">
+                    Mobile : {customer.phone}
+                    {customer.altPhone ? `, ${customer.altPhone}` : ''}
+                  </div>
+                )}
               </>
             ) : (
               <div className="italic text-ink-faint">Select a customer to fill this in</div>
             )}
           </div>
-          <div className="min-w-[300px] flex-1 p-2">
+          <div className="min-w-[220px] flex-1 p-2">
             <div className="grid grid-cols-2 gap-x-3">
               <Row k="Invoice No." v={invoiceNumber ?? 'Draft'} mono />
-              <Row k="e-Way Bill No." v={eway?.ewbNo || '—'} mono />
               <Row k="Dated" v={date} mono />
-              <Row k="Date Time Of Invoice" v={createdAt ? `${date} ${createdAt}` : '—'} mono />
-              <Row k="Delivery Note" v={dispatch?.deliveryNote || '—'} />
-              <Row k="Other References" v={dispatch?.otherReferences || '—'} />
-              <Row k="Buyer's Order No." v={dispatch?.buyersOrderNo || '—'} />
-              <Row k="Dated" v={dispatch?.buyersOrderDate || '—'} mono />
-              <Row k="Dispatch Doc No." v={dispatch?.dispatchDocNo || '—'} />
-              <Row k="Delivery Note Date" v={dispatch?.deliveryNoteDate || '—'} mono />
-              <Row k="Dispatched through" v={eway?.transportMode || '—'} />
-              <Row k="Destination" v={dispatch?.destination || '—'} />
-              <Row k="Bill of Lading/LR-RR No." v={dispatch?.billOfLadingNo || '—'} />
-              <Row k="Motor Vehicle No." v={eway?.vehicleNo || '—'} mono />
+              {eway?.ewbNo && <Row k="e-Way Bill No." v={eway.ewbNo} mono />}
+              {eway?.vehicleNo && <Row k="Vehicle No." v={eway.vehicleNo} mono />}
             </div>
           </div>
         </div>
@@ -253,7 +234,6 @@ export function InvoiceSheetClassic({
             <tr className="border-b border-ink bg-surface-alt text-left font-bold">
               <th className="w-9 border-r border-ink px-2.5 py-1.5">Sl</th>
               <th className="border-r border-ink px-2.5 py-1.5">Description of Goods</th>
-              <th className="w-[68px] border-r border-ink px-2.5 py-1.5">Batch</th>
               <th className="w-[78px] border-r border-ink px-2.5 py-1.5">HSN/SAC</th>
               <th className="w-[92px] border-r border-ink px-2.5 py-1.5 text-right">Quantity</th>
               <th className="w-[76px] border-r border-ink px-2.5 py-1.5 text-right">Rate</th>
@@ -267,7 +247,7 @@ export function InvoiceSheetClassic({
           <tbody>
             {lines.length === 0 ? (
               <tr>
-                <td colSpan={8 + (hasAltQty ? 1 : 0) + (editable ? 2 : 0)} className="py-6 text-center text-ink-faint">
+                <td colSpan={7 + (hasAltQty ? 1 : 0) + (editable ? 2 : 0)} className="py-6 text-center text-ink-faint">
                   No line items yet.
                 </td>
               </tr>
@@ -279,18 +259,6 @@ export function InvoiceSheetClassic({
                   <tr key={l.lineId} className="border-b border-line">
                     <td className="border-r border-ink px-2.5 py-1.5 align-top font-tabular">{i + 1}</td>
                     <td className="border-r border-ink px-2.5 py-1.5 align-top">{l.name}</td>
-                    <td className="border-r border-ink px-2.5 py-1.5 align-top">
-                      {editable ? (
-                        <input
-                          value={l.batch ?? ''}
-                          onChange={(e) => onUpdateLine?.(l.lineId, { batch: e.target.value })}
-                          placeholder="Batch"
-                          className="w-16 rounded-sm2 border border-line bg-surface px-1 py-0.5 text-[10.5px] focus:border-brand focus:outline-none"
-                        />
-                      ) : (
-                        l.batch || '—'
-                      )}
-                    </td>
                     <td className="border-r border-ink px-2.5 py-1.5 align-top font-mono">
                       {editable ? (
                         <input
@@ -569,29 +537,24 @@ export function InvoiceSheetClassic({
         </div>
 
         <div className="border-t border-ink p-2.5 break-inside-avoid">
-          <div className="flex flex-wrap justify-between gap-4">
-            <div className="text-[10.5px] text-ink-faint">Customer&apos;s Seal and Signature</div>
-            <div className="text-right font-bold">for {company.name}</div>
-          </div>
-          <div className="mt-3 grid grid-cols-3 gap-4 text-center text-[10.5px]">
+          <div className="mt-1 grid grid-cols-2 gap-8 text-center text-[10.5px]">
             <div className="flex flex-col">
-              <div className="flex h-8 items-end justify-center pb-1 text-[11.5px] font-semibold text-ink">{company.preparedByName || ''}</div>
-              <div className="border-t border-ink pt-1">Prepared by</div>
+              <div className="h-10" />
+              <div className="border-t border-ink pt-1">Customer&apos;s Sign</div>
             </div>
             <div className="flex flex-col">
-              <div className="flex h-8 items-end justify-center pb-1 text-[11.5px] font-semibold text-ink">{company.verifiedByName || ''}</div>
-              <div className="border-t border-ink pt-1">Verified by</div>
-            </div>
-            <div className="flex flex-col">
-              <div className="flex h-8 items-end justify-center pb-1">
+              <div className="flex h-10 items-end justify-center pb-1">
                 {company.signatureUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={company.signatureUrl} alt="Authorised signature" className="h-7 object-contain" />
+                  <img src={company.signatureUrl} alt="Authorised signature" className="h-9 object-contain" />
                 ) : (
                   <span className="text-[11.5px] font-semibold text-ink">{company.signatoryName || ''}</span>
                 )}
               </div>
-              <div className="border-t border-ink pt-1">Authorised Signatory</div>
+              <div className="border-t border-ink pt-1">
+                Authorised Signatory
+                <div className="text-[9.5px] font-normal text-ink-faint">for {company.name}</div>
+              </div>
             </div>
           </div>
         </div>

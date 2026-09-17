@@ -14,7 +14,6 @@ import { PrintButton } from './print-button';
 import { DownloadPdfButton } from './download-pdf-button';
 import { GenerateEinvoiceButton } from './generate-einvoice-button';
 import { GenerateEwaybillButton } from './generate-ewaybill-button';
-import { DispatchDetailsButton } from './dispatch-details-button';
 import { InvoiceCompletenessChecklist } from '@/components/invoices/invoice-completeness-checklist';
 
 export const dynamic = 'force-dynamic';
@@ -62,7 +61,6 @@ export default async function InvoiceDetailPage({
 
   const isClassic = company.invoiceTemplate === 'CLASSIC';
   const qrImageDataUrl = isClassic && invoice.signedQrCode ? await qrDataUrl(invoice.signedQrCode) : null;
-  const invoiceCreatedAtTime = isClassic ? invoice.createdAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }) : null;
 
   const totals = computeTotals(
     lines.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount })),
@@ -121,19 +119,6 @@ export default async function InvoiceDetailPage({
           <StatusBadge status={invoice.status} overdue={invoice.status !== 'PAID' && invoice.due < new Date()} />
           {isClassic && (
             <>
-              <DispatchDetailsButton
-                invoiceId={invoice.id}
-                defaults={{
-                  deliveryNote: invoice.deliveryNote,
-                  deliveryNoteDate: invoice.deliveryNoteDate ? invoice.deliveryNoteDate.toISOString().slice(0, 10) : null,
-                  buyersOrderNo: invoice.buyersOrderNo,
-                  buyersOrderDate: invoice.buyersOrderDate ? invoice.buyersOrderDate.toISOString().slice(0, 10) : null,
-                  dispatchDocNo: invoice.dispatchDocNo,
-                  otherReferences: invoice.otherReferences,
-                  billOfLadingNo: invoice.billOfLadingNo,
-                  destination: invoice.destination,
-                }}
-              />
               <GenerateEinvoiceButton invoiceId={invoice.id} hasCredentials={!!company.nicUsername} status={invoice.einvoiceStatus} />
               <GenerateEwaybillButton
                 invoiceId={invoice.id}
@@ -200,7 +185,6 @@ export default async function InvoiceDetailPage({
             company={{ ...company, cgstRate: Number(company.cgstRate), sgstRate: Number(company.sgstRate), igstRate: Number(company.igstRate) }}
             customer={invoice.customer}
             date={invoice.date.toISOString().slice(0, 10)}
-            createdAt={invoiceCreatedAtTime}
             invoiceNumber={invoice.number}
             lines={lines}
             totals={totals}
@@ -222,16 +206,6 @@ export default async function InvoiceDetailPage({
                   }
                 : null
             }
-            dispatch={{
-              deliveryNote: invoice.deliveryNote,
-              deliveryNoteDate: invoice.deliveryNoteDate ? invoice.deliveryNoteDate.toISOString().slice(0, 10) : null,
-              buyersOrderNo: invoice.buyersOrderNo,
-              buyersOrderDate: invoice.buyersOrderDate ? invoice.buyersOrderDate.toISOString().slice(0, 10) : null,
-              dispatchDocNo: invoice.dispatchDocNo,
-              otherReferences: invoice.otherReferences,
-              billOfLadingNo: invoice.billOfLadingNo,
-              destination: invoice.destination,
-            }}
             editable={false}
           />
         ) : (

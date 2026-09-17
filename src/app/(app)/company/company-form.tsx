@@ -5,7 +5,7 @@ import { useActionState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import type { Company } from '@prisma/client';
-import { Building2, Globe, Phone, Home, IdCard, Percent, Landmark, Hash, FileText, Pencil, Check, Flag, Palette, ImagePlus, X, Mail, ShieldCheck, MapPin, KeyRound, LayoutTemplate, PenLine, UserCheck, UserCog } from 'lucide-react';
+import { Building2, Globe, Phone, PhoneCall, Home, IdCard, Percent, Landmark, Hash, FileText, Pencil, Check, Flag, Palette, ImagePlus, X, Mail, ShieldCheck, MapPin, KeyRound, LayoutTemplate, PenLine } from 'lucide-react';
 import { toast } from 'sonner';
 import { updateCompany, type CompanyFormState } from '@/actions/company';
 import { Field } from '@/components/ui/field';
@@ -143,6 +143,7 @@ export function CompanyForm({ company }: { company: Company }) {
                 <Field label="Business name" name="name" icon={Building2} defaultValue={company.name} error={state.fieldErrors?.name} />
                 <Field label="Website / domain" name="domain" icon={Globe} defaultValue={company.domain ?? ''} />
                 <Field label="Phone" name="phone" icon={Phone} defaultValue={company.phone ?? ''} error={state.fieldErrors?.phone} />
+                <Field label="Alternative phone (optional)" name="altPhone" icon={PhoneCall} defaultValue={company.altPhone ?? ''} />
                 <div>
                   <label className="mb-1 flex items-center gap-1.5 text-[11px] font-bold text-ink-faint">
                     <Mail size={12} className="flex-shrink-0" /> Email
@@ -344,13 +345,8 @@ export function CompanyForm({ company }: { company: Company }) {
 
               <div className={tab === 'signatures' ? 'space-y-5' : 'hidden'}>
                 <p className="text-[11px] leading-relaxed text-ink-faint">
-                  Printed on the CLASSIC template&apos;s Prepared by / Verified by / Authorised Signatory row. Leave any of these blank to keep that column blank for physical signing, the same way the
-                  reference Tally invoice does.
+                  Printed on the CLASSIC template&apos;s Authorised Signatory row, on the bottom-right of the invoice. Leave blank to keep that side blank for physical signing.
                 </p>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Prepared by" name="preparedByName" icon={UserCog} defaultValue={company.preparedByName ?? ''} />
-                  <Field label="Verified by" name="verifiedByName" icon={UserCheck} defaultValue={company.verifiedByName ?? ''} />
-                </div>
                 <Field label="Authorised signatory name" name="signatoryName" icon={PenLine} defaultValue={company.signatoryName ?? ''} />
 
                 <div>

@@ -26,6 +26,7 @@ model Company {
   gstin              String?
   pan                String?
   phone              String?
+  altPhone           String?
   email              String?
   bankName           String?
   bankAcc            String?
@@ -51,11 +52,8 @@ model Company {
   fssaiNo            String?
   pincode            String?
   invoiceTemplate    InvoiceTemplate @default(MODERN)
-  // Printed on the CLASSIC template's Prepared by / Verified by / Authorised
-  // Signatory row — optional, so the row stays blank (for physical signing,
-  // matching the reference Tally invoice) until the owner sets these.
-  preparedByName     String?
-  verifiedByName     String?
+  // Printed on the CLASSIC template's Authorised Signatory row — optional,
+  // so it stays blank (for physical signing) until the owner sets these.
   signatoryName      String?
   signatureUrl       String?
   // NIC e-Invoice / e-Way Bill sandbox (or production) API credentials —
