@@ -240,7 +240,15 @@ export function InvoiceSheetClassic({
           </div>
         </div>
 
-        <table className="w-full border-collapse text-[11px]">
+        {/* min-width stops the browser's table auto-layout from
+            proportionally shrinking every column (and wrapping header text
+            into an unreadable stack) on a narrow mobile viewport — it only
+            engages below that width, since w-full already fills anything
+            wider. overflow-x-auto lets it scroll horizontally there instead,
+            same as a real PDF viewer. print:min-w-0/overflow-visible reverts
+            both for the actual print/PDF output, which is never this narrow. */}
+        <div className="overflow-x-auto print:overflow-visible">
+        <table className={`w-full border-collapse text-[11px] print:min-w-0 ${editable ? 'min-w-[720px]' : 'min-w-[640px]'}`}>
           <thead>
             <tr className="border-b border-ink bg-surface-alt text-left font-bold">
               <th className="w-9 border-r border-ink px-2.5 py-1.5">Sl</th>
@@ -397,6 +405,7 @@ export function InvoiceSheetClassic({
             </tr>
           </tfoot>
         </table>
+        </div>
 
         {editable && (
           <div className="flex items-center gap-2.5 border-t border-dashed border-line px-2.5 py-2 text-[12px] font-bold text-ink-soft print:hidden">
@@ -437,7 +446,8 @@ export function InvoiceSheetClassic({
 
         {hsnRows.length > 0 && (
           <>
-            <table className="w-full border-collapse border-t border-ink text-[10.5px]">
+            <div className="overflow-x-auto print:overflow-visible">
+            <table className="w-full min-w-[560px] border-collapse border-t border-ink text-[10.5px] print:min-w-0">
               <thead>
                 <tr className="border-b border-ink bg-surface-alt text-left font-bold">
                   <th className="border-r border-ink px-2.5 py-1">HSN/SAC</th>
@@ -501,6 +511,7 @@ export function InvoiceSheetClassic({
                 </tr>
               </tfoot>
             </table>
+            </div>
             <div className="border-t border-ink p-2.5 break-inside-avoid">
               <span className="font-bold">Tax Amount (in words) : </span>
               INR {amountToWordsWithPaise(hsnTotal.totalTax)} Only
