@@ -46,14 +46,25 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // no separate service-account/token scheme needed.
     if (cookies.length) await context.addCookies(cookies);
     const page = await context.newPage();
-    await page.goto(`${origin}/invoices/${id}`, { waitUntil: 'networkidle' });
+    // `?pdf=1` tells the detail page to skip its own embedded preview iframe
+    // (which points at this very route) — otherwise this headless render
+    // would recurse into itself indefinitely.
+    await page.goto(`${origin}/invoices/${id}?pdf=1`, { waitUntil: 'networkidle' });
     await page.emulateMedia({ media: 'print' });
     const pdf = await page.pdf({ format: 'A4', printBackground: true });
+
+    // `?inline=1` (used by the detail page's embedded preview iframe) shows
+    // the PDF in-browser instead of forcing a save-file prompt; the actual
+    // Download button never reads this header (it fetches as a blob and
+    // forces its own filename via an anchor's `download` attribute), so
+    // this only affects direct navigation / the iframe.
+    const inline = req.nextUrl.searchParams.get('inline') === '1';
+    const filename = invoice.number.replace(/[^a-zA-Z0-9-]/g, '-');
 
     return new NextResponse(new Uint8Array(pdf), {
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${invoice.number.replace(/[^a-zA-Z0-9-]/g, '-')}.pdf"`,
+        'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${filename}.pdf"`,
         'Content-Length': String(pdf.length),
       },
     });

@@ -12,7 +12,6 @@ import { InvoiceEwayBillSheet } from '@/components/invoices/invoice-eway-bill-sh
 import { qrDataUrl } from '@/lib/qr';
 import { PrintButton } from './print-button';
 import { DownloadPdfButton } from './download-pdf-button';
-import { PdfPreviewChrome } from './pdf-preview-chrome';
 import { GenerateEinvoiceButton } from './generate-einvoice-button';
 import { GenerateEwaybillButton } from './generate-ewaybill-button';
 import { DispatchDetailsButton } from './dispatch-details-button';
@@ -20,8 +19,20 @@ import { InvoiceCompletenessChecklist } from '@/components/invoices/invoice-comp
 
 export const dynamic = 'force-dynamic';
 
-export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function InvoiceDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const { id } = await params;
+  // Set only by the PDF-generation route below (never by a real visit) when
+  // it headlessly navigates back to this same page to capture it as a PDF —
+  // without this, the on-screen preview iframe added below would itself
+  // request that same PDF route, which would navigate back here again,
+  // recursing forever.
+  const isInternalPdfRender = (await searchParams).pdf === '1';
   const [invoice, company] = await Promise.all([
     prisma.invoice.findUnique({
       where: { id },
@@ -162,8 +173,27 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
 
       {isClassic && <InvoiceCompletenessChecklist items={checklistItems} />}
 
-      <PdfPreviewChrome pageCount={pageCount}>
-      <div className="invoice-print mx-auto max-w-[760px]" style={PAPER_STYLE}>
+      {/* The real generated PDF (same file the Download button saves),
+          shown via the browser's own built-in PDF.js viewer — no custom
+          zoom/scale code to keep in sync with what actually prints. Skipped
+          during the PDF route's own headless render of this page (see
+          isInternalPdfRender above) so it never recurses into itself. */}
+      {!isInternalPdfRender && (
+        <div className="mx-auto max-w-[900px] print:hidden">
+          <iframe
+            src={`/api/invoices/${invoice.id}/pdf?inline=1`}
+            title="Invoice PDF preview"
+            className="w-full rounded-xl2 border border-line shadow-elevated"
+            style={{ height: pageCount > 1 ? '170vh' : '85vh' }}
+          />
+        </div>
+      )}
+
+      {/* Kept in the DOM (invisible on screen) purely so PrintButton's
+          window.print() has real content to print — see the `.invoice-print`
+          rules in globals.css, and the identical pattern in the invoice
+          builder's hidden print-only copy. */}
+      <div className="invoice-print hidden print:block mx-auto max-w-[760px]" style={PAPER_STYLE}>
         <div className="h-[5px] rounded-t-lg2 bg-brand print:hidden" />
         {isClassic ? (
           <InvoiceSheetClassic
@@ -265,7 +295,6 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
           />
         )}
       </div>
-      </PdfPreviewChrome>
     </div>
   );
 }

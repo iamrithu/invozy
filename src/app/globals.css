@@ -172,11 +172,4 @@ body {
   .eway-page {
     break-before: page;
   }
-  /* pdf-preview-chrome.tsx's on-screen zoom (a CSS transform) must never
-     reach print — a transformed ancestor becomes a new containing block,
-     which would break .invoice-print's position:absolute/inset:0 sizing. */
-  .pdf-zoom-wrap {
-    transform: none !important;
-    width: auto !important;
-  }
 }
