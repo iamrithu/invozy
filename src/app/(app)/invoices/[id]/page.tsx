@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, FileText, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Eye } from 'lucide-react';
 import { prisma } from '@/lib/prisma';
 import { getCompany } from '@/lib/get-company';
 import { computeTotals, fmtInr } from '@/lib/gst';
@@ -11,27 +11,15 @@ import { InvoiceSheetClassic } from '@/components/invoices/invoice-sheet-classic
 import { InvoiceEwayBillSheet } from '@/components/invoices/invoice-eway-bill-sheet';
 import { qrDataUrl } from '@/lib/qr';
 import { PrintButton } from './print-button';
-import { DownloadPdfButton } from './download-pdf-button';
+import { DownloadPdfButton } from '@/components/invoices/download-pdf-button';
 import { GenerateEinvoiceButton } from './generate-einvoice-button';
 import { GenerateEwaybillButton } from './generate-ewaybill-button';
 import { InvoiceCompletenessChecklist } from '@/components/invoices/invoice-completeness-checklist';
 
 export const dynamic = 'force-dynamic';
 
-export default async function InvoiceDetailPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
-}) {
+export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  // Set only by the PDF-generation route below (never by a real visit) when
-  // it headlessly navigates back to this same page to capture it as a PDF —
-  // without this, the on-screen preview iframe added below would itself
-  // request that same PDF route, which would navigate back here again,
-  // recursing forever.
-  const isInternalPdfRender = (await searchParams).pdf === '1';
   const [invoice, company] = await Promise.all([
     prisma.invoice.findUnique({
       where: { id },
@@ -94,7 +82,6 @@ export default async function InvoiceDetailPage({
     for (const [hsn, g] of groups) hsnGoods.push({ hsn, description: Array.from(g.names).join(' & '), qty: `${g.qty} ${g.unit}`, taxableValue: g.taxableValue });
   }
   const gstRateLabel = totals.useIgst ? `${Number(company.igstRate)}%` : `${Number(company.cgstRate)}+${Number(company.sgstRate)}`;
-  const pageCount = isClassic && invoice.ewbNo ? 2 : 1;
 
   const checklistItems = [
     { label: 'Company GSTIN', done: !!company.gstin, href: '/company' },
@@ -158,39 +145,21 @@ export default async function InvoiceDetailPage({
 
       {isClassic && <InvoiceCompletenessChecklist items={checklistItems} />}
 
-      {/* The real generated PDF (same file the Download button saves),
-          shown via the browser's own built-in PDF.js viewer — no custom
-          zoom/scale code to keep in sync with what actually prints. Skipped
-          during the PDF route's own headless render of this page (see
-          isInternalPdfRender above) so it never recurses into itself. */}
-      {!isInternalPdfRender && (
-        <div className="mx-auto max-w-[900px] print:hidden">
-          {/* Most mobile browsers (iOS/Android Safari & Chrome in particular)
-              don't reliably render a PDF inline inside an iframe — some just
-              show a blank frame. Desktop browsers handle it fine via their
-              own built-in viewer, so only fall back below md. */}
-          <iframe
-            src={`/api/invoices/${invoice.id}/pdf?inline=1`}
-            title="Invoice PDF preview"
-            className="hidden w-full rounded-xl2 border border-line shadow-elevated md:block"
-            style={{ height: pageCount > 1 ? '170vh' : '85vh' }}
-          />
-          <a
-            href={`/api/invoices/${invoice.id}/pdf?inline=1`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex flex-col items-center gap-2.5 rounded-xl2 border border-dashed border-line bg-surface p-8 text-center md:hidden"
-          >
-            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-light text-brand-dark">
-              <FileText size={20} />
-            </span>
-            <span className="text-[13px] font-bold text-ink">Open PDF preview</span>
-            <span className="flex items-center gap-1.5 text-[11.5px] font-bold text-brand">
-              View in a new tab <ExternalLink size={12} />
-            </span>
-          </a>
-        </div>
-      )}
+      {/* Opens the dedicated full-screen PDF flow (src/app/invoices/[id]/preview)
+          — renders the real generated PDF via pdf.js (canvas), which works
+          identically on every device, unlike an embedded <iframe> relying
+          on the browser's own PDF plugin (a blank box on most mobile
+          browsers). */}
+      <Link
+        href={`/invoices/${invoice.id}/preview`}
+        className="mx-auto flex max-w-[900px] flex-col items-center gap-2.5 rounded-xl2 border border-dashed border-line bg-surface p-10 text-center shadow-card transition-colors hover:border-brand/50 print:hidden"
+      >
+        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-light text-brand-dark">
+          <Eye size={20} />
+        </span>
+        <span className="text-[14px] font-bold text-ink">Preview PDF</span>
+        <span className="text-[11.5px] text-ink-faint">Opens a full-screen view of the exact PDF that downloads</span>
+      </Link>
 
       {/* Kept in the DOM (invisible on screen) purely so PrintButton's
           window.print() has real content to print — see the `.invoice-print`

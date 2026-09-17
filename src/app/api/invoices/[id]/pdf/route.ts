@@ -45,10 +45,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // no separate service-account/token scheme needed.
     if (cookies.length) await context.addCookies(cookies);
     const page = await context.newPage();
-    // `?pdf=1` tells the detail page to skip its own embedded preview iframe
-    // (which points at this very route) — otherwise this headless render
-    // would recurse into itself indefinitely.
-    await page.goto(`${origin}/invoices/${id}?pdf=1`, { waitUntil: 'networkidle' });
+    await page.goto(`${origin}/invoices/${id}`, { waitUntil: 'networkidle' });
     await page.emulateMedia({ media: 'print' });
     const pdf = await page.pdf({ format: 'A4', printBackground: true });
 
