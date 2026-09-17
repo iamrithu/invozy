@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, FileText, ExternalLink } from 'lucide-react';
 import { prisma } from '@/lib/prisma';
 import { getCompany } from '@/lib/get-company';
 import { computeTotals, fmtInr } from '@/lib/gst';
@@ -111,11 +111,11 @@ export default async function InvoiceDetailPage({
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between print:hidden">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 print:hidden">
         <Link href="/invoices" className="flex items-center gap-1.5 text-[13px] font-bold text-ink-soft">
           <ArrowLeft size={15} /> Back to invoices
         </Link>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={invoice.status} overdue={invoice.status !== 'PAID' && invoice.due < new Date()} />
           {isClassic && (
             <>
@@ -165,12 +165,30 @@ export default async function InvoiceDetailPage({
           isInternalPdfRender above) so it never recurses into itself. */}
       {!isInternalPdfRender && (
         <div className="mx-auto max-w-[900px] print:hidden">
+          {/* Most mobile browsers (iOS/Android Safari & Chrome in particular)
+              don't reliably render a PDF inline inside an iframe — some just
+              show a blank frame. Desktop browsers handle it fine via their
+              own built-in viewer, so only fall back below md. */}
           <iframe
             src={`/api/invoices/${invoice.id}/pdf?inline=1`}
             title="Invoice PDF preview"
-            className="w-full rounded-xl2 border border-line shadow-elevated"
+            className="hidden w-full rounded-xl2 border border-line shadow-elevated md:block"
             style={{ height: pageCount > 1 ? '170vh' : '85vh' }}
           />
+          <a
+            href={`/api/invoices/${invoice.id}/pdf?inline=1`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex flex-col items-center gap-2.5 rounded-xl2 border border-dashed border-line bg-surface p-8 text-center md:hidden"
+          >
+            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-light text-brand-dark">
+              <FileText size={20} />
+            </span>
+            <span className="text-[13px] font-bold text-ink">Open PDF preview</span>
+            <span className="flex items-center gap-1.5 text-[11.5px] font-bold text-brand">
+              View in a new tab <ExternalLink size={12} />
+            </span>
+          </a>
         </div>
       )}
 

@@ -31,6 +31,7 @@ export type ClassicCompany = {
 
 export type ClassicCustomer = {
   name: string;
+  shopName?: string | null;
   address?: string | null;
   state: string;
   gstin?: string | null;
@@ -195,6 +196,7 @@ export function InvoiceSheetClassic({
             {customer ? (
               <>
                 <div className="text-[13px] font-bold text-ink">{customer.name}</div>
+                {customer.shopName && <div className="font-semibold text-ink-body">{customer.shopName}</div>}
                 {customer.address && <div className="whitespace-pre-line leading-snug">{customer.address}</div>}
                 <div className="mt-1 font-mono font-tabular">GSTIN/UIN : {customer.gstin || '—'}</div>
                 <div>State Name : {customer.state}</div>

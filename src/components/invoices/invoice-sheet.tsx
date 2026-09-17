@@ -24,6 +24,7 @@ export type InvoiceSheetCompany = {
 
 export type InvoiceSheetCustomer = {
   name: string;
+  shopName?: string | null;
   address?: string | null;
   state: string;
   gstin?: string | null;
@@ -112,6 +113,7 @@ export function InvoiceSheet({
         {customer ? (
           <>
             <div className="text-[13px] font-bold text-ink">{customer.name}</div>
+            {customer.shopName && <div className="text-[12px] font-semibold text-ink-soft">{customer.shopName}</div>}
             <div className="mt-0.5 whitespace-pre-line text-[11.5px] leading-relaxed text-ink-soft">
               {customer.address ? `${customer.address}\n` : ''}
               {customer.state}
