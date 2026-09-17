@@ -9,15 +9,14 @@ export const dynamic = 'force-dynamic';
  * Real, one-click PDF download (as opposed to PrintButton's window.print(),
  * which only opens the browser's print dialog) — headlessly renders this
  * exact same /invoices/[id] page (same HTML/CSS/print rules already
- * verified via manual print-to-PDF) via Playwright (already a project
- * dependency) and streams the result back as an attachment.
+ * verified via manual print-to-PDF) via Playwright and streams the result
+ * back as an attachment.
  *
- * Requires Playwright's Chromium browser on the host — package.json's
- * `postinstall` already runs `playwright install chromium` (non-fatal: if
- * it can't fetch the browser on this host, install still succeeds and only
- * this route degrades). Fine on a persistent Node server out of the box;
- * a serverless host with strict binary-size/cold-start limits (e.g. Vercel)
- * needs extra setup (e.g. @sparticuz/chromium) instead of this.
+ * See src/lib/pdf-browser.ts for which Chromium actually gets launched —
+ * locally it's the full `playwright` package's own downloaded browser;
+ * on Vercel (or any serverless host) it's `@sparticuz/chromium` driven via
+ * `playwright-core`, since a downloaded browser binary never makes it into
+ * a serverless function's deployment bundle.
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
