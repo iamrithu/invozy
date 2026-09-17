@@ -24,13 +24,14 @@ export function AdminLoginClient() {
       password: String(formData.get('password') || ''),
       redirect: false,
     });
-    setPending(false);
     if (result?.error) {
+      setPending(false);
       const message = result.code === 'too-many-attempts' ? 'Too many failed attempts. Try again in a few minutes.' : 'Incorrect email or password.';
       setError(message);
       toast.error(message);
       return;
     }
+    // Stay pending through the navigation — see login-client.tsx's comment.
     router.push('/admin');
     router.refresh();
   }

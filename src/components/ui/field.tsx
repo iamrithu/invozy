@@ -1,5 +1,8 @@
+'use client';
+
+import { useState } from 'react';
 import clsx from 'clsx';
-import type { LucideIcon } from 'lucide-react';
+import { Eye, EyeOff, type LucideIcon } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -45,8 +48,10 @@ export function Field({
   required,
   disabled,
 }: FieldProps) {
+  const [showPassword, setShowPassword] = useState(false);
   const valueProps = value !== undefined ? { value, onChange } : { defaultValue };
-  const controlClassName = clsx(error && 'border-destructive focus:border-destructive', mono && 'font-mono');
+  const isPassword = as === 'input' && type === 'password';
+  const controlClassName = clsx(error && 'border-destructive focus:border-destructive', mono && 'font-mono', isPassword && 'pr-9');
 
   return (
     <div>
@@ -74,6 +79,28 @@ export function Field({
             </option>
           ))}
         </select>
+      ) : isPassword ? (
+        <div className="relative">
+          <Input
+            id={name}
+            name={name}
+            type={showPassword ? 'text' : 'password'}
+            placeholder={placeholder}
+            required={required}
+            disabled={disabled}
+            className={controlClassName}
+            {...valueProps}
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword((s) => !s)}
+            tabIndex={-1}
+            aria-label={showPassword ? 'Hide password' : 'Show password'}
+            className="absolute right-0 top-0 flex h-9 w-9 items-center justify-center text-ink-faint hover:text-ink-soft"
+          >
+            {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+          </button>
+        </div>
       ) : (
         <Input id={name} name={name} type={type} placeholder={placeholder} required={required} disabled={disabled} className={controlClassName} {...valueProps} />
       )}

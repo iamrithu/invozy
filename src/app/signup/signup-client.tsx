@@ -38,12 +38,13 @@ export function SignupClient() {
     }
 
     const signInResult = await signIn('tenant', { identifier: result.identifier, password, redirect: false });
-    setPending(false);
     if (signInResult?.error) {
+      setPending(false);
       toast.success('Account created — please log in.');
       router.push('/login');
       return;
     }
+    // Stay pending through the navigation — see login-client.tsx's comment.
     toast.success('Welcome to Invozy!');
     router.push('/dashboard');
     router.refresh();

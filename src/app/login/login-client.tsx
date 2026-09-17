@@ -25,13 +25,20 @@ export function LoginClient() {
       password: String(formData.get('password') || ''),
       redirect: false,
     });
-    setPending(false);
     if (result?.error) {
+      setPending(false);
       const message = result.code === 'too-many-attempts' ? 'Too many failed attempts. Try again in a few minutes.' : 'Incorrect email/phone or password.';
       setError(message);
       toast.error(message);
       return;
     }
+    // Left `pending` true here on purpose — this page's server-rendered
+    // dashboard fetch (router.refresh() below) takes a beat, and resetting
+    // the button back to its idle "Log in" label right before that gap
+    // looked like the whole screen had frozen, with zero feedback until the
+    // route actually swapped in. Staying in the loading state through the
+    // navigation removes that dead zone; there's nothing left to reset it
+    // since this component unmounts once the new route lands.
     router.push('/dashboard');
     router.refresh();
   }
