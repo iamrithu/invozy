@@ -15,6 +15,9 @@ const ProductSchema = z.object({
   price: z.coerce.number().min(0),
   packQty: z.coerce.number().int().min(0).optional().nullable(),
   desc: z.string().optional().nullable(),
+  hsn: z.string().optional().nullable(),
+  altUnit: z.string().optional().nullable(),
+  altQtyPerUnit: z.coerce.number().min(0).optional().nullable(),
 });
 
 /** Uploads any new image files in `newImages`, appends them to the URLs the

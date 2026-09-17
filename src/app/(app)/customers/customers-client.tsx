@@ -21,8 +21,10 @@ const PAGE_SIZE = 20;
 type Customer = {
   id: string;
   name: string;
+  shopName: string | null;
   contact: string | null;
   phone: string | null;
+  altPhone: string | null;
   email: string | null;
   state: string;
   gstin: string | null;
@@ -124,7 +126,7 @@ export function CustomersClient({ initialData }: { initialData: { items: Custome
                         {c.name}
                         {c.guest && <span className="ml-1.5 rounded-full bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold text-ink-faint">Guest</span>}
                       </div>
-                      <div className="truncate text-[11px] text-ink-faint">{c.state}</div>
+                      <div className="truncate text-[11px] text-ink-faint">{c.shopName ? `${c.shopName} · ${c.state}` : c.state}</div>
                     </span>
                   </button>
                 ))}
@@ -149,7 +151,7 @@ export function CustomersClient({ initialData }: { initialData: { items: Custome
         </div>
       </div>
 
-      <CustomerFormDialog open={addOpen} onOpenChange={setAddOpen} mode="create" onSaved={(id) => setSelectedId(id)} />
+      <CustomerFormDialog open={addOpen} onOpenChange={setAddOpen} mode="create" onSaved={(c) => setSelectedId(c.id)} />
       {selected && <CustomerFormDialog key={selected.id} open={editOpen} onOpenChange={setEditOpen} mode="edit" customer={selected} />}
     </div>
   );
@@ -187,6 +189,7 @@ function CustomerDetail({ customer, onEdit, onDeleted }: { customer: Customer; o
               {customer.name}
               {customer.guest && <span className="ml-2 rounded-full bg-surface-alt px-2 py-0.5 text-[10px] font-bold text-ink-faint">Guest</span>}
             </h3>
+            {customer.shopName && <p className="text-[12.5px] font-semibold text-ink-soft">{customer.shopName}</p>}
             <p className="text-[12px] text-ink-soft">
               {customer.state} {customer.gstin ? `· GSTIN ${customer.gstin}` : '· Unregistered'}
             </p>
@@ -221,6 +224,12 @@ function CustomerDetail({ customer, onEdit, onDeleted }: { customer: Customer; o
           <div className="flex justify-between">
             <span className="text-ink-faint">Phone</span>
             <span className="font-semibold text-ink-body">{customer.phone}</span>
+          </div>
+        )}
+        {customer.altPhone && (
+          <div className="flex justify-between">
+            <span className="text-ink-faint">Alternative phone</span>
+            <span className="font-semibold text-ink-body">{customer.altPhone}</span>
           </div>
         )}
         {customer.email && (

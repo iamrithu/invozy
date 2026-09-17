@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma';
 import { getCompany } from '@/lib/get-company';
 import { saveUploadedImage, deleteUploadedImage } from '@/lib/uploads';
 import { isValidThemeColor } from '@/lib/theme-presets';
+import { encryptSecret } from '@/lib/secret';
 
 const CompanySchema = z.object({
   name: z.string().min(1),
@@ -39,6 +40,23 @@ const CompanySchema = z.object({
   nextInvoiceNo: z.coerce.number().int().min(1),
   terms: z.string().optional().nullable(),
   themeColor: z.string().refine(isValidThemeColor, 'Invalid theme color').optional(),
+  invoiceTemplate: z.enum(['MODERN', 'CLASSIC']).optional(),
+  fssaiNo: z.string().optional().nullable(),
+  pincode: z.string().optional().nullable(),
+  // NIC e-Invoice/e-Way Bill sandbox (or production) credentials — all
+  // optional, a company may not have registered yet. Password/client
+  // secret are handled outside this schema (see updateCompany below): an
+  // empty submission means "keep the existing encrypted value", so they
+  // can't just be required/optional strings validated here.
+  nicSandbox: z.coerce.boolean().optional(),
+  nicUsername: z.string().optional().nullable(),
+  nicClientId: z.string().optional().nullable(),
+  // CLASSIC template's Prepared by / Verified by / Authorised Signatory row —
+  // all optional, blank means the printed row stays blank for physical
+  // signing (matching the reference Tally invoice).
+  preparedByName: z.string().optional().nullable(),
+  verifiedByName: z.string().optional().nullable(),
+  signatoryName: z.string().optional().nullable(),
 });
 
 export type CompanyFormState = { error?: string; fieldErrors?: Record<string, string> };
@@ -54,6 +72,7 @@ export async function updateCompany(_prev: CompanyFormState, formData: FormData)
     cgstEnabled: raw.cgstEnabled === 'on' || raw.cgstEnabled === 'true',
     sgstEnabled: raw.sgstEnabled === 'on' || raw.sgstEnabled === 'true',
     igstEnabled: raw.igstEnabled === 'on' || raw.igstEnabled === 'true',
+    nicSandbox: raw.nicSandbox === 'on' || raw.nicSandbox === 'true',
   });
   if (!parsed.success) {
     return { error: 'Check the highlighted fields.', fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string> };
@@ -75,9 +94,34 @@ export async function updateCompany(_prev: CompanyFormState, formData: FormData)
     logoUrl = null;
   }
 
+  let signatureUrl: string | null | undefined;
+  const signatureFile = formData.get('signature');
+  const removeSignature = formData.get('removeSignature') === 'true';
+  if (signatureFile instanceof File && signatureFile.size > 0) {
+    try {
+      signatureUrl = await saveUploadedImage(signatureFile, company.id, 'signature');
+    } catch (e: any) {
+      return { error: e.message ?? 'Could not upload signature.' };
+    }
+    if (company.signatureUrl) await deleteUploadedImage(company.signatureUrl);
+  } else if (removeSignature && company.signatureUrl) {
+    await deleteUploadedImage(company.signatureUrl);
+    signatureUrl = null;
+  }
+
+  // NIC password / client secret: a blank submission means "keep the
+  // existing encrypted value" — the form never round-trips the decrypted
+  // secret back to the client, so there's nothing to re-submit unless the
+  // user is actually changing it.
+  const nicPassword = formData.get('nicPassword');
+  const nicClientSecret = formData.get('nicClientSecret');
+  const secretUpdates: { nicPasswordEnc?: string; nicClientSecretEnc?: string } = {};
+  if (typeof nicPassword === 'string' && nicPassword.trim()) secretUpdates.nicPasswordEnc = encryptSecret(nicPassword.trim());
+  if (typeof nicClientSecret === 'string' && nicClientSecret.trim()) secretUpdates.nicClientSecretEnc = encryptSecret(nicClientSecret.trim());
+
   await prisma.company.update({
     where: { id: company.id },
-    data: { ...parsed.data, ...(logoUrl !== undefined ? { logoUrl } : {}) },
+    data: { ...parsed.data, ...(logoUrl !== undefined ? { logoUrl } : {}), ...(signatureUrl !== undefined ? { signatureUrl } : {}), ...secretUpdates },
   });
   revalidatePath('/company');
   revalidatePath('/'); // GST rate changes affect every page that computes totals

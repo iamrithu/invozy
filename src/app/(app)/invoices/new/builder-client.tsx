@@ -29,6 +29,7 @@ import {
   Clock,
   Tag,
   X,
+  IndianRupee,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { searchCustomersForBilling, getCustomerLedger } from '@/actions/customers';
@@ -38,6 +39,7 @@ import { useCreateCustomer } from '@/hooks/use-customers';
 import { useCreateProduct } from '@/hooks/use-products';
 import { computeTotals, fmtInr, type LineInput } from '@/lib/gst';
 import { numberToWords } from '@/lib/number-to-words';
+import { CustomerFormDialog } from '@/components/customers/customer-form-dialog';
 import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -45,10 +47,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { StateSelect } from '@/components/ui/location-field';
 import { Skeleton } from '@/components/ui/skeleton';
 import { InvoiceSheet } from '@/components/invoices/invoice-sheet';
+import { InvoiceSheetClassic } from '@/components/invoices/invoice-sheet-classic';
+import { InvoiceCompletenessChecklist } from '@/components/invoices/invoice-completeness-checklist';
 import { hashColor, initials } from '@/lib/avatar';
 import { PAPER_STYLE } from '@/lib/paper-theme';
 
-type Product = { id: string; name: string; category: string; unit: string; price: string | number; packQty?: number | null };
+type Product = { id: string; name: string; category: string; unit: string; price: string | number; packQty?: number | null; hsn?: string | null; altUnit?: string | null; altQtyPerUnit?: string | number | null };
 type Company = {
   name: string;
   address: string;
@@ -67,22 +71,48 @@ type Company = {
   cgstEnabled: boolean;
   sgstEnabled: boolean;
   igstEnabled: boolean;
+  invoiceTemplate: 'MODERN' | 'CLASSIC';
+  fssaiNo?: string | null;
+  pincode?: string | null;
+  pan?: string | null;
+  preparedByName?: string | null;
+  verifiedByName?: string | null;
+  signatoryName?: string | null;
+  signatureUrl?: string | null;
 };
 type Customer = {
   id: string;
   name: string;
+  shopName?: string | null;
   phone: string | null;
+  altPhone?: string | null;
   email?: string | null;
   address?: string | null;
   gstin?: string | null;
   state: string;
   guest: boolean;
   creditLimit?: string | number;
+  contact?: string | null;
+  fssaiNo?: string | null;
+  pincode?: string | null;
 };
 // productId is null for an ad-hoc/custom line item not backed by a catalog
 // Product — lineId (stable, client-generated) is the real key everywhere
 // since multiple custom lines would otherwise collide on a shared `null`.
-type Line = { lineId: string; productId: string | null; name: string; unit: string; qty: number; rate: number; discount: number; packQty?: number | null };
+type Line = {
+  lineId: string;
+  productId: string | null;
+  name: string;
+  unit: string;
+  qty: number;
+  rate: number;
+  discount: number;
+  packQty?: number | null;
+  hsn?: string | null;
+  batch?: string | null;
+  altUnit?: string | null;
+  altQtyPerUnit?: number | null;
+};
 
 const CATEGORY_TILE: Record<string, string> = {
   'Block ice': 'bg-chrome text-white',
@@ -130,6 +160,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
   const [outstandingElsewhere, setOutstandingElsewhere] = useState(0);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [editCustomerOpen, setEditCustomerOpen] = useState(false);
   const hydratedDraftRef = useRef(false);
 
   // Restore an unsaved draft left over from a refresh/accidental close, once.
@@ -233,20 +264,42 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
   const totalSavings = lineDiscountTotal + totals.overallDiscountAmount;
   const totalUnits = lines.reduce((s, l) => s + l.qty, 0);
 
-  function addProduct(p: Product) {
+  // A product with a known pack size (packQty) can be billed as two
+  // independent line items — e.g. "4 Box" and "30 pc" on the same invoice —
+  // rather than one line with a fractional box qty. Keyed by (productId,
+  // unit) so the box-line and the piece-line for the same product never
+  // collide and increment independently.
+  function addProductVariant(p: Product, variant: 'unit' | 'piece') {
+    const unit = variant === 'unit' ? p.unit : 'pc';
+    const rate = variant === 'unit' ? Number(p.price) : Number(p.price) / Number(p.packQty || 1);
     setLines((prev) => {
-      const existing = prev.find((l) => l.productId === p.id);
-      if (existing) return prev.map((l) => (l.productId === p.id ? { ...l, qty: l.qty + 1 } : l));
-      toast.success(`${p.name} added`);
-      return [...prev, { lineId: crypto.randomUUID(), productId: p.id, name: p.name, unit: p.unit, qty: 1, rate: Number(p.price), discount: 0, packQty: p.packQty }];
+      const existing = prev.find((l) => l.productId === p.id && l.unit === unit);
+      if (existing) return prev.map((l) => (l === existing ? { ...l, qty: l.qty + 1 } : l));
+      toast.success(`${p.name} added${variant === 'piece' ? ' (loose pc)' : ''}`);
+      return [
+        ...prev,
+        {
+          lineId: crypto.randomUUID(),
+          productId: p.id,
+          name: p.name,
+          unit,
+          qty: 1,
+          rate,
+          discount: 0,
+          packQty: variant === 'unit' ? p.packQty : null,
+          hsn: p.hsn,
+          altUnit: variant === 'unit' ? p.altUnit : null,
+          altQtyPerUnit: variant === 'unit' && p.altQtyPerUnit ? Number(p.altQtyPerUnit) : null,
+        },
+      ];
     });
   }
-  function decrementProductId(productId: string) {
+  function decrementProductVariant(productId: string, unit: string) {
     setLines((prev) => {
-      const l = prev.find((x) => x.productId === productId);
+      const l = prev.find((x) => x.productId === productId && x.unit === unit);
       if (!l) return prev;
-      if (l.qty <= 1) return prev.filter((x) => x.productId !== productId);
-      return prev.map((x) => (x.productId === productId ? { ...x, qty: x.qty - 1 } : x));
+      if (l.qty <= 1) return prev.filter((x) => x !== l);
+      return prev.map((x) => (x === l ? { ...x, qty: x.qty - 1 } : x));
     });
   }
   function addCustomLine(data: { name: string; unit: string; qty: number; rate: number; productId?: string; packQty?: number | null }) {
@@ -274,7 +327,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
     setLines((prev) => prev.filter((l) => l.lineId !== lineId));
   }
 
-  function save(markSent: boolean) {
+  function save(mode: 'draft' | 'sent' | 'paid') {
     if (!customer) {
       setError('Select a customer first');
       toast.error('Select a customer first');
@@ -294,7 +347,8 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
         items: lines,
         overallDiscountType: discountType,
         overallDiscountValue: discountValue,
-        markSent,
+        markSent: mode !== 'draft',
+        markPaid: mode === 'paid',
       });
       if (result.error) {
         setError(result.error);
@@ -302,7 +356,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
         return;
       }
       if (result.warning) toast.warning(result.warning);
-      toast.success(markSent ? 'Invoice sent' : 'Saved as draft');
+      toast.success(mode === 'paid' ? 'Invoice saved as paid in full' : mode === 'sent' ? 'Invoice sent' : 'Saved as draft');
       if (result.invoiceId) {
         try {
           localStorage.removeItem(DRAFT_KEY);
@@ -320,7 +374,43 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
   const creditLimit = Number(customer?.creditLimit ?? 0);
   const overLimit = creditLimit > 0 && projectedBalance >= creditLimit;
 
-  const sheet = (
+  const isClassic = company.invoiceTemplate === 'CLASSIC';
+
+  const checklistItems = [
+    { label: 'Company GSTIN', done: !!company.gstin, href: '/company' },
+    { label: 'Company PAN', done: !!company.pan, href: '/company' },
+    { label: 'Company FSSAI license no.', done: !!company.fssaiNo, href: '/company' },
+    { label: 'Company logo', done: !!company.logoUrl, href: '/company' },
+    { label: 'Bank details', done: !!(company.bankName && company.bankAcc && company.ifsc), href: '/company' },
+    { label: 'Terms', done: !!company.terms, href: '/company' },
+    { label: 'Authorised signatory (name or e-signature)', done: !!(company.signatoryName || company.signatureUrl), href: '/company' },
+    ...(customer
+      ? [
+          { label: `${customer.name}'s GSTIN`, done: !!customer.gstin, href: '/customers' },
+          { label: `${customer.name}'s contact / phone`, done: !!(customer.contact || customer.phone), href: '/customers' },
+        ]
+      : []),
+    ...(lines.length > 0 ? [{ label: 'HSN/SAC code on every line item', done: lines.every((l) => !!l.hsn) }] : []),
+  ];
+
+  const sheet = isClassic ? (
+    <InvoiceSheetClassic
+      company={company}
+      customer={customer}
+      date={date}
+      lines={lines}
+      totals={totals}
+      discountType={discountType}
+      discountValue={discountValue}
+      editable
+      onDiscountTypeChange={setDiscountType}
+      onDiscountValueChange={setDiscountValue}
+      onIncrement={incrementLineQty}
+      onDecrement={decrementLineQty}
+      onUpdateLine={updateLine}
+      onRemoveLine={removeLine}
+    />
+  ) : (
     <InvoiceSheet
       company={company}
       customer={customer}
@@ -390,10 +480,14 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
                     {customer.guest && <span className="ml-1.5 rounded-full bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold text-ink-faint">Guest</span>}
                   </div>
                   <div className="truncate text-[11px] text-ink-faint">
+                    {customer.shopName ? customer.shopName + ' · ' : ''}
                     {customer.phone ? customer.phone + ' · ' : ''}
                     {customer.state}
                   </div>
                 </div>
+                <Button variant="link" size="sm" className="flex-shrink-0 px-0" onClick={() => setEditCustomerOpen(true)}>
+                  Edit
+                </Button>
                 <Button variant="link" size="sm" className="flex-shrink-0 px-0" onClick={() => setCustomer(null)}>
                   Change
                 </Button>
@@ -454,6 +548,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
             {customer && (
               <div className="mt-2.5 rounded-md2 bg-bg p-2.5 text-[12px] leading-relaxed text-ink-soft">
                 <div className="text-[13px] font-bold text-ink">{customer.name}</div>
+                {customer.shopName && <div className="font-semibold">{customer.shopName}</div>}
                 {customer.address && <div>{customer.address}</div>}
                 <div>
                   {customer.state} {customer.gstin ? `· GSTIN ${customer.gstin}` : '· unregistered'}
@@ -476,6 +571,16 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
             )}
           </div>
 
+          {customer && (
+            <CustomerFormDialog
+              open={editCustomerOpen}
+              onOpenChange={setEditCustomerOpen}
+              mode="edit"
+              customer={customer}
+              onSaved={(c) => setCustomer({ ...c, phone: c.phone ?? null, guest: c.guest ?? false })}
+            />
+          )}
+
           <div data-tour="add-products" className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
             <div className="mb-2.5 flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wide text-ink-faint">
               <Package size={13} className="text-brand" /> Add products
@@ -497,7 +602,16 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
                     <Sparkles size={11} className="mr-1 inline" /> Frequently ordered by this customer
                   </div>
                   {frequentProducts.map((p) => (
-                    <ProductRow key={p.id} product={p} qty={lines.find((l) => l.productId === p.id)?.qty ?? 0} onAdd={() => addProduct(p)} onDecrement={() => decrementProductId(p.id)} />
+                    <ProductRow
+                      key={p.id}
+                      product={p}
+                      boxQty={lines.find((l) => l.productId === p.id && l.unit === p.unit)?.qty ?? 0}
+                      pieceQty={lines.find((l) => l.productId === p.id && l.unit === 'pc')?.qty ?? 0}
+                      onAddBox={() => addProductVariant(p, 'unit')}
+                      onDecrementBox={() => decrementProductVariant(p.id, p.unit)}
+                      onAddPiece={() => addProductVariant(p, 'piece')}
+                      onDecrementPiece={() => decrementProductVariant(p.id, 'pc')}
+                    />
                   ))}
                   <div className="mt-2 border-t border-line px-2 pb-1 pt-2.5 text-[11px] text-ink-faint">All products (A–Z)</div>
                 </>
@@ -506,7 +620,16 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
                 <p className="py-8 text-center text-[12px] text-ink-faint">No active products found.</p>
               ) : (
                 filteredProducts.map((p) => (
-                  <ProductRow key={p.id} product={p} qty={lines.find((l) => l.productId === p.id)?.qty ?? 0} onAdd={() => addProduct(p)} onDecrement={() => decrementProductId(p.id)} />
+                  <ProductRow
+                    key={p.id}
+                    product={p}
+                    boxQty={lines.find((l) => l.productId === p.id && l.unit === p.unit)?.qty ?? 0}
+                    pieceQty={lines.find((l) => l.productId === p.id && l.unit === 'pc')?.qty ?? 0}
+                    onAddBox={() => addProductVariant(p, 'unit')}
+                    onDecrementBox={() => decrementProductVariant(p.id, p.unit)}
+                    onAddPiece={() => addProductVariant(p, 'piece')}
+                    onDecrementPiece={() => decrementProductVariant(p.id, 'pc')}
+                  />
                 ))
               )}
             </div>
@@ -529,6 +652,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
         </div>
 
         <div data-tour="invoice-sheet" className="relative max-w-[720px]" style={PAPER_STYLE}>
+          {isClassic && <InvoiceCompletenessChecklist items={checklistItems} />}
           <div className="h-[5px] rounded-t-lg2 bg-brand" />
           {sheet}
         </div>
@@ -552,10 +676,13 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
       {error && <p className="mt-3 text-[12.5px] font-bold text-destructive">{error}</p>}
 
       <div data-tour="save-buttons" className="mt-3.5 flex flex-wrap justify-end gap-2.5">
-        <Button variant="outline" onClick={() => save(false)} disabled={saving}>
+        <Button variant="outline" onClick={() => save('draft')} disabled={saving}>
           <FileText size={13} /> Save as draft
         </Button>
-        <Button onClick={() => save(true)} disabled={saving}>
+        <Button variant="secondary" onClick={() => save('paid')} disabled={saving}>
+          <IndianRupee size={13} /> {saving ? 'Saving…' : 'Save & mark as paid'}
+        </Button>
+        <Button onClick={() => save('sent')} disabled={saving}>
           <CheckCircle2 size={13} /> {saving ? 'Saving…' : 'Save & mark as sent'}
         </Button>
       </div>
@@ -571,18 +698,22 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
             </DialogTitle>
           </DialogHeader>
           <div className="max-h-[70vh] overflow-y-auto" style={PAPER_STYLE}>
-            <InvoiceSheet
-              company={company}
-              customer={customer}
-              date={date}
-              due={due}
-              lines={lines}
-              totals={totals}
-              totalSavings={totalSavings}
-              discountType={discountType}
-              discountValue={discountValue}
-              editable={false}
-            />
+            {isClassic ? (
+              <InvoiceSheetClassic company={company} customer={customer} date={date} lines={lines} totals={totals} discountType={discountType} discountValue={discountValue} editable={false} />
+            ) : (
+              <InvoiceSheet
+                company={company}
+                customer={customer}
+                date={date}
+                due={due}
+                lines={lines}
+                totals={totals}
+                totalSavings={totalSavings}
+                discountType={discountType}
+                discountValue={discountValue}
+                editable={false}
+              />
+            )}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setPreviewOpen(false)}>
@@ -620,18 +751,22 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
           reflects live state, so "Download / print" from the dialog just
           calls window.print(). */}
       <div className="invoice-print hidden print:block" style={PAPER_STYLE}>
-        <InvoiceSheet
-          company={company}
-          customer={customer}
-          date={date}
-          due={due}
-          lines={lines}
-          totals={totals}
-          totalSavings={totalSavings}
-          discountType={discountType}
-          discountValue={discountValue}
-          editable={false}
-        />
+        {isClassic ? (
+          <InvoiceSheetClassic company={company} customer={customer} date={date} lines={lines} totals={totals} discountType={discountType} discountValue={discountValue} editable={false} />
+        ) : (
+          <InvoiceSheet
+            company={company}
+            customer={customer}
+            date={date}
+            due={due}
+            lines={lines}
+            totals={totals}
+            totalSavings={totalSavings}
+            discountType={discountType}
+            discountValue={discountValue}
+            editable={false}
+          />
+        )}
       </div>
     </>
   );
@@ -664,35 +799,103 @@ function ProgressStepper({ hasCustomer, hasItems }: { hasCustomer: boolean; hasI
   );
 }
 
-function ProductRow({ product, qty, onAdd, onDecrement }: { product: Product; qty: number; onAdd: () => void; onDecrement: () => void }) {
-  const perPiece = product.packQty && Number(product.packQty) > 0 ? fmtInr(Number(product.price) / Number(product.packQty)) + '/pc' : null;
+function ProductRow({
+  product,
+  boxQty,
+  pieceQty,
+  onAddBox,
+  onDecrementBox,
+  onAddPiece,
+  onDecrementPiece,
+}: {
+  product: Product;
+  boxQty: number;
+  pieceQty: number;
+  onAddBox: () => void;
+  onDecrementBox: () => void;
+  onAddPiece: () => void;
+  onDecrementPiece: () => void;
+}) {
+  const hasPack = !!product.packQty && Number(product.packQty) > 0;
+  const perPieceRate = hasPack ? Number(product.price) / Number(product.packQty) : null;
+  const active = boxQty > 0 || pieceQty > 0;
   return (
-    <div className={`flex items-center gap-2.5 rounded-lg2 px-2 py-2 transition-colors hover:bg-bg ${qty > 0 ? 'bg-brand-light' : ''}`}>
-      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full ${categoryTile(product.category)}`}>
-        <CategoryIcon category={product.category} size={15} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[12.5px] font-bold text-ink">{product.name}</div>
-        <div className="text-[11px] text-ink-faint">
-          {fmtInr(Number(product.price))} / {product.unit}
-          {perPiece ? ` · ≈${perPiece}` : ''}
+    <div className={`rounded-lg2 px-2.5 py-2.5 transition-colors hover:bg-bg ${active ? 'bg-brand-light' : ''}`}>
+      <div className="flex items-center gap-2.5">
+        <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full ${categoryTile(product.category)}`}>
+          <CategoryIcon category={product.category} size={15} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[12.5px] font-bold text-ink">{product.name}</div>
+          <div className="text-[11px] text-ink-faint">
+            {fmtInr(Number(product.price))} / {product.unit}
+            {perPieceRate ? ` · ${fmtInr(perPieceRate)}/pc` : ''}
+          </div>
         </div>
+        {/* Simple products (no known pack size) keep one compact counter here.
+            A product sold with a known pack size gets the fuller two-up
+            layout below instead, so "as box" vs "as piece" never has to be
+            inferred from a cramped pair of stacked pills. */}
+        {!hasPack && <QtyCounter unitLabel={product.unit} qty={boxQty} onAdd={onAddBox} onDecrement={onDecrementBox} name={product.name} />}
       </div>
+      {hasPack && (
+        <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-dashed border-line pt-2.5">
+          <UnitCounterBlock caption="As box" unitLabel={product.unit} qty={boxQty} onAdd={onAddBox} onDecrement={onDecrementBox} name={product.name} />
+          <UnitCounterBlock caption="As piece" unitLabel="pc" qty={pieceQty} onAdd={onAddPiece} onDecrement={onDecrementPiece} name={`${product.name} (loose pc)`} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Compact right-aligned +/- pill, used inline for products with no pack
+ * size to convert to (nothing to choose between). */
+function QtyCounter({ unitLabel, qty, onAdd, onDecrement, name }: { unitLabel: string; qty: number; onAdd: () => void; onDecrement: () => void; name: string }) {
+  if (qty > 0) {
+    return (
+      <div className="flex flex-shrink-0 items-center gap-1.5 rounded-full border-[1.5px] border-brand bg-surface p-0.5">
+        <button onClick={onDecrement} aria-label={`Decrease ${name} quantity`} className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-brand-light text-brand-dark">
+          <Minus size={11} />
+        </button>
+        <span key={qty} className="min-w-[20px] animate-bump text-center font-mono text-[12px] font-extrabold">
+          {qty}
+        </span>
+        <button onClick={onAdd} aria-label={`Increase ${name} quantity`} className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-brand-light text-brand-dark">
+          <Plus size={11} />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <button onClick={onAdd} className="flex flex-shrink-0 items-center gap-1 rounded-full bg-brand px-3 py-1.5 text-[11.5px] font-extrabold text-white">
+      <Plus size={12} /> Add
+    </button>
+  );
+}
+
+/** Full-width labeled counter — one of the two "As box" / "As piece" blocks
+ * shown for a product with a known pack size. Deliberately roomier and
+ * captioned (rather than two small stacked pills) so it's unambiguous which
+ * unit each control adds, both while empty and once a line exists. */
+function UnitCounterBlock({ caption, unitLabel, qty, onAdd, onDecrement, name }: { caption: string; unitLabel: string; qty: number; onAdd: () => void; onDecrement: () => void; name: string }) {
+  return (
+    <div className="flex flex-col items-center gap-1 rounded-lg2 bg-bg py-2">
+      <span className="text-[9px] font-bold uppercase tracking-wide text-ink-faint">{caption}</span>
       {qty > 0 ? (
-        <div className="flex flex-shrink-0 items-center gap-1.5 rounded-full border-[1.5px] border-brand bg-surface p-0.5">
-          <button onClick={onDecrement} aria-label={`Decrease ${product.name} quantity`} className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-brand-light text-brand-dark">
+        <div className="flex items-center gap-1.5 rounded-full border-[1.5px] border-brand bg-surface p-0.5">
+          <button onClick={onDecrement} aria-label={`Decrease ${name} quantity`} className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-brand-light text-brand-dark">
             <Minus size={11} />
           </button>
-          <span key={qty} className="w-5 animate-bump text-center font-mono text-[12px] font-extrabold">
-            {qty}
+          <span key={qty} className="min-w-[38px] animate-bump text-center font-mono text-[12px] font-extrabold">
+            {qty} {unitLabel}
           </span>
-          <button onClick={onAdd} aria-label={`Increase ${product.name} quantity`} className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-brand-light text-brand-dark">
+          <button onClick={onAdd} aria-label={`Increase ${name} quantity`} className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-brand-light text-brand-dark">
             <Plus size={11} />
           </button>
         </div>
       ) : (
-        <button onClick={onAdd} className="flex flex-shrink-0 items-center gap-1 rounded-full bg-brand px-3 py-1.5 text-[11.5px] font-extrabold text-white">
-          <Plus size={12} /> Add
+        <button onClick={onAdd} className="flex items-center gap-1 rounded-full bg-brand px-3 py-1.5 text-[11px] font-extrabold text-white">
+          <Plus size={11} /> {unitLabel}
         </button>
       )}
     </div>
@@ -710,10 +913,12 @@ function AddCustomItemForm({
   const [unit, setUnit] = useState('pc');
   const [qty, setQty] = useState('1');
   const [rate, setRate] = useState('');
-  // Optional — set only for a bulk unit (e.g. a box) sold with a fixed
-  // piece count, so "extra pieces" below can express a partial unit.
+  // Optional — only meaningful if this gets saved as a catalog product
+  // (below): a known pack size lets the builder later offer it as two
+  // independent lines (e.g. "4 Box" and "30 pc"), same as any other
+  // catalog product — see addProductVariant. Not used to blend a
+  // fractional quantity into this one line any more.
   const [packQty, setPackQty] = useState('');
-  const [pieces, setPieces] = useState('0');
   const [saveAsProduct, setSaveAsProduct] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const createProduct = useCreateProduct();
@@ -722,9 +927,7 @@ function AddCustomItemForm({
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const boxesNum = parseFloat(qty) || 0;
-    const piecesNum = packQtyNum > 0 ? Math.max(0, Math.min(packQtyNum - 1, parseInt(pieces, 10) || 0)) : 0;
-    const qtyNum = packQtyNum > 0 ? boxesNum + piecesNum / packQtyNum : boxesNum;
+    const qtyNum = parseFloat(qty) || 0;
     const rateNum = parseFloat(rate) || 0;
     if (!name.trim()) {
       setError('Name is required');
@@ -760,7 +963,6 @@ function AddCustomItemForm({
     setQty('1');
     setRate('');
     setPackQty('');
-    setPieces('0');
     setSaveAsProduct(false);
   }
 
@@ -771,17 +973,16 @@ function AddCustomItemForm({
         <Field label="Unit" name="unit" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="pc, kg, box…" />
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <Field label={packQtyNum > 0 ? `${unit || 'Box'} count` : 'Qty'} name="qty" type="number" value={qty} onChange={(e) => setQty(e.target.value)} mono />
+        <Field label="Qty" name="qty" type="number" value={qty} onChange={(e) => setQty(e.target.value)} mono />
         <Field label="Rate (₹)" name="rate" type="number" value={rate} onChange={(e) => setRate(e.target.value)} mono />
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Pieces per unit (optional)" name="packQty" type="number" value={packQty} onChange={(e) => setPackQty(e.target.value)} mono />
-        {packQtyNum > 0 && <Field label="+ extra loose pieces" name="pieces" type="number" value={pieces} onChange={(e) => setPieces(e.target.value)} mono />}
       </div>
       <label className="flex items-center gap-2 text-[11.5px] font-semibold text-ink-soft">
         <input type="checkbox" checked={saveAsProduct} onChange={(e) => setSaveAsProduct(e.target.checked)} className="h-3.5 w-3.5 rounded-sm2 border-line accent-brand" />
         Save this as a product for next time
       </label>
+      {saveAsProduct && unit.trim().toLowerCase() !== 'pc' && (
+        <Field label="Pieces per unit (optional — lets you also bill this product loose, by the piece, later)" name="packQty" type="number" value={packQty} onChange={(e) => setPackQty(e.target.value)} mono />
+      )}
       {error && <p className="text-[11.5px] font-bold text-destructive">{error}</p>}
       <div className="flex gap-2">
         <Button type="button" variant="outline" size="sm" className="flex-1 justify-center" onClick={onCancel}>
@@ -814,7 +1015,9 @@ function QuickAddCustomer({ query, onCreated, onCancel }: { query: string; onCre
     onCreated({
       id: result.id!,
       name: String(formData.get('name')),
+      shopName: String(formData.get('shopName') || ''),
       phone: String(formData.get('phone') || ''),
+      altPhone: String(formData.get('altPhone') || ''),
       email: String(formData.get('email') || ''),
       address: String(formData.get('address') || ''),
       gstin: String(formData.get('gstin') || ''),
@@ -828,7 +1031,12 @@ function QuickAddCustomer({ query, onCreated, onCancel }: { query: string; onCre
     <form onSubmit={submit} className="space-y-2.5 rounded-lg2 border border-line bg-bg p-3">
       <div className="grid grid-cols-2 gap-2">
         <Field label="Name" name="name" defaultValue={looksLikePhone ? '' : query} />
+        <Field label="Shop name (optional)" name="shopName" />
         <Field label="Mobile" name="phone" defaultValue={looksLikePhone ? query : ''} />
+        <Field label="Alternative phone (optional)" name="altPhone" />
+        <div className="col-span-2">
+          <Field label="GSTIN (optional)" name="gstin" mono />
+        </div>
       </div>
       <StateSelect name="state" value={quickAddState} onChange={setQuickAddState} />
       {error && <p className="text-[11.5px] font-bold text-destructive">{error}</p>}

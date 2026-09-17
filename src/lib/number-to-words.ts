@@ -26,3 +26,15 @@ export function numberToWords(amount: number): string {
   if (rest) parts.push(threeDigits(rest));
   return parts.join(' ');
 }
+
+/** Rupees + paise in words — e.g. 266.66 -> "Two Hundred Sixty Six and Sixty
+ * Six Paise". Used for the CLASSIC template's "Tax Amount (in words)" line:
+ * unlike the invoice total (always a whole rupee after round-off), a raw
+ * CGST/SGST/IGST sum is genuinely fractional. */
+export function amountToWordsWithPaise(amount: number): string {
+  const rupees = Math.floor(amount + 1e-9);
+  const paise = Math.round((amount - rupees) * 100);
+  const rupeesWords = numberToWords(rupees);
+  if (paise <= 0) return rupeesWords;
+  return `${rupeesWords} and ${twoDigits(paise)} Paise`;
+}

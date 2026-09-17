@@ -105,3 +105,56 @@ export function deriveStatus(total: number, amountPaid: number, wasSent: boolean
 export function fmtInr(n: number): string {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(n || 0);
 }
+
+export type HsnSummaryRow = {
+  hsn: string;
+  taxableValue: number;
+  cgstRate: number;
+  cgstAmount: number;
+  sgstRate: number;
+  sgstAmount: number;
+  igstRate: number;
+  igstAmount: number;
+  totalTax: number;
+};
+
+/** HSN/SAC-wise tax breakdown for the CLASSIC (Tally-style) template — Modern
+ * template + computeTotals() only ever need one whole-invoice CGST/SGST/IGST
+ * bucket, but a classic GST invoice must show taxable value and tax split
+ * per HSN code. The invoice-level overall discount (§3.2) doesn't belong to
+ * any one HSN, so it's allocated across groups proportionally to each
+ * group's share of the pre-discount subtotal — the resulting rows sum back
+ * exactly to computeTotals()'s taxable/cgst/sgst/igst for the same lines. */
+export function computeHsnSummary(lines: (LineInput & { hsn?: string | null })[], overallDiscount: OverallDiscount, rates: GstRates, companyState: string, customerState: string): HsnSummaryRow[] {
+  const subtotal = lines.reduce((sum, l) => sum + l.qty * l.rate * (1 - (l.discount || 0) / 100), 0);
+  const overallDiscountAmount = overallDiscount.type === 'PERCENT' ? subtotal * ((overallDiscount.value || 0) / 100) : Math.min(overallDiscount.value || 0, subtotal);
+  const useIgst = decidesIgst(companyState, customerState, rates.igstEnabled);
+
+  const groups = new Map<string, number>();
+  for (const l of lines) {
+    const hsn = l.hsn?.trim() || '—';
+    const lineTaxable = l.qty * l.rate * (1 - (l.discount || 0) / 100);
+    groups.set(hsn, (groups.get(hsn) ?? 0) + lineTaxable);
+  }
+
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([hsn, groupSubtotal]) => {
+      const share = subtotal > 0 ? groupSubtotal / subtotal : 0;
+      const taxableValue = Math.max(groupSubtotal - overallDiscountAmount * share, 0);
+      const cgstAmount = !useIgst && rates.cgstEnabled ? taxableValue * (rates.cgstRate / 100) : 0;
+      const sgstAmount = !useIgst && rates.sgstEnabled ? taxableValue * (rates.sgstRate / 100) : 0;
+      const igstAmount = useIgst ? taxableValue * (rates.igstRate / 100) : 0;
+      return {
+        hsn,
+        taxableValue,
+        cgstRate: !useIgst && rates.cgstEnabled ? rates.cgstRate : 0,
+        cgstAmount,
+        sgstRate: !useIgst && rates.sgstEnabled ? rates.sgstRate : 0,
+        sgstAmount,
+        igstRate: useIgst ? rates.igstRate : 0,
+        igstAmount,
+        totalTax: cgstAmount + sgstAmount + igstAmount,
+      };
+    });
+}

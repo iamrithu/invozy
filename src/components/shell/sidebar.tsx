@@ -30,7 +30,7 @@ export function Sidebar() {
   return (
     <aside
       className={clsx(
-        'sticky top-[61px] hidden h-[calc(100vh-61px)] flex-shrink-0 flex-col border-r border-line bg-surface transition-[width,padding] duration-200 md:flex',
+        'sticky top-[61px] hidden h-[calc(100vh-61px)] flex-shrink-0 flex-col border-r border-line bg-surface transition-[width,padding] duration-200 print:hidden md:flex',
         collapsed ? 'w-[60px] px-2 py-4' : 'w-[216px] px-3 py-4'
       )}
     >

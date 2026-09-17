@@ -7,8 +7,10 @@ import { getCompany } from '@/lib/get-company';
 
 const CustomerSchema = z.object({
   name: z.string().min(1, 'Name is required'),
+  shopName: z.string().optional().nullable(),
   contact: z.string().optional().nullable(),
   phone: z.string().optional().nullable(),
+  altPhone: z.string().optional().nullable(),
   email: z.string().email().optional().or(z.literal('')).nullable(),
   state: z.string().min(1),
   district: z.string().optional().nullable(),
@@ -16,6 +18,8 @@ const CustomerSchema = z.object({
   address: z.string().optional().nullable(),
   terms: z.string().default('Due on receipt'),
   creditLimit: z.coerce.number().min(0).default(0),
+  fssaiNo: z.string().optional().nullable(),
+  pincode: z.string().optional().nullable(),
 });
 
 export type CustomerFormState = { error?: string; fieldErrors?: Record<string, string>; id?: string };

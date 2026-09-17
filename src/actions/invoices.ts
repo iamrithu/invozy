@@ -14,6 +14,12 @@ const LineSchema = z.object({
   qty: z.coerce.number().positive(),
   rate: z.coerce.number().min(0),
   discount: z.coerce.number().min(0).max(100).default(0),
+  // Snapshotted at creation time (CLASSIC template + e-Invoice/e-Way Bill) —
+  // hsn defaults from the product's catalog HSN when not overridden per-line.
+  hsn: z.string().optional().nullable(),
+  batch: z.string().optional().nullable(),
+  altUnit: z.string().optional().nullable(),
+  altQtyPerUnit: z.coerce.number().optional().nullable(),
 });
 
 const InvoiceInputSchema = z.object({
@@ -24,6 +30,10 @@ const InvoiceInputSchema = z.object({
   overallDiscountType: z.enum(['PERCENT', 'FLAT']).default('PERCENT'),
   overallDiscountValue: z.coerce.number().min(0).default(0),
   markSent: z.boolean().default(false),
+  // Records a full-amount Payment alongside the invoice so it's created
+  // already PAID — for walk-in/cash-on-delivery sales where there's no real
+  // "unpaid" period to track, this skips the separate record-payment step.
+  markPaid: z.boolean().default(false),
 });
 
 export type InvoiceInput = z.infer<typeof InvoiceInputSchema>;
@@ -106,7 +116,7 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
         number,
         date: new Date(data.date),
         due: new Date(data.due),
-        status: data.markSent ? 'SENT' : 'DRAFT',
+        status: data.markPaid ? 'PAID' : data.markSent ? 'SENT' : 'DRAFT',
         overallDiscountType: data.overallDiscountType,
         overallDiscountValue: data.overallDiscountValue,
         items: {
@@ -117,8 +127,13 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
             qty: l.qty,
             rate: l.rate,
             discount: l.discount,
+            hsn: l.hsn,
+            batch: l.batch,
+            altUnit: l.altUnit,
+            altQtyPerUnit: l.altQtyPerUnit,
           })),
         },
+        ...(data.markPaid ? { payments: { create: { amount: totals.total, date: new Date(data.date), mode: 'Cash' } } } : {}),
       },
     });
   });
@@ -271,10 +286,64 @@ export async function duplicateInvoice(id: string) {
         status: 'DRAFT',
         overallDiscountType: src.overallDiscountType,
         overallDiscountValue: src.overallDiscountValue,
-        items: { create: src.items.map((it) => ({ productId: it.productId, name: it.name, unit: it.unit, qty: it.qty, rate: it.rate, discount: it.discount })) },
+        items: {
+          create: src.items.map((it) => ({
+            productId: it.productId,
+            name: it.name,
+            unit: it.unit,
+            qty: it.qty,
+            rate: it.rate,
+            discount: it.discount,
+            hsn: it.hsn,
+            batch: it.batch,
+            altUnit: it.altUnit,
+            altQtyPerUnit: it.altQtyPerUnit,
+          })),
+        },
       },
     });
   });
   revalidatePath('/invoices');
   return created.id;
+}
+
+const DispatchDetailsSchema = z.object({
+  deliveryNote: z.string().optional().nullable(),
+  deliveryNoteDate: z.string().optional().nullable(),
+  buyersOrderNo: z.string().optional().nullable(),
+  buyersOrderDate: z.string().optional().nullable(),
+  dispatchDocNo: z.string().optional().nullable(),
+  otherReferences: z.string().optional().nullable(),
+  billOfLadingNo: z.string().optional().nullable(),
+  destination: z.string().optional().nullable(),
+});
+
+/** The standard Tally-style reference fields on the CLASSIC template's
+ * header grid (Delivery Note, Buyer's Order No, Dispatch Doc No, Bill of
+ * Lading/LR-RR No, Other References, Destination) — pure print/reference
+ * fields, no GST math or NIC payload depends on them, so this is a plain
+ * update with no recompute/side effects. */
+export async function updateDispatchDetails(invoiceId: string, input: z.infer<typeof DispatchDetailsSchema>): Promise<{ error?: string }> {
+  const parsed = DispatchDetailsSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid dispatch details' };
+
+  const company = await getCompany();
+  const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
+  if (invoice.companyId !== company.id) return { error: 'Invoice not found.' };
+
+  await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: {
+      deliveryNote: parsed.data.deliveryNote,
+      deliveryNoteDate: parsed.data.deliveryNoteDate ? new Date(parsed.data.deliveryNoteDate) : null,
+      buyersOrderNo: parsed.data.buyersOrderNo,
+      buyersOrderDate: parsed.data.buyersOrderDate ? new Date(parsed.data.buyersOrderDate) : null,
+      dispatchDocNo: parsed.data.dispatchDocNo,
+      otherReferences: parsed.data.otherReferences,
+      billOfLadingNo: parsed.data.billOfLadingNo,
+      destination: parsed.data.destination,
+    },
+  });
+  revalidatePath(`/invoices/${invoiceId}`);
+  return {};
 }

@@ -5,7 +5,7 @@ import { useActionState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import type { Company } from '@prisma/client';
-import { Building2, Globe, Phone, Home, IdCard, Percent, Landmark, Hash, FileText, Pencil, Check, Flag, Palette, ImagePlus, X, Mail } from 'lucide-react';
+import { Building2, Globe, Phone, Home, IdCard, Percent, Landmark, Hash, FileText, Pencil, Check, Flag, Palette, ImagePlus, X, Mail, ShieldCheck, MapPin, KeyRound, LayoutTemplate, PenLine, UserCheck, UserCog } from 'lucide-react';
 import { toast } from 'sonner';
 import { updateCompany, type CompanyFormState } from '@/actions/company';
 import { Field } from '@/components/ui/field';
@@ -23,6 +23,8 @@ const TABS = [
   { id: 'banking', label: 'Banking', icon: Landmark },
   { id: 'numbering', label: 'Numbering', icon: Hash },
   { id: 'terms', label: 'Terms', icon: FileText },
+  { id: 'compliance', label: 'e-Invoice / e-Way Bill', icon: ShieldCheck },
+  { id: 'signatures', label: 'Signatures', icon: PenLine },
 ] as const;
 
 export function CompanyForm({ company }: { company: Company }) {
@@ -41,8 +43,13 @@ export function CompanyForm({ company }: { company: Company }) {
   const [logoRemoved, setLogoRemoved] = useState(false);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
+  const [signatureFile, setSignatureFile] = useState<File | null>(null);
+  const [signatureRemoved, setSignatureRemoved] = useState(false);
+  const [signaturePreview, setSignaturePreview] = useState<string | null>(null);
+  const signatureInputRef = useRef<HTMLInputElement>(null);
   const [selectedState, setSelectedState] = useState(company.state);
   const [selectedDistrict, setSelectedDistrict] = useState(company.district ?? '');
+  const [invoiceTemplate, setInvoiceTemplate] = useState<'MODERN' | 'CLASSIC'>(company.invoiceTemplate);
 
   useEffect(() => {
     if (!submittedRef.current) return;
@@ -65,6 +72,16 @@ export function CompanyForm({ company }: { company: Company }) {
     return () => URL.revokeObjectURL(url);
   }, [logoFile]);
 
+  useEffect(() => {
+    if (!signatureFile) {
+      setSignaturePreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(signatureFile);
+    setSignaturePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [signatureFile]);
+
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     submittedRef.current = true;
@@ -72,10 +89,13 @@ export function CompanyForm({ company }: { company: Company }) {
     formData.set('themeColor', themeColor);
     if (logoFile) formData.set('logo', logoFile);
     if (logoRemoved) formData.set('removeLogo', 'true');
+    if (signatureFile) formData.set('signature', signatureFile);
+    if (signatureRemoved) formData.set('removeSignature', 'true');
     formAction(formData);
   }
 
   const currentLogo = logoRemoved ? null : logoPreview ?? company.logoUrl;
+  const currentSignature = signatureRemoved ? null : signaturePreview ?? company.signatureUrl;
 
   return (
     <>
@@ -264,6 +284,116 @@ export function CompanyForm({ company }: { company: Company }) {
 
               <div className={tab === 'terms' ? 'grid grid-cols-1 gap-3' : 'hidden'}>
                 <Field label="Printed on every invoice unless overridden" name="terms" icon={FileText} defaultValue={company.terms ?? ''} as="textarea" />
+              </div>
+
+              <div className={tab === 'compliance' ? 'space-y-5' : 'hidden'}>
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-bold text-ink-faint">Invoice template</label>
+                  <div className="flex gap-2.5">
+                    {(['MODERN', 'CLASSIC'] as const).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setInvoiceTemplate(t)}
+                        className={`flex flex-1 items-center gap-2 rounded-lg2 border-[1.5px] px-3.5 py-2.5 text-left text-[12.5px] font-bold transition-colors ${
+                          invoiceTemplate === t ? 'border-brand bg-brand-light text-brand-dark' : 'border-line text-ink-soft'
+                        }`}
+                      >
+                        <LayoutTemplate size={14} className="flex-shrink-0" />
+                        {t === 'MODERN' ? 'Modern' : 'Classic (GST/Tally)'}
+                      </button>
+                    ))}
+                  </div>
+                  <input type="hidden" name="invoiceTemplate" value={invoiceTemplate} />
+                  <p className="mt-1.5 text-[11px] text-ink-faint">Classic mirrors a standard Tally-style GST tax invoice — IRN/QR, HSN-wise tax summary, and (when generated) an e-Way Bill page.</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="FSSAI license no. (optional)" name="fssaiNo" icon={ShieldCheck} mono defaultValue={company.fssaiNo ?? ''} />
+                  <Field label="Pincode" name="pincode" icon={MapPin} mono defaultValue={company.pincode ?? ''} />
+                </div>
+
+                <div className="rounded-lg2 border border-line bg-bg p-3.5">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wide text-ink-faint">
+                      <KeyRound size={13} className="text-brand" /> NIC e-Invoice / e-Way Bill API
+                    </div>
+                    <label className="flex items-center gap-2 text-[11.5px] font-bold text-ink-soft">
+                      Sandbox
+                      <Switch name="nicSandbox" defaultChecked={company.nicSandbox} />
+                    </label>
+                  </div>
+                  <p className="mb-3 text-[11px] leading-relaxed text-ink-faint">
+                    Register on the NIC e-Invoice/e-Way Bill sandbox (or production, once approved) to generate real IRNs and e-Way Bill numbers from your invoices. Leave the password/client secret
+                    blank to keep the value already saved.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Username" name="nicUsername" icon={IdCard} mono defaultValue={company.nicUsername ?? ''} />
+                    <Field label={company.nicPasswordEnc ? 'Password (•••• saved — leave blank to keep)' : 'Password'} name="nicPassword" type="password" icon={KeyRound} mono />
+                    <Field label="Client ID" name="nicClientId" icon={IdCard} mono defaultValue={company.nicClientId ?? ''} />
+                    <Field
+                      label={company.nicClientSecretEnc ? 'Client secret (•••• saved — leave blank to keep)' : 'Client secret'}
+                      name="nicClientSecret"
+                      type="password"
+                      icon={KeyRound}
+                      mono
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className={tab === 'signatures' ? 'space-y-5' : 'hidden'}>
+                <p className="text-[11px] leading-relaxed text-ink-faint">
+                  Printed on the CLASSIC template&apos;s Prepared by / Verified by / Authorised Signatory row. Leave any of these blank to keep that column blank for physical signing, the same way the
+                  reference Tally invoice does.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Prepared by" name="preparedByName" icon={UserCog} defaultValue={company.preparedByName ?? ''} />
+                  <Field label="Verified by" name="verifiedByName" icon={UserCheck} defaultValue={company.verifiedByName ?? ''} />
+                </div>
+                <Field label="Authorised signatory name" name="signatoryName" icon={PenLine} defaultValue={company.signatoryName ?? ''} />
+
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-bold text-ink-faint">Authorised signatory e-signature (optional)</label>
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-16 w-28 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg2 border border-line bg-bg">
+                      {currentSignature ? <ZoomableImage src={currentSignature} alt="Signature" /> : <PenLine size={20} className="text-ink-faint" />}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => signatureInputRef.current?.click()}>
+                        <ImagePlus size={13} /> {currentSignature ? 'Replace' : 'Upload'}
+                      </Button>
+                      {currentSignature && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setSignatureFile(null);
+                            setSignatureRemoved(true);
+                          }}
+                        >
+                          <X size={13} /> Remove
+                        </Button>
+                      )}
+                    </div>
+                    <input
+                      ref={signatureInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      hidden
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setSignatureFile(file);
+                          setSignatureRemoved(false);
+                        }
+                        e.target.value = '';
+                      }}
+                    />
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-ink-faint">A scanned signature image, shown above the Authorised Signatory line instead of a blank space.</p>
+                </div>
               </div>
 
               {state.error && <p className="mt-3 text-[12.5px] font-bold text-destructive">{state.error}</p>}

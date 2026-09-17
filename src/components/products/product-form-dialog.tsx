@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Package, Tag, Ruler, IndianRupee, Boxes, FileText, Eye, EyeOff, Trash2, Check, Sparkles } from 'lucide-react';
+import { Package, Tag, Ruler, IndianRupee, Boxes, FileText, Eye, EyeOff, Trash2, Check, Sparkles, Hash } from 'lucide-react';
 import { toast } from 'sonner';
 import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,9 @@ type Product = {
   active: boolean;
   desc: string | null;
   images: string[];
+  hsn?: string | null;
+  altUnit?: string | null;
+  altQtyPerUnit?: string | number | null;
 };
 
 export function ProductFormDialog({
@@ -49,6 +52,7 @@ export function ProductFormDialog({
   const [unit, setUnit] = useState(product?.unit ?? prefill?.unit ?? 'kg');
   const [price, setPrice] = useState(product?.price?.toString() ?? prefill?.price ?? '');
   const [packQty, setPackQty] = useState(product?.packQty?.toString() ?? '');
+  const [altUnit, setAltUnit] = useState(product?.altUnit ?? '');
   // Stored `price` is always per-`unit` (e.g. per box) — this only controls
   // what the price input currently *displays*/accepts, converting on toggle
   // so the underlying per-unit price is preserved either way.
@@ -74,6 +78,7 @@ export function ProductFormDialog({
     setUnit('kg');
     setPrice('');
     setPackQty('');
+    setAltUnit('');
     setPriceMode('unit');
     setImages({ existing: [], files: [] });
   }
@@ -217,6 +222,20 @@ export function ProductFormDialog({
                   />
                   {perPiece !== null && <p className="mt-1 text-[11px] font-bold text-brand-dark">≈ {fmtInr(perPiece)} per piece</p>}
                 </div>
+              )}
+              <Field label="HSN/SAC code (optional)" name="hsn" icon={Hash} mono defaultValue={product?.hsn ?? ''} />
+              {packQtyNum > 0 && (
+                <>
+                  <Field label="Secondary unit (optional)" name="altUnit" icon={Ruler} value={altUnit} onChange={(e) => setAltUnit(e.target.value)} placeholder="Litres, kg…" />
+                  <Field
+                    label={`${altUnit || 'Secondary unit'} per ${unit} (optional)`}
+                    name="altQtyPerUnit"
+                    type="number"
+                    icon={Boxes}
+                    mono
+                    defaultValue={product?.altQtyPerUnit?.toString() ?? ''}
+                  />
+                </>
               )}
               <div className="col-span-2">
                 <Field label="Short description" name="desc" icon={FileText} defaultValue={product?.desc ?? ''} />

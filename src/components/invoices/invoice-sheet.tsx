@@ -157,12 +157,6 @@ export function InvoiceSheet({
                     : `≈${packQty * l.qty} pcs`
                   : null;
 
-                function setExtraPieces(next: number) {
-                  if (!packQty || boxes === null) return;
-                  const clamped = Math.max(0, Math.min(packQty - 1, next));
-                  onUpdateLine?.(l.lineId, { qty: boxes + clamped / packQty });
-                }
-
                 return (
                   <tr key={l.lineId} className="border-b border-line">
                     <td className="whitespace-nowrap py-2 pr-1.5 print:border print:border-black print:px-2 print:py-1.5">
@@ -178,32 +172,19 @@ export function InvoiceSheet({
                     </td>
                     <td className="whitespace-nowrap py-2 pr-1.5 text-right print:border print:border-black print:px-2 print:py-1.5">
                       {editable ? (
-                        <div className="flex flex-col items-end gap-1">
+                        <div className="flex flex-col items-end gap-0.5">
                           <div className="inline-flex items-center gap-1 rounded-full bg-bg p-0.5">
                             <button onClick={() => onDecrement?.(l.lineId)} aria-label={`Decrease ${l.name} quantity`} className="flex h-[18px] w-[18px] items-center justify-center rounded-full border border-line bg-surface text-ink-soft hover:border-brand hover:text-brand">
                               <Minus size={9} />
                             </button>
-                            <span key={boxes ?? l.qty} className="min-w-[14px] animate-bump text-center font-mono text-[11.5px] font-bold">
-                              {boxes ?? l.qty}
+                            <span key={l.qty} className="min-w-[14px] animate-bump text-center font-mono text-[11.5px] font-bold">
+                              {l.qty}
                             </span>
                             <button onClick={() => onIncrement?.(l.lineId)} aria-label={`Increase ${l.name} quantity`} className="flex h-[18px] w-[18px] items-center justify-center rounded-full border border-line bg-surface text-ink-soft hover:border-brand hover:text-brand">
                               <Plus size={9} />
                             </button>
                           </div>
-                          {packQty && (
-                            <div className="flex items-center gap-1">
-                              <input
-                                type="number"
-                                min={0}
-                                max={packQty - 1}
-                                value={extraPieces ?? 0}
-                                onChange={(e) => setExtraPieces(parseInt(e.target.value, 10) || 0)}
-                                aria-label={`Extra loose pieces for ${l.name}`}
-                                className="w-[34px] rounded-sm2 border border-line bg-surface px-1 py-0.5 text-right font-mono text-[10.5px] focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand-light"
-                              />
-                              <span className="text-[9.5px] text-ink-faint">pc extra</span>
-                            </div>
-                          )}
+                          <span className="pr-0.5 text-[9.5px] font-semibold text-ink-faint">{l.unit}</span>
                         </div>
                       ) : (
                         <span className="font-mono">

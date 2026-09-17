@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Users, Contact, Phone, Mail, IdCard, CalendarClock, IndianRupee, Home, Check, Sparkles } from 'lucide-react';
+import { Users, Store, Contact, Phone, PhoneCall, Mail, IdCard, CalendarClock, IndianRupee, Home, Check, Sparkles, ShieldCheck, MapPin } from 'lucide-react';
 import { toast } from 'sonner';
 import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
@@ -14,16 +14,20 @@ const TERMS = ['Due on receipt', 'Net 7', 'Net 15', 'Net 30'];
 type Customer = {
   id: string;
   name: string;
-  contact: string | null;
-  phone: string | null;
-  email: string | null;
+  shopName?: string | null;
+  contact?: string | null;
+  phone?: string | null;
+  altPhone?: string | null;
+  email?: string | null;
   state: string;
   district?: string | null;
-  gstin: string | null;
-  address: string | null;
-  terms: string;
-  creditLimit: string | number;
-  guest: boolean;
+  gstin?: string | null;
+  address?: string | null;
+  terms?: string;
+  creditLimit?: string | number;
+  guest?: boolean;
+  fssaiNo?: string | null;
+  pincode?: string | null;
 };
 
 export function CustomerFormDialog({
@@ -39,7 +43,7 @@ export function CustomerFormDialog({
   mode: 'create' | 'edit';
   customer?: Customer;
   prefillName?: string;
-  onSaved?: (id: string) => void;
+  onSaved?: (customer: Customer) => void;
 }) {
   const [error, setError] = useState<string | undefined>();
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -63,7 +67,24 @@ export function CustomerFormDialog({
     }
     toast.success(mode === 'create' ? 'Customer added' : 'Changes saved');
     onOpenChange(false);
-    onSaved?.(customer?.id ?? result.id ?? '');
+    onSaved?.({
+      id: customer?.id ?? result.id ?? '',
+      name: String(formData.get('name') ?? ''),
+      shopName: (formData.get('shopName') as string) || null,
+      contact: (formData.get('contact') as string) || null,
+      phone: (formData.get('phone') as string) || null,
+      altPhone: (formData.get('altPhone') as string) || null,
+      email: (formData.get('email') as string) || null,
+      state: selectedState,
+      district: selectedDistrict || null,
+      gstin: (formData.get('gstin') as string) || null,
+      address: (formData.get('address') as string) || null,
+      terms: (formData.get('terms') as string) || 'Due on receipt',
+      creditLimit: (formData.get('creditLimit') as string) || '0',
+      guest: customer?.guest ?? false,
+      fssaiNo: (formData.get('fssaiNo') as string) || null,
+      pincode: (formData.get('pincode') as string) || null,
+    });
   }
 
   return (
@@ -81,8 +102,10 @@ export function CustomerFormDialog({
           <DialogFormBody>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Name" name="name" icon={Users} defaultValue={customer?.name} placeholder={prefillName} error={fieldErrors.name} />
+              <Field label="Shop name (optional)" name="shopName" icon={Store} defaultValue={customer?.shopName ?? ''} />
               <Field label="Contact person" name="contact" icon={Contact} defaultValue={customer?.contact ?? ''} />
               <Field label="Phone" name="phone" icon={Phone} defaultValue={customer?.phone ?? ''} />
+              <Field label="Alternative phone (optional)" name="altPhone" icon={PhoneCall} defaultValue={customer?.altPhone ?? ''} />
               <Field label="Email" name="email" icon={Mail} defaultValue={customer?.email ?? ''} error={fieldErrors.email} />
               <StateSelect
                 name="state"
@@ -104,6 +127,8 @@ export function CustomerFormDialog({
                 options={TERMS.map((t) => ({ value: t }))}
               />
               <Field label="Credit limit (₹)" name="creditLimit" type="number" icon={IndianRupee} mono defaultValue={customer?.creditLimit?.toString() ?? '0'} />
+              <Field label="FSSAI No. (optional)" name="fssaiNo" icon={ShieldCheck} mono defaultValue={customer?.fssaiNo ?? ''} />
+              <Field label="Pincode (optional)" name="pincode" icon={MapPin} mono defaultValue={customer?.pincode ?? ''} />
               <div className="col-span-2">
                 <Field label="Billing address" name="address" as="textarea" icon={Home} defaultValue={customer?.address ?? ''} />
               </div>

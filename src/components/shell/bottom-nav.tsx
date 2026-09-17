@@ -24,7 +24,7 @@ export function BottomNav() {
 
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-[60] flex items-center justify-around border-t border-line bg-surface px-1 py-1.5 md:hidden"
+      className="fixed inset-x-0 bottom-0 z-[60] flex items-center justify-around border-t border-line bg-surface px-1 py-1.5 print:hidden md:hidden"
       style={{ paddingBottom: 'calc(0.375rem + env(safe-area-inset-bottom))' }}
     >
       {NAV.map((item) => {

@@ -40,7 +40,7 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
   }
 
   return (
-    <header className="sticky top-0 z-40 flex h-[52px] flex-shrink-0 items-center gap-1.5 border-b border-line bg-surface px-2.5 sm:h-[61px] sm:gap-4 sm:px-5">
+    <header className="sticky top-0 z-40 flex h-[52px] flex-shrink-0 items-center gap-1.5 border-b border-line bg-surface px-2.5 sm:h-[61px] sm:gap-4 sm:px-5 print:hidden">
       <Link href="/dashboard" className="flex min-w-0 flex-shrink-0 items-center gap-1.5 sm:gap-2.5">
         <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center overflow-hidden rounded-sm2 bg-brand text-white sm:h-8 sm:w-8">
           {company.logoUrl ? (

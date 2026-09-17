@@ -13,42 +13,64 @@ datasource db {
 }
 
 model Company {
-  id            String     @id @default(cuid())
-  name          String
-  domain        String?
+  id                 String          @id @default(cuid())
+  name               String
+  domain             String?
   // Nullable — a brand-new signup doesn't have these yet; filled in later
   // via the Company settings page. See src/lib/get-company.ts callers,
   // which already null-guard everything here the same way domain/upi/terms
   // always have been.
-  address       String?
-  state         String
-  district      String?
-  gstin         String?
-  pan           String?
-  phone         String?
-  email         String?
-  bankName      String?
-  bankAcc       String?
-  ifsc          String?
-  branch        String?
-  upi           String?
-  cgstRate      Decimal    @default(9)
-  sgstRate      Decimal    @default(9)
-  igstRate      Decimal    @default(18)
-  cgstEnabled   Boolean    @default(true)
-  sgstEnabled   Boolean    @default(true)
-  igstEnabled   Boolean    @default(true)
-  invoicePrefix String     @default("INV")
-  invoiceFY     String
-  nextInvoiceNo Int        @default(1)
-  terms         String?
-  logoUrl       String?
-  themeColor    String     @default("red")
-  createdAt     DateTime   @default(now())
-  users         User[]
-  products      Product[]
-  customers     Customer[]
-  invoices      Invoice[]
+  address            String?
+  state              String
+  district           String?
+  gstin              String?
+  pan                String?
+  phone              String?
+  email              String?
+  bankName           String?
+  bankAcc            String?
+  ifsc               String?
+  branch             String?
+  upi                String?
+  cgstRate           Decimal         @default(9)
+  sgstRate           Decimal         @default(9)
+  igstRate           Decimal         @default(18)
+  cgstEnabled        Boolean         @default(true)
+  sgstEnabled        Boolean         @default(true)
+  igstEnabled        Boolean         @default(true)
+  invoicePrefix      String          @default("INV")
+  invoiceFY          String
+  nextInvoiceNo      Int             @default(1)
+  terms              String?
+  logoUrl            String?
+  themeColor         String          @default("red")
+  createdAt          DateTime        @default(now())
+  // GST-compliance seller details — needed to render/generate a CLASSIC
+  // (Tally-style) invoice and to populate SellerDtls in the e-Invoice/e-Way
+  // Bill NIC API payloads.
+  fssaiNo            String?
+  pincode            String?
+  invoiceTemplate    InvoiceTemplate @default(MODERN)
+  // Printed on the CLASSIC template's Prepared by / Verified by / Authorised
+  // Signatory row — optional, so the row stays blank (for physical signing,
+  // matching the reference Tally invoice) until the owner sets these.
+  preparedByName     String?
+  verifiedByName     String?
+  signatoryName      String?
+  signatureUrl       String?
+  // NIC e-Invoice / e-Way Bill sandbox (or production) API credentials —
+  // per-tenant, since GST filing happens under each tenant's own GSTIN.
+  // Password/secret are encrypted at rest via src/lib/secret.ts, never the
+  // raw value — see src/actions/company.ts.
+  nicSandbox         Boolean         @default(true)
+  nicUsername        String?
+  nicPasswordEnc     String?
+  nicClientId        String?
+  nicClientSecretEnc String?
+  users              User[]
+  products           Product[]
+  customers          Customer[]
+  invoices           Invoice[]
 }
 
 model User {
@@ -97,18 +119,29 @@ enum Role {
 }
 
 model Product {
-  id           String        @id @default(cuid())
-  companyId    String
-  company      Company       @relation(fields: [companyId], references: [id])
-  name         String
-  category     String
-  unit         String
-  price        Decimal
-  packQty      Int?
-  active       Boolean       @default(true)
-  desc         String?
-  images       String[]      @default([])
-  invoiceItems InvoiceItem[]
+  id            String        @id @default(cuid())
+  companyId     String
+  company       Company       @relation(fields: [companyId], references: [id])
+  name          String
+  category      String
+  unit          String
+  price         Decimal
+  packQty       Int?
+  active        Boolean       @default(true)
+  desc          String?
+  images        String[]      @default([])
+  // HSN/SAC code — snapshotted onto InvoiceItem at invoice-creation time
+  // (see InvoiceItem.hsn), needed for the CLASSIC template's item table,
+  // HSN-wise tax summary, and the e-Invoice ItemList payload.
+  hsn           String?
+  // Secondary-quantity conversion for the CLASSIC template's optional extra
+  // quantity column (e.g. a sample invoice showing "40 Box" also as
+  // "32 Litres") — altQtyPerUnit is per one `unit` (e.g. per box), snapshotted
+  // onto InvoiceItem same as hsn/batch. Both null unless the business uses
+  // a secondary unit of measure.
+  altUnit       String?
+  altQtyPerUnit Decimal?
+  invoiceItems  InvoiceItem[]
 
   @@index([companyId, category])
 }
@@ -118,8 +151,10 @@ model Customer {
   companyId   String
   company     Company   @relation(fields: [companyId], references: [id])
   name        String
+  shopName    String?
   contact     String?
   phone       String?
+  altPhone    String?
   email       String?
   state       String
   district    String?
@@ -128,6 +163,10 @@ model Customer {
   terms       String    @default("Due on receipt")
   creditLimit Decimal   @default(0)
   guest       Boolean   @default(false)
+  // Buyer-block fields for the CLASSIC template + e-Invoice BuyerDtls/ShipDtls
+  // — `contact`/`phone` above already cover "Contact person"/"Contact".
+  fssaiNo     String?
+  pincode     String?
   invoices    Invoice[]
 
   @@index([companyId, guest])
@@ -150,26 +189,71 @@ model Invoice {
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
 
+  // e-Invoice (NIC IRP) result — see src/lib/nic/einvoice.ts.
+  irn            String?
+  ackNo          String?
+  ackDate        DateTime?
+  signedQrCode   String?        @db.Text
+  einvoiceStatus EinvoiceStatus @default(NOT_GENERATED)
+  einvoiceError  String?
+
+  // e-Way Bill inputs (user-entered transport details) + NIC result — see
+  // src/lib/nic/ewaybill.ts. Independent of e-Invoice — a business can owe
+  // an e-Way Bill without being e-Invoice-mandated, and vice versa.
+  vehicleNo          String?
+  transporterId      String?
+  transporterName    String?
+  transporterDocNo   String?
+  transporterDocDate DateTime?
+  transportMode      TransportMode  @default(ROAD)
+  distanceKm         Int?
+  ewbNo              String?
+  ewbDate            DateTime?
+  ewbValidUpto       DateTime?
+  ewaybillStatus     EwaybillStatus @default(NOT_GENERATED)
+  ewbError           String?
+
+  // Standard Tally-style reference fields shown on the CLASSIC invoice's
+  // header grid — all optional, blank unless the business fills them in via
+  // "Edit dispatch details" (see src/actions/invoices.ts's
+  // updateDispatchDetails). None of these feed GST math or the NIC payload;
+  // they're print/reference fields only.
+  deliveryNote     String?
+  deliveryNoteDate DateTime?
+  buyersOrderNo    String?
+  buyersOrderDate  DateTime?
+  dispatchDocNo    String?
+  otherReferences  String?
+  billOfLadingNo   String?
+  destination      String?
+
   @@unique([companyId, number])
   @@index([companyId, status])
   @@index([customerId])
 }
 
 model InvoiceItem {
-  id        String   @id @default(cuid())
-  invoiceId String
-  invoice   Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  id            String   @id @default(cuid())
+  invoiceId     String
+  invoice       Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   // Nullable — an ad-hoc/custom line item (not from the product catalog)
   // has no backing Product row. `name`/`unit`/`rate` are always
   // snapshotted here regardless, so nothing ever needs to read through
   // this relation to render an invoice.
-  productId String?
-  product   Product? @relation(fields: [productId], references: [id])
-  name      String
-  unit      String
-  qty       Decimal
-  rate      Decimal
-  discount  Decimal  @default(0)
+  productId     String?
+  product       Product? @relation(fields: [productId], references: [id])
+  name          String
+  unit          String
+  qty           Decimal
+  rate          Decimal
+  discount      Decimal  @default(0)
+  // Snapshotted at invoice-creation time, same convention as name/unit/rate
+  // above — CLASSIC template + HSN-wise tax summary + e-Invoice ItemList.
+  hsn           String?
+  batch         String?
+  // Snapshotted from Product.altUnit/altQtyPerUnit — see that field's comment.
+  altUnit       String?
+  altQtyPerUnit Decimal?
 }
 
 model Payment {
@@ -191,4 +275,30 @@ enum InvoiceStatus {
 enum DiscountType {
   PERCENT
   FLAT
+}
+
+enum InvoiceTemplate {
+  MODERN
+  CLASSIC
+}
+
+enum EinvoiceStatus {
+  NOT_GENERATED
+  GENERATED
+  CANCELLED
+  FAILED
+}
+
+enum EwaybillStatus {
+  NOT_GENERATED
+  GENERATED
+  CANCELLED
+  FAILED
+}
+
+enum TransportMode {
+  ROAD
+  RAIL
+  AIR
+  SHIP
 }

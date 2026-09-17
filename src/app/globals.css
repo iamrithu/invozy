@@ -165,4 +165,18 @@ body {
   .invoice-print table tr {
     break-inside: avoid;
   }
+  /* CLASSIC template's e-Way Bill sheet (invoice-eway-bill-sheet.tsx) is a
+     sibling block rendered right after page 1 inside .invoice-print — this
+     forces it onto its own printed page instead of flowing directly under
+     the tax invoice. On screen it's a normal block (no visual page break). */
+  .eway-page {
+    break-before: page;
+  }
+  /* pdf-preview-chrome.tsx's on-screen zoom (a CSS transform) must never
+     reach print — a transformed ancestor becomes a new containing block,
+     which would break .invoice-print's position:absolute/inset:0 sizing. */
+  .pdf-zoom-wrap {
+    transform: none !important;
+    width: auto !important;
+  }
 }
