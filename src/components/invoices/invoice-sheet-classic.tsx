@@ -296,10 +296,7 @@ export function InvoiceSheetClassic({
                         </span>
                       )}
                     </td>
-                    <td className="border-r border-ink px-2.5 py-1.5 text-right align-top font-mono font-tabular">
-                      {fmtInr(l.rate)}
-                      {l.discount > 0 && <div className="font-sans text-[9px] font-normal leading-tight text-ink-faint">(-{l.discount}% disc.)</div>}
-                    </td>
+                    <td className="border-r border-ink px-2.5 py-1.5 text-right align-top font-mono font-tabular">{fmtInr(l.rate)}</td>
                     <td className="border-r border-ink px-2.5 py-1.5 text-right align-top">{l.unit}</td>
                     {editable && (
                       <td className="border-r border-ink px-2.5 py-1.5 text-right align-top">
@@ -334,7 +331,7 @@ export function InvoiceSheetClassic({
             {totals.overallDiscountAmount > 0 && (
               <tr>
                 <td colSpan={footTdColSpan} className="border-t border-ink px-2.5 py-1 text-right font-bold">
-                  Discount{discountType === 'PERCENT' ? ` (${discountValue}%)` : ''}
+                  Discount
                 </td>
                 <td className="border-t border-ink px-2.5 py-1 text-right font-mono font-tabular">−{fmtInr(totals.overallDiscountAmount)}</td>
                 {editable && <td className="border-t border-ink" />}

@@ -145,11 +145,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
 
       {isClassic && <InvoiceCompletenessChecklist items={checklistItems} />}
 
-      {/* Opens the dedicated full-screen PDF flow (src/app/invoices/[id]/preview)
-          — renders the real generated PDF via pdf.js (canvas), which works
-          identically on every device, unlike an embedded <iframe> relying
-          on the browser's own PDF plugin (a blank box on most mobile
-          browsers). */}
+      {/* Opens the in-app PDF preview (./preview, still inside the (app)
+          shell — sidebar/top bar stay visible) — renders the real generated
+          PDF via pdf.js (canvas), which works identically on every device,
+          unlike an embedded <iframe> relying on the browser's own PDF
+          plugin (a blank box on most mobile browsers). */}
       <Link
         href={`/invoices/${invoice.id}/preview`}
         className="mx-auto flex max-w-[900px] flex-col items-center gap-2.5 rounded-xl2 border border-dashed border-line bg-surface p-10 text-center shadow-card transition-colors hover:border-brand/50 print:hidden"
@@ -158,7 +158,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
           <Eye size={20} />
         </span>
         <span className="text-[14px] font-bold text-ink">Preview PDF</span>
-        <span className="text-[11.5px] text-ink-faint">Opens a full-screen view of the exact PDF that downloads</span>
+        <span className="text-[11.5px] text-ink-faint">View the exact PDF that downloads, without leaving the app</span>
       </Link>
 
       {/* Kept in the DOM (invisible on screen) purely so PrintButton's

@@ -272,7 +272,7 @@ export function InvoiceSheet({
       <div className="mt-2 flex justify-end">
         <div className="w-full max-w-[280px] rounded-md2 border border-line bg-bg p-3 text-[12px] print:rounded-none print:border-black print:bg-transparent">
           <TotalsRow k="Subtotal" v={fmtInr(totals.subtotal)} />
-          {totals.overallDiscountAmount > 0 && <TotalsRow k={`Discount${discountType === 'PERCENT' ? ` (${discountValue}%)` : ''}`} v={`−${fmtInr(totals.overallDiscountAmount)}`} negative />}
+          {totals.overallDiscountAmount > 0 && <TotalsRow k="Discount" v={`−${fmtInr(totals.overallDiscountAmount)}`} negative />}
           <TotalsRow k="Taxable value" v={fmtInr(totals.taxable)} />
           {totals.useIgst ? (
             <TotalsRow k={`IGST @ ${company.igstRate}%`} v={fmtInr(totals.igst)} />
