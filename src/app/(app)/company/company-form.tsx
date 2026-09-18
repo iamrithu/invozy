@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { useActionState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
@@ -31,7 +31,9 @@ export function CompanyForm({ company }: { company: Company }) {
   const { data: session } = useSession();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<(typeof TABS)[number]['id']>('identity');
-  const [state, formAction, pending] = useActionState<CompanyFormState, FormData>(updateCompany, {});
+  const [state, formAction, actionPending] = useActionState<CompanyFormState, FormData>(updateCompany, {});
+  const [transitionPending, startTransition] = useTransition();
+  const pending = actionPending || transitionPending;
   const submittedRef = useRef(false);
   const [themeColor, setThemeColor] = useState<string>(company.themeColor || 'red');
   // Remembers the last custom hex picked so the swatch keeps showing it (instead
@@ -91,7 +93,7 @@ export function CompanyForm({ company }: { company: Company }) {
     if (logoRemoved) formData.set('removeLogo', 'true');
     if (signatureFile) formData.set('signature', signatureFile);
     if (signatureRemoved) formData.set('removeSignature', 'true');
-    formAction(formData);
+    startTransition(() => formAction(formData));
   }
 
   const currentLogo = logoRemoved ? null : logoPreview ?? company.logoUrl;

@@ -49,6 +49,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { InvoiceSheet } from '@/components/invoices/invoice-sheet';
 import { InvoiceSheetClassic } from '@/components/invoices/invoice-sheet-classic';
 import { InvoiceCompletenessChecklist } from '@/components/invoices/invoice-completeness-checklist';
+import { ResponsiveSheetScale } from '@/components/invoices/responsive-sheet-scale';
 import { hashColor, initials } from '@/lib/avatar';
 import { PAPER_STYLE } from '@/lib/paper-theme';
 
@@ -436,8 +437,13 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
       {/* Everything below is the interactive builder UI — collapsed to
           display:none at print time (not just visibility:hidden) so its
           height doesn't produce blank trailing pages; the dedicated
-          print-only sheet is a sibling further down. */}
-      <div className="print:hidden">
+          print-only sheet is a sibling further down.
+          `invoice-builder-root` opts this page out of the shared app
+          shell's max-w-[1220px] centering (see globals.css) — the builder
+          needs the full content width so the left panel can stay narrow
+          while the invoice sheet gets real room, unlike every other page
+          under (app)/layout.tsx which keeps the centered constraint. */}
+      <div className="invoice-builder-root print:hidden">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => router.push('/invoices')}>
@@ -463,7 +469,7 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
 
       <ProgressStepper hasCustomer={hasCustomer} hasItems={hasItems} />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(320px,380px)_1fr]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[300px_1fr]">
         <div className="flex flex-col gap-3.5">
           <div data-tour="bill-to" className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
             <div className="mb-2.5 flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wide text-ink-faint">
@@ -651,10 +657,10 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
           </div>
         </div>
 
-        <div data-tour="invoice-sheet" className="relative max-w-[720px]" style={PAPER_STYLE}>
+        <div data-tour="invoice-sheet" className="relative max-w-[900px]" style={PAPER_STYLE}>
           {isClassic && <InvoiceCompletenessChecklist items={checklistItems} />}
           <div className="h-[5px] rounded-t-lg2 bg-brand" />
-          {sheet}
+          <ResponsiveSheetScale>{sheet}</ResponsiveSheetScale>
         </div>
       </div>
 
@@ -698,22 +704,24 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
             </DialogTitle>
           </DialogHeader>
           <div className="max-h-[70vh] overflow-y-auto" style={PAPER_STYLE}>
-            {isClassic ? (
-              <InvoiceSheetClassic company={company} customer={customer} date={date} lines={lines} totals={totals} discountType={discountType} discountValue={discountValue} editable={false} />
-            ) : (
-              <InvoiceSheet
-                company={company}
-                customer={customer}
-                date={date}
-                due={due}
-                lines={lines}
-                totals={totals}
-                totalSavings={totalSavings}
-                discountType={discountType}
-                discountValue={discountValue}
-                editable={false}
-              />
-            )}
+            <ResponsiveSheetScale>
+              {isClassic ? (
+                <InvoiceSheetClassic company={company} customer={customer} date={date} lines={lines} totals={totals} discountType={discountType} discountValue={discountValue} editable={false} />
+              ) : (
+                <InvoiceSheet
+                  company={company}
+                  customer={customer}
+                  date={date}
+                  due={due}
+                  lines={lines}
+                  totals={totals}
+                  totalSavings={totalSavings}
+                  discountType={discountType}
+                  discountValue={discountValue}
+                  editable={false}
+                />
+              )}
+            </ResponsiveSheetScale>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setPreviewOpen(false)}>

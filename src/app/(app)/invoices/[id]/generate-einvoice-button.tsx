@@ -37,7 +37,11 @@ export function GenerateEinvoiceButton({ invoiceId, hasCredentials, status }: { 
           onConfirm={(reasonCode, remark) => cancelEinvoiceAction(invoiceId, { reasonCode: reasonCode as any, remark })}
           onCancelled={() => {
             toast.success('e-Invoice cancelled');
-            router.refresh();
+            // Wrapped in its own transition so this refresh (fetching the
+            // now-cancelled status from the server) never trips the route's
+            // loading.tsx fallback — the button's own pending state is the
+            // only loading indicator the user should see.
+            startTransition(() => router.refresh());
           }}
         />
       </>
@@ -64,7 +68,7 @@ export function GenerateEinvoiceButton({ invoiceId, hasCredentials, status }: { 
         return;
       }
       toast.success('e-Invoice generated');
-      router.refresh();
+      startTransition(() => router.refresh());
     });
   }
 

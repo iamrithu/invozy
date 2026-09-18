@@ -153,7 +153,7 @@ export function ProductFormDialog({
               <label className="flex flex-shrink-0 cursor-pointer items-center gap-2">
                 {product.active ? <Eye size={13} className="text-green" /> : <EyeOff size={13} className="text-ink-faint" />}
                 <span className={`text-[11px] font-bold ${product.active ? 'text-green' : 'text-ink-faint'}`}>{product.active ? 'Live' : 'Hidden'}</span>
-                <Switch checked={product.active} onChange={() => toggleActive.mutate(product.id)} />
+                <Switch checked={product.active} disabled={toggleActive.isPending} onChange={() => toggleActive.mutate(product.id)} />
               </label>
             )}
           </DialogFormHeader>

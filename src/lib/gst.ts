@@ -106,6 +106,24 @@ export function fmtInr(n: number): string {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(n || 0);
 }
 
+/** The invoice sheets are handed plain `yyyy-mm-dd` strings (the same value
+ * a native `<input type="date">` needs, so callers keep that as their
+ * source of truth) — this is purely a display-time reformat to d/M/yyyy
+ * (e.g. "18/9/2026", no leading zeros — matches the rest of the app's
+ * `toLocaleDateString('en-IN')` convention) for wherever a sheet prints the
+ * date instead of editing it. */
+export function formatInvoiceDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso.length <= 10 ? `${iso}T00:00:00` : iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-IN');
+}
+
+/** Ice/dairy invoices sold through this app are overwhelmingly HSN 2105
+ * (edible ice) — used as the printed default whenever a line item has no
+ * HSN/SAC of its own, so the PDF never shows a blank/placeholder code. */
+export const DEFAULT_HSN = '21050000';
+
 export type HsnSummaryRow = {
   hsn: string;
   taxableValue: number;
@@ -132,7 +150,7 @@ export function computeHsnSummary(lines: (LineInput & { hsn?: string | null })[]
 
   const groups = new Map<string, number>();
   for (const l of lines) {
-    const hsn = l.hsn?.trim() || '—';
+    const hsn = l.hsn?.trim() || DEFAULT_HSN;
     const lineTaxable = l.qty * l.rate * (1 - (l.discount || 0) / 100);
     groups.set(hsn, (groups.get(hsn) ?? 0) + lineTaxable);
   }

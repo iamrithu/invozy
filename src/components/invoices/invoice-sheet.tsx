@@ -1,6 +1,7 @@
 import { Minus, Plus, Trash2 } from 'lucide-react';
-import { computeTotals, fmtInr } from '@/lib/gst';
+import { computeTotals, fmtInr, formatInvoiceDate } from '@/lib/gst';
 import { numberToWords } from '@/lib/number-to-words';
+import { gstStateCode } from '@/lib/gst-state-codes';
 
 export type InvoiceSheetCompany = {
   name: string;
@@ -93,17 +94,24 @@ export function InvoiceSheet({
             <div className="text-[17px] font-extrabold text-ink">{company.name}</div>
             {company.address && <div className="mt-1 max-w-[280px] whitespace-pre-line text-[11.5px] leading-relaxed text-ink-soft">{company.address}</div>}
             <div className="mt-1.5 font-mono text-[10.5px] text-ink-soft">
-              GSTIN {company.gstin || '—'} &nbsp;·&nbsp; {company.state}
+              GSTIN {company.gstin || '—'} &nbsp;·&nbsp; {company.state} ({gstStateCode(company.state)})
             </div>
           </div>
         </div>
         <div className="rounded-lg2 border border-line bg-bg px-3.5 py-2.5 text-right print:rounded-none print:border-black print:bg-transparent">
           <div className="text-[10px] font-extrabold uppercase tracking-[0.08em] text-brand print:text-black">Tax invoice</div>
-          <div className="mt-1 font-mono text-[15px] font-extrabold text-ink">{invoiceNumber ?? 'Draft'}</div>
+          <div className="mt-1.5 grid grid-cols-2 gap-x-3 text-left text-[11px] leading-relaxed text-ink-soft">
+            <div>
+              No.
+              <div className="font-mono text-[13px] font-extrabold text-ink">{invoiceNumber ?? 'Draft'}</div>
+            </div>
+            <div>
+              Date
+              <div className="font-mono text-[13px] font-extrabold text-ink">{formatInvoiceDate(date)}</div>
+            </div>
+          </div>
           <div className="mt-1.5 text-[11px] leading-relaxed text-ink-soft">
-            Date <span className="font-mono text-ink-body">{date}</span>
-            <br />
-            Due <span className="font-mono text-ink-body">{due}</span>
+            Due <span className="font-mono text-ink-body">{formatInvoiceDate(due)}</span>
           </div>
         </div>
       </div>
@@ -116,7 +124,7 @@ export function InvoiceSheet({
             {customer.shopName && <div className="text-[12px] font-semibold text-ink-soft">{customer.shopName}</div>}
             <div className="mt-0.5 whitespace-pre-line text-[11.5px] leading-relaxed text-ink-soft">
               {customer.address ? `${customer.address}\n` : ''}
-              {customer.state}
+              {customer.state} ({gstStateCode(customer.state)})
               {customer.gstin ? ` · GSTIN ${customer.gstin}` : ''}
             </div>
           </>

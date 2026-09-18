@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
 import { getCompany } from '@/lib/get-company';
-import { computeTotals, formatInvoiceNumber, isOverCreditLimit, deriveStatus } from '@/lib/gst';
+import { computeTotals, formatInvoiceNumber, isOverCreditLimit, deriveStatus, DEFAULT_HSN } from '@/lib/gst';
 
 const LineSchema = z.object({
   // Nullable — an ad-hoc/custom line item isn't backed by a catalog Product.
@@ -127,7 +127,10 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
             qty: l.qty,
             rate: l.rate,
             discount: l.discount,
-            hsn: l.hsn,
+            // Persisted (not just a display-time fallback — see invoice-sheet-classic.tsx)
+            // so the completeness checklist and any real e-Invoice/e-Way Bill
+            // submission see a real code instead of a missing one.
+            hsn: l.hsn?.trim() || DEFAULT_HSN,
             batch: l.batch,
             altUnit: l.altUnit,
             altQtyPerUnit: l.altQtyPerUnit,

@@ -68,8 +68,25 @@ const config: Config = {
         },
       },
       fontFamily: {
-        sans: ['var(--font-plus-jakarta)', 'system-ui', 'sans-serif'],
-        mono: ['var(--font-ibm-plex-mono)', 'ui-monospace', 'monospace'],
+        sans: ['"Times New Roman"', 'Times', 'Georgia', 'serif'],
+        mono: ['"Times New Roman"', 'Times', 'Georgia', 'serif'],
+      },
+      // Times New Roman only ships true Regular/Bold masters — the
+      // in-between weights (medium/semibold/extrabold/black) used
+      // throughout the app for headers/labels would otherwise render as
+      // browser-synthesized "fake bold" or just fall back to Regular,
+      // which is exactly the "too light" look this maps everything at or
+      // above medium straight to real Bold to avoid.
+      fontWeight: {
+        thin: '400',
+        extralight: '400',
+        light: '400',
+        normal: '400',
+        medium: '700',
+        semibold: '700',
+        bold: '700',
+        extrabold: '700',
+        black: '700',
       },
       borderRadius: {
         xl2: '16px',

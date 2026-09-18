@@ -1,4 +1,4 @@
-import { fmtInr } from '@/lib/gst';
+import { fmtInr, formatInvoiceDate } from '@/lib/gst';
 
 export type EwayBillSheetData = {
   ewbNo: string;
@@ -65,7 +65,7 @@ export function InvoiceEwayBillSheet({
           <div className="mt-1.5 text-[10.5px] text-ink-faint">
             Doc No. : Tax Invoice - {invoiceNumber}
             <br />
-            Date : {invoiceDate}
+            Date : {formatInvoiceDate(invoiceDate)}
           </div>
           {irn && <div className="mt-1 max-w-[420px] break-all font-mono text-[9.5px] text-ink-faint">IRN : {irn}</div>}
         </div>
@@ -84,8 +84,8 @@ export function InvoiceEwayBillSheet({
             <td className="w-1/2 border border-ink bg-surface-alt p-3 align-top">
               <div className="mb-1.5 font-bold">1. e-Way Bill Details</div>
               <Row k="e-Way Bill No." v={eway.ewbNo} />
-              <Row k="Generated Date" v={eway.ewbDate} />
-              {eway.validUpto && <Row k="Valid Upto" v={eway.validUpto} />}
+              <Row k="Generated Date" v={formatInvoiceDate(eway.ewbDate)} />
+              {eway.validUpto && <Row k="Valid Upto" v={formatInvoiceDate(eway.validUpto)} />}
               <Row k="Mode" v={eway.transportMode} />
               {eway.distanceKm != null && <Row k="Approx Distance" v={`${eway.distanceKm} KM`} />}
             </td>
@@ -187,7 +187,7 @@ export function InvoiceEwayBillSheet({
       <Row k="Transporter ID" v={eway.transporterId || '—'} />
       <Row k="Name" v={eway.transporterName || '—'} />
       <Row k="Doc No." v={eway.transporterDocNo || '—'} />
-      <Row k="Date" v={eway.transporterDocDate || '—'} />
+      <Row k="Date" v={eway.transporterDocDate ? formatInvoiceDate(eway.transporterDocDate) : '—'} />
 
       <div className="mt-2.5 border-t border-ink pt-2.5 text-[11.5px] font-bold">5. Vehicle Details</div>
       <Row k="Vehicle No." v={eway.vehicleNo || '—'} />

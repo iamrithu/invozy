@@ -91,6 +91,16 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* The invoice builder (src/app/(app)/invoices/new/builder-client.tsx) opts
+   out of the shared app shell's centered max-w-[1220px] column (see
+   (app)/layout.tsx) — it needs the full content width beside the sidebar so
+   the left "bill to / add products" panel can stay narrow while the
+   invoice sheet itself gets real room, unlike every other page which keeps
+   that constraint. */
+main:has(> .invoice-builder-root) {
+  max-width: none;
+}
+
 @keyframes bump {
   0% {
     transform: scale(1);

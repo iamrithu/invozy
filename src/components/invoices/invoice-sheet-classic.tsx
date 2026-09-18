@@ -1,6 +1,7 @@
 import { Minus, Plus, Trash2 } from 'lucide-react';
-import { computeTotals, computeHsnSummary, fmtInr } from '@/lib/gst';
+import { computeTotals, computeHsnSummary, fmtInr, formatInvoiceDate, DEFAULT_HSN } from '@/lib/gst';
 import { numberToWords, amountToWordsWithPaise } from '@/lib/number-to-words';
+import { gstStateCode } from '@/lib/gst-state-codes';
 
 export type ClassicCompany = {
   name: string;
@@ -161,8 +162,9 @@ export function InvoiceSheetClassic({
               <div className="text-[15px] font-extrabold tracking-tight text-ink">{company.name}</div>
               {company.address && <div className="whitespace-pre-line leading-snug">{company.address}</div>}
               <div className="mt-1 font-mono font-tabular">GSTIN/UIN: {company.gstin || '—'}</div>
-              <div>State Name : {company.state}</div>
-              {company.pan && <div>PAN : {company.pan}</div>}
+              <div>
+                State Name : {company.state}, Code : <span className="font-mono font-tabular">{gstStateCode(company.state)}</span>
+              </div>
               {company.fssaiNo && <div>FSSAI License Number : {company.fssaiNo}</div>}
               {company.phone && (
                 <div className="font-mono font-tabular">
@@ -182,7 +184,7 @@ export function InvoiceSheetClassic({
                 <div className="mt-1 font-bold uppercase tracking-wide text-ink-faint">e-Invoice</div>
                 <div className="max-w-[220px] break-all font-mono text-[10px]">IRN : {irn}</div>
                 {ackNo && <div className="font-tabular">Ack No. : {ackNo}</div>}
-                {ackDate && <div className="font-tabular">Ack Date : {ackDate}</div>}
+                {ackDate && <div className="font-tabular">Ack Date : {formatInvoiceDate(ackDate)}</div>}
               </>
             ) : (
               <div className="rounded-sm2 border border-dashed border-line px-3 py-2 text-[10.5px] text-ink-faint print:hidden">e-Invoice not generated yet</div>
@@ -199,7 +201,9 @@ export function InvoiceSheetClassic({
                 {customer.shopName && <div className="font-semibold text-ink-body">{customer.shopName}</div>}
                 {customer.address && <div className="whitespace-pre-line leading-snug">{customer.address}</div>}
                 <div className="mt-1 font-mono font-tabular">GSTIN/UIN : {customer.gstin || '—'}</div>
-                <div>State Name : {customer.state}</div>
+                <div>
+                  State Name : {customer.state}, Code : <span className="font-mono font-tabular">{gstStateCode(customer.state)}</span>
+                </div>
                 {customer.fssaiNo && <div>FSSAI No. : {customer.fssaiNo}</div>}
                 {customer.contact && <div>Contact person : {customer.contact}</div>}
                 {customer.phone && (
@@ -216,7 +220,7 @@ export function InvoiceSheetClassic({
           <div className="min-w-[220px] flex-1 p-2">
             <div className="grid grid-cols-2 gap-x-3">
               <Row k="Invoice No." v={invoiceNumber ?? 'Draft'} mono />
-              <Row k="Dated" v={date} mono />
+              <Row k="Dated" v={formatInvoiceDate(date)} mono />
               {eway?.ewbNo && <Row k="e-Way Bill No." v={eway.ewbNo} mono />}
               {eway?.vehicleNo && <Row k="Vehicle No." v={eway.vehicleNo} mono />}
             </div>
@@ -266,11 +270,11 @@ export function InvoiceSheetClassic({
                         <input
                           value={l.hsn ?? ''}
                           onChange={(e) => onUpdateLine?.(l.lineId, { hsn: e.target.value })}
-                          placeholder="HSN"
+                          placeholder={DEFAULT_HSN}
                           className="w-16 rounded-sm2 border border-line bg-surface px-1 py-0.5 text-[10.5px] focus:border-brand focus:outline-none"
                         />
                       ) : (
-                        l.hsn || '—'
+                        l.hsn || DEFAULT_HSN
                       )}
                     </td>
                     <td className="border-r border-ink px-2.5 py-1.5 text-right align-top">
@@ -561,7 +565,7 @@ export function InvoiceSheetClassic({
           </div>
         </div>
       </div>
-      <div className="pt-1 text-center text-[9.5px] text-ink-faint">This is a Computer Generated Invoice</div>
+      <div className="pt-1 text-center text-[9.5px] text-ink-faint">This is a Computer Generated Invoice — End of Invoice</div>
     </div>
   );
 }

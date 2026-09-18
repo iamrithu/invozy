@@ -47,7 +47,23 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const page = await context.newPage();
     await page.goto(`${origin}/invoices/${id}`, { waitUntil: 'networkidle' });
     await page.emulateMedia({ media: 'print' });
-    const pdf = await page.pdf({ format: 'A4', printBackground: true });
+    const pdf = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      // A multi-page invoice (many line items, or the e-Way Bill's own
+      // extra page) otherwise gives no clue a page was cut off — this
+      // footer runs on every physical page once page count is known,
+      // using Chromium's own pagination (pageNumber/totalPages are
+      // computed post-layout, not something this route can know upfront).
+      displayHeaderFooter: true,
+      headerTemplate: '<span></span>',
+      footerTemplate: `
+        <div style="width: 100%; font-size: 8.5px; font-family: 'Times New Roman', Times, serif; color: #888; text-align: center; padding: 0 12mm;">
+          Page <span class="pageNumber"></span> of <span class="totalPages"></span>
+        </div>
+      `,
+      margin: { top: '14mm', bottom: '14mm', left: '12mm', right: '12mm' },
+    });
 
     // `?inline=1` (used by the detail page's embedded preview iframe) shows
     // the PDF in-browser instead of forcing a save-file prompt; the actual

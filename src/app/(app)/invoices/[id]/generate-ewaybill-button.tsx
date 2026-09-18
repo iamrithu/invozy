@@ -68,7 +68,10 @@ export function GenerateEwaybillButton({
           onConfirm={(reasonCode, remark) => cancelEwaybillAction(invoiceId, { reasonCode: reasonCode as any, remark })}
           onCancelled={() => {
             toast.success('e-Way Bill cancelled');
-            router.refresh();
+            // See generate-einvoice-button.tsx — keeps this refresh out of
+            // the route's loading.tsx fallback so only the button shows a
+            // loading state, never the whole page.
+            startTransition(() => router.refresh());
           }}
         />
       </>
@@ -112,7 +115,7 @@ export function GenerateEwaybillButton({
       }
       toast.success('e-Way Bill generated');
       setOpen(false);
-      router.refresh();
+      startTransition(() => router.refresh());
     });
   }
 

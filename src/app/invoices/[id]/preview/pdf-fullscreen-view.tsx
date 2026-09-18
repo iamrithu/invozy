@@ -2,10 +2,23 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Minus, Plus, RotateCcw } from 'lucide-react';
+import dynamic from 'next/dynamic';
+import { ArrowLeft, Minus, Plus, RotateCcw, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { PdfViewer } from '@/components/invoices/pdf-viewer';
 import { DownloadPdfButton } from '@/components/invoices/download-pdf-button';
+
+// react-pdf's <Document>/<Page> touch `window`/`document` while rendering
+// (pdf.js internals), which crashes with "document is not defined" during
+// Next's server-side render of this client component — ssr:false is
+// required so it only ever mounts in the browser.
+const PdfViewer = dynamic(() => import('@/components/invoices/pdf-viewer').then((m) => m.PdfViewer), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-[70vh] items-center justify-center gap-2 text-[13px] font-semibold text-white/70">
+      <Loader2 size={16} className="animate-spin" /> Loading viewer…
+    </div>
+  ),
+});
 
 const MIN_SCALE = 0.6;
 const MAX_SCALE = 2;

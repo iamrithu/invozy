@@ -36,7 +36,7 @@ export function BillingTrendChart({ data }: { data: { month: string; total: numb
                 {label}
               </text>
               {(isLast || active) && d.total > 0 && (
-                <text x={x + barW / 2} y={Math.max(y - 8, 12)} textAnchor="middle" fontSize="11" fill="hsl(var(--ink))" fontWeight={700} fontFamily="var(--font-ibm-plex-mono)">
+                <text x={x + barW / 2} y={Math.max(y - 8, 12)} textAnchor="middle" fontSize="11" fill="hsl(var(--ink))" fontWeight={700}>
                   {d.total >= 1000 ? (d.total / 1000).toFixed(1) + 'k' : Math.round(d.total)}
                 </text>
               )}
