@@ -206,6 +206,15 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
   const [date, setDate] = useState(() => editInvoice?.date ?? new Date().toISOString().slice(0, 10));
   const [due, setDue] = useState(() => editInvoice?.due ?? new Date().toISOString().slice(0, 10));
   const [saving, startSaving] = useTransition();
+  // The id of the DRAFT row backing "Download / print" (see downloadPdf
+  // below) — starts as editInvoice's own id when editing an existing draft,
+  // stays null for a brand-new invoice until the first PDF download claims
+  // one. Kept distinct from actually clicking Save: the user can preview a
+  // PDF repeatedly while still editing without that creating a fresh draft
+  // (and a fresh invoice number) on every click — only the first click
+  // claims one; every click after that updates the same row in place.
+  const [draftInvoiceId, setDraftInvoiceId] = useState<string | null>(editInvoice?.id ?? null);
+  const [downloadingPdf, startDownloadingPdf] = useTransition();
   const [error, setError] = useState<string | undefined>();
   const [outstandingElsewhere, setOutstandingElsewhere] = useState(0);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -303,7 +312,11 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
 
   // Real pagination (not an infinite scroll list) for the catalog picker —
   // resets to page 1 whenever the search narrows/widens the result set.
-  const PRODUCTS_PER_PAGE = 6;
+  // 20 rather than the old 6: this panel has no fixed/scroll-clamped height
+  // of its own (the whole builder page scrolls together), so a low count
+  // just meant more clicks through pagination pages for a normal-sized
+  // catalog instead of actually using the available page height.
+  const PRODUCTS_PER_PAGE = 20;
   const [productPage, setProductPage] = useState(1);
   useEffect(() => setProductPage(1), [productQuery]);
   const pagedProducts = useMemo(
@@ -465,6 +478,69 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
           // best-effort only
         }
         router.push(`/invoices/${result.invoiceId}`);
+      }
+    });
+  }
+
+  /** Generates a real, server-rendered A4 PDF of the current draft and opens
+   * it in a new tab — the same headless Playwright route the invoice detail
+   * page's PrintButton already uses, instead of `window.print()`. That
+   * matters because `window.print()` hands control to the *browser's own*
+   * print dialog, which (depending on the user's "Headers and footers"
+   * checkbox) stamps its own page URL/number chrome over every page and
+   * positions its own footer — neither of which this app's CSS can reach or
+   * override, since it isn't part of the printed document at all. The real
+   * PDF route has no such dialog in the loop: it's Playwright printing
+   * headlessly with our own custom footer template, so what comes out is
+   * pixel-identical to the invoice detail page's PDF.
+   *
+   * This does need somewhere to render *from* — Playwright navigates to a
+   * real page and needs a real invoice id, so the first click here saves
+   * the current form as a DRAFT (exactly what "Save as draft" already does)
+   * and remembers its id; every click after that updates the same draft
+   * row in place via `draftInvoiceId` rather than creating another one. */
+  function downloadPdf() {
+    if (!customer) {
+      setError('Select a customer first');
+      toast.error('Select a customer first');
+      return;
+    }
+    if (lines.length === 0) {
+      setError('Add at least one product');
+      toast.error('Add at least one product');
+      return;
+    }
+    setError(undefined);
+    // Opened synchronously, right here inside the click handler — a tab
+    // opened *after* the `await` below would no longer read as caused by
+    // the user's click to the browser's popup blocker, and get silently
+    // swallowed (an about:blank tab that never navigates, no error either).
+    // Pointing this blank tab at the real URL once the save resolves avoids
+    // that entirely.
+    const pdfWindow = window.open('', '_blank');
+    startDownloadingPdf(async () => {
+      const payload = {
+        customerId: customer.id,
+        date,
+        due,
+        items: lines,
+        overallDiscountType: applyDiscountPerItem ? ('PERCENT' as const) : discountType,
+        overallDiscountValue: applyDiscountPerItem ? 0 : discountValue,
+        notes,
+        deliveryInstructions,
+        markSent: false,
+        markPaid: false,
+      };
+      const result = draftInvoiceId ? await updateInvoice(draftInvoiceId, payload) : await createInvoice(payload);
+      if (result.error) {
+        toast.error(result.error);
+        pdfWindow?.close();
+        return;
+      }
+      const id = draftInvoiceId ?? result.invoiceId;
+      if (id) {
+        setDraftInvoiceId(id);
+        if (pdfWindow) pdfWindow.location.href = `/api/invoices/${id}/pdf?inline=1`;
       }
     });
   }
@@ -861,8 +937,8 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
             <Button variant="secondary" onClick={() => setShareOpen(true)} disabled={!customer}>
               <Share2 size={13} /> Share
             </Button>
-            <Button onClick={() => window.print()}>
-              <Printer size={13} /> Download / print
+            <Button onClick={downloadPdf} disabled={downloadingPdf}>
+              <Printer size={13} /> {downloadingPdf ? 'Generating…' : 'Download / print'}
             </Button>
           </DialogFooter>
         </DialogContent>

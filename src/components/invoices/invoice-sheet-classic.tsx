@@ -155,7 +155,11 @@ function estimateClosingHeightMm(p: {
   return mm;
 }
 
-const ITEMS_PER_MIDDLE_PAGE = Math.floor((USABLE_MM - HEADER_MM - BUYER_MM - ITEM_THEAD_MM - CONTINUED_FOOTER_MM) / ITEM_ROW_MM);
+// Capped at 20 even though the real measured budget comfortably fits more
+// (24) — a consistent, predictable page density reads as more deliberate
+// than "as many as physically fit," and 20 leaves headroom under that real
+// ceiling for a product name or two wrapping to a second line.
+const ITEMS_PER_MIDDLE_PAGE = Math.min(20, Math.floor((USABLE_MM - HEADER_MM - BUYER_MM - ITEM_THEAD_MM - CONTINUED_FOOTER_MM) / ITEM_ROW_MM));
 /** How many items fit on the true final page of a *multi-page* invoice,
  * where the buyer block is dropped (see the render logic below) — so it's
  * just header + items + closing. */
@@ -171,39 +175,43 @@ function singlePageCapacity(closingMm: number) {
 /** Splits line items into physical pages. A short invoice that fits — header
  * + buyer + every item + the full closing block, all together — stays the
  * single page it always was. Otherwise every page but the last is filled to
- * at most `perPage`, and the last page (which drops the repeating buyer
- * block — see the render logic below) is capped at `lastCap` so there's
- * always room left for the totals/HSN/signature block that only ever
- * appears once.
+ * its full `perPage` capacity before moving to the next — ordinary
+ * front-to-back document flow — and the true last page (which drops the
+ * repeating buyer block — see the render logic below, and always carries
+ * the totals/HSN/signature block) gets whatever's left, capped at `lastCap`.
  *
- * Item counts are balanced evenly across pages rather than maxing out the
- * last page's capacity first. Greedily filling the last page would, for a
- * small invoice that only needs 2 pages because the buyer block doesn't
- * also fit alongside the items (e.g. 6-10 items), strand nearly everything
- * on page 2 and leave page 1 with a single near-blank line — which looks
- * exactly as broken as the wasted-page bug this pagination replaced. */
+ * The last page is never "balanced" up to some even share with the earlier
+ * pages: however few items land there, it's anchored by the closing block
+ * (totals, declaration, signatures), so it never reads as broken the way an
+ * earlier, buyer-shown page with just one stray item would. An earlier
+ * *balanced* version of this function tried to equalize item counts across
+ * all pages instead, which fixed that one small-invoice case but introduced
+ * the opposite problem for the common case: a 17-item invoice that only
+ * needs 2 pages got artificially capped at ~8 items on page 1 (to "match"
+ * page 2), leaving roughly half of page 1 blank even though it had budget
+ * for far more — while page 2 (already dense with the closing block) barely
+ * needed the balancing. Front-loading fixes both: every non-last page is
+ * always packed to capacity, and the last page's fixed closing-block floor
+ * means a light item count there was never the actual problem. */
 function paginateLines<T>(lines: T[], perPage: number, singleCap: number, lastCap: number): T[][] {
   const total = lines.length;
   if (total <= singleCap) return [lines];
 
-  // Minimum number of item-only ("non-last") pages needed given the last
-  // page can absorb at most `lastCap` — always at least 1, so the result is
-  // never fewer than 2 pages total (see paginateLines doc comment above).
-  const nonLastPageCount = Math.max(1, Math.ceil((total - lastCap) / perPage));
-  const pageCount = nonLastPageCount + 1;
-
-  const idealShare = total / pageCount;
-  const lastCount = lastCap <= 0 ? 0 : Math.min(lastCap, Math.max(1, Math.round(idealShare)));
-  const nonLastTotal = total - lastCount;
-  const base = Math.floor(nonLastTotal / nonLastPageCount);
-  const extra = nonLastTotal % nonLastPageCount;
-
   const pages: T[][] = [];
   let idx = 0;
-  for (let i = 0; i < nonLastPageCount; i++) {
-    const take = Math.min(perPage, base + (i < extra ? 1 : 0));
+  let remaining = total;
+  // `remaining - 1` (not `remaining`) is what guarantees at least one item
+  // is always left for a genuinely separate last page — reserving the full
+  // `remaining` here would, whenever what's left already fits within
+  // `lastCap`, consume it entirely on a "non-last" page and leave the final
+  // push below with zero items, collapsing back to a single page that
+  // (wrongly, since total > singleCap) would still need the buyer block and
+  // a closing block sized on the assumption it wasn't shown.
+  while (remaining > lastCap || pages.length === 0) {
+    const take = Math.min(perPage, remaining - 1);
     pages.push(lines.slice(idx, idx + take));
     idx += take;
+    remaining -= take;
   }
   pages.push(lines.slice(idx));
   return pages;
@@ -328,7 +336,23 @@ export function InvoiceSheetClassic(props: {
         const isLast = i === pages.length - 1;
         return (
           <div key={i} className={`invoice-page flex flex-col ${i > 0 ? 'mt-6 print:mt-0' : ''} ${!isLast ? 'print:break-after-page' : ''}`}>
-            <div className="invoice-page-inner flex flex-1 flex-col border border-ink">
+            {/* print:min-h anchors this box to (a safety-margined) full page
+                height so the print:flex-1 spacer below has real slack to
+                grow into — pushing the closing block (or the "Continued…"
+                line) down to sit flush against the bottom of the page
+                instead of floating right under the items table with a big
+                blank gap under it. Safe to do now in a way it wasn't
+                earlier in this file's history (see the pagination comment
+                above): back then the page budgets themselves were
+                miscalibrated, so a min-height sized on a wrong guess turned
+                any underestimate into an entire extra blank page. Now that
+                every page's item count is chosen specifically so header +
+                items + closing already fit inside USABLE_MM with margin to
+                spare, stretching a spacer up to that same, already-proven
+                safe height doesn't change what fits — it just redistributes
+                slack that was always going to be there from the bottom of
+                the closing block to right above it instead. */}
+            <div className="invoice-page-inner flex flex-1 flex-col border border-ink print:min-h-[263mm]">
               <ClassicHeader {...shared} />
               {/* The closing block (totals + amount-in-words + qty summary
                   + optional HSN table + bank/terms + notes + declaration +
@@ -342,15 +366,10 @@ export function InvoiceSheetClassic(props: {
                   earlier in that case. */}
               {(!isLast || isTrueSinglePage) && <ClassicBuyerRow {...shared} />}
               {pageLines.length > 0 && <ClassicItemsTable {...shared} lines={pageLines} startSerial={startSerial} />}
+              <div className="print:flex-1" />
               {isLast ? (
                 <>
                   <ClassicClosing {...shared} />
-                  {/* Inside the same height-bounded box as everything else
-                      on this page, not a sibling after it — a box already
-                      sized to exactly one page's height (see
-                      .invoice-page-inner) plus so much as one more line
-                      below it is enough to spill a whole extra, otherwise
-                      blank, page. */}
                   <div className="pt-1 text-center text-[9.5px] text-ink-faint">This is a Computer Generated Invoice — End of Invoice</div>
                 </>
               ) : (
@@ -953,14 +972,10 @@ function ClassicClosing(props: SharedProps) {
       <div className="border-t border-line p-1.5 break-inside-avoid">
         <div className="mt-1 grid grid-cols-2 gap-8 text-center text-[10.5px]">
           <div className="flex flex-col">
-            <div className="text-left text-[9.5px] text-ink-faint">
-              Received in good condition on : <span className="font-mono font-tabular">_______________</span>
-            </div>
             <div className="h-9" />
             <div className="border-t border-ink pt-1">Customer&apos;s Sign</div>
           </div>
           <div className="flex flex-col">
-            <div className="h-[11px]" />
             <div className="flex h-9 items-end justify-center pb-1">
               {company.signatureUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
