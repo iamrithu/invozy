@@ -18,7 +18,7 @@ export function StatusBadge({ status, overdue }: { status: string; overdue?: boo
   return (
     <span className="inline-flex items-center gap-1.5">
       <Badge variant={VARIANTS[status] ?? 'default'}>{LABELS[status] ?? status}</Badge>
-      {overdue && <Badge variant="brand">Overdue</Badge>}
+      {overdue && <Badge variant="red">Overdue</Badge>}
     </span>
   );
 }

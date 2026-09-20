@@ -29,6 +29,8 @@ const InvoiceInputSchema = z.object({
   items: z.array(LineSchema).min(1, 'Add at least one line item'),
   overallDiscountType: z.enum(['PERCENT', 'FLAT']).default('PERCENT'),
   overallDiscountValue: z.coerce.number().min(0).default(0),
+  notes: z.string().optional().nullable(),
+  deliveryInstructions: z.string().optional().nullable(),
   markSent: z.boolean().default(false),
   // Records a full-amount Payment alongside the invoice so it's created
   // already PAID — for walk-in/cash-on-delivery sales where there's no real
@@ -119,6 +121,8 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
         status: data.markPaid ? 'PAID' : data.markSent ? 'SENT' : 'DRAFT',
         overallDiscountType: data.overallDiscountType,
         overallDiscountValue: data.overallDiscountValue,
+        notes: data.notes?.trim() || null,
+        deliveryInstructions: data.deliveryInstructions?.trim() || null,
         items: {
           create: data.items.map((l) => ({
             productId: l.productId,
@@ -144,6 +148,115 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
   revalidatePath('/invoices');
   revalidatePath('/dashboard');
   return { invoiceId: invoice.id, warning };
+}
+
+/**
+ * Full edit of an existing DRAFT invoice — same validation/totals/credit-limit
+ * flow as createInvoice, but updates the invoice row + replaces its items
+ * in place instead of claiming a new number. Only DRAFT invoices may be
+ * edited this way: once an invoice is SENT/PARTIALLY_PAID/PAID it's treated
+ * as issued, matching the same real-world constraint most billing software
+ * enforces (recordPayment/duplicateInvoice are the supported paths after
+ * that point).
+ */
+export async function updateInvoice(invoiceId: string, input: InvoiceInput): Promise<InvoiceActionResult> {
+  const parsed = InvoiceInputSchema.safeParse(input);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Invalid invoice' };
+  }
+  const data = parsed.data;
+
+  const [company, existing, customer] = await Promise.all([
+    getCompany(),
+    prisma.invoice.findUnique({ where: { id: invoiceId } }),
+    prisma.customer.findUnique({ where: { id: data.customerId } }),
+  ]);
+  if (!existing || existing.companyId !== company.id) return { error: 'Invoice not found' };
+  if (existing.status !== 'DRAFT') return { error: 'Only draft invoices can be edited' };
+  if (!customer) return { error: 'Customer not found' };
+
+  const totals = computeTotals(
+    data.items.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount })),
+    { type: data.overallDiscountType, value: data.overallDiscountValue },
+    {
+      cgstRate: Number(company.cgstRate),
+      sgstRate: Number(company.sgstRate),
+      igstRate: Number(company.igstRate),
+      cgstEnabled: company.cgstEnabled,
+      sgstEnabled: company.sgstEnabled,
+      igstEnabled: company.igstEnabled,
+    },
+    company.state,
+    customer.state
+  );
+
+  let warning: string | undefined;
+  if (customer.creditLimit && Number(customer.creditLimit) > 0) {
+    // Excludes this invoice's own (pre-edit) record — otherwise its old
+    // total would double-count against the newly edited total below.
+    const existingInvoices = await prisma.invoice.findMany({
+      where: { customerId: customer.id, id: { not: invoiceId } },
+      include: { items: true, payments: true },
+    });
+    const outstandingBefore = existingInvoices.reduce((sum, inv) => {
+      const t = computeTotals(
+        inv.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) })),
+        { type: inv.overallDiscountType, value: Number(inv.overallDiscountValue) },
+        {
+          cgstRate: Number(company.cgstRate),
+          sgstRate: Number(company.sgstRate),
+          igstRate: Number(company.igstRate),
+          cgstEnabled: company.cgstEnabled,
+          sgstEnabled: company.sgstEnabled,
+          igstEnabled: company.igstEnabled,
+        },
+        company.state,
+        customer.state
+      );
+      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      return sum + Math.max(t.total - paid, 0);
+    }, 0);
+    if (isOverCreditLimit(outstandingBefore, totals.total, Number(customer.creditLimit))) {
+      warning = `This will put ${customer.name} at or over their credit limit.`;
+    }
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.invoiceItem.deleteMany({ where: { invoiceId } });
+    return tx.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        customerId: customer.id,
+        date: new Date(data.date),
+        due: new Date(data.due),
+        status: data.markPaid ? 'PAID' : data.markSent ? 'SENT' : 'DRAFT',
+        overallDiscountType: data.overallDiscountType,
+        overallDiscountValue: data.overallDiscountValue,
+        notes: data.notes?.trim() || null,
+        deliveryInstructions: data.deliveryInstructions?.trim() || null,
+        items: {
+          create: data.items.map((l) => ({
+            productId: l.productId,
+            name: l.name,
+            unit: l.unit,
+            qty: l.qty,
+            rate: l.rate,
+            discount: l.discount,
+            hsn: l.hsn?.trim() || DEFAULT_HSN,
+            batch: l.batch,
+            altUnit: l.altUnit,
+            altQtyPerUnit: l.altQtyPerUnit,
+          })),
+        },
+        ...(data.markPaid ? { payments: { create: { amount: totals.total, date: new Date(data.date), mode: 'Cash' } } } : {}),
+      },
+    });
+  });
+
+  revalidatePath('/invoices');
+  revalidatePath('/dashboard');
+  revalidatePath(`/invoices/${invoiceId}`);
+  return { invoiceId: updated.id, warning };
 }
 
 function withComputedTotals<T extends { items: any[]; overallDiscountType: any; overallDiscountValue: any; payments: any[]; status: string; due: Date; customer: { state: string } }>(
@@ -289,6 +402,8 @@ export async function duplicateInvoice(id: string) {
         status: 'DRAFT',
         overallDiscountType: src.overallDiscountType,
         overallDiscountValue: src.overallDiscountValue,
+        notes: src.notes,
+        deliveryInstructions: src.deliveryInstructions,
         items: {
           create: src.items.map((it) => ({
             productId: it.productId,

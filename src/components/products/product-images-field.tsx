@@ -46,7 +46,7 @@ export function ProductImagesField({ value, onChange, max = MAX_IMAGES }: { valu
               type="button"
               onClick={() => onChange({ ...value, existing: value.existing.filter((u) => u !== url) })}
               aria-label="Remove photo"
-              className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100"
+              className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-sm2 bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100"
             >
               <X size={10} />
             </button>
@@ -60,7 +60,7 @@ export function ProductImagesField({ value, onChange, max = MAX_IMAGES }: { valu
               type="button"
               onClick={() => onChange({ ...value, files: value.files.filter((_, fi) => fi !== i) })}
               aria-label="Remove photo"
-              className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100"
+              className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-sm2 bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100"
             >
               <X size={10} />
             </button>

@@ -30,7 +30,7 @@ export function ConfirmDialog({
       <DialogContent className="max-w-[380px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2.5">
-            <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full ${destructive ? 'bg-brand-light text-brand-dark' : 'bg-surface-alt text-ink-soft'}`}>
+            <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-sm2 ${destructive ? 'bg-red-soft text-red' : 'bg-surface-alt text-ink-soft'}`}>
               <AlertTriangle size={15} />
             </span>
             {title}

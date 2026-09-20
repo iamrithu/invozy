@@ -12,7 +12,7 @@ export default function AccountLoading() {
 
       <div className="space-y-4">
         <div className="flex items-center gap-4 rounded-xl2 border border-line bg-surface p-5 shadow-card">
-          <Skeleton className="h-14 w-14 flex-shrink-0 rounded-full" />
+          <Skeleton className="h-14 w-14 flex-shrink-0 rounded-sm2" />
           <div className="space-y-2">
             <Skeleton className="h-4 w-40" />
             <Skeleton className="h-3 w-28" />

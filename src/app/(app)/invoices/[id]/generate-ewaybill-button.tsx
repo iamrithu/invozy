@@ -54,7 +54,7 @@ export function GenerateEwaybillButton({
   if (status === 'GENERATED') {
     return (
       <>
-        <span className="flex items-center gap-1.5 rounded-full bg-green-soft px-3 py-1.5 text-[11.5px] font-bold text-green">
+        <span className="flex items-center gap-1.5 rounded-sm2 bg-green-soft px-3 py-1.5 text-[11.5px] font-bold text-green">
           <CheckCircle2 size={13} /> e-Way Bill generated
         </span>
         <Button variant="ghost" size="sm" onClick={() => setCancelOpen(true)} className="text-destructive hover:bg-destructive/10">
@@ -80,7 +80,7 @@ export function GenerateEwaybillButton({
 
   if (status === 'CANCELLED') {
     return (
-      <span className="flex items-center gap-1.5 rounded-full bg-surface-alt px-3 py-1.5 text-[11.5px] font-bold text-ink-faint">
+      <span className="flex items-center gap-1.5 rounded-sm2 bg-surface-alt px-3 py-1.5 text-[11.5px] font-bold text-ink-faint">
         <XCircle size={13} /> e-Way Bill cancelled
       </span>
     );

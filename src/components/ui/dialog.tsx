@@ -82,7 +82,7 @@ const DialogFormContent = React.forwardRef<
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-bg text-ink-faint transition-colors hover:bg-brand-light hover:text-brand focus:outline-none">
+      <DialogPrimitive.Close className="absolute right-4 top-4 z-10 flex h-7 w-7 items-center justify-center rounded-sm2 bg-bg text-ink-faint transition-colors hover:bg-brand-light hover:text-brand focus:outline-none">
         <X size={14} />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
@@ -101,7 +101,7 @@ const DialogFormHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivE
 DialogFormHeader.displayName = 'DialogFormHeader';
 
 const DialogFormIcon = ({ className, children }: { className?: string; children: React.ReactNode }) => (
-  <span className={cn('flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center rounded-full bg-brand-light text-brand-dark', className)}>{children}</span>
+  <span className={cn('flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center rounded-sm2 bg-brand-light text-brand-dark', className)}>{children}</span>
 );
 DialogFormIcon.displayName = 'DialogFormIcon';
 

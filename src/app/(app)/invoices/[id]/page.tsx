@@ -1,10 +1,11 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Eye } from 'lucide-react';
+import { ArrowLeft, Pencil } from 'lucide-react';
 import { prisma } from '@/lib/prisma';
 import { getCompany } from '@/lib/get-company';
-import { computeTotals, fmtInr } from '@/lib/gst';
+import { computeTotals } from '@/lib/gst';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { Button } from '@/components/ui/button';
 import { PAPER_STYLE } from '@/lib/paper-theme';
 import { InvoiceSheet } from '@/components/invoices/invoice-sheet';
 import { InvoiceSheetClassic } from '@/components/invoices/invoice-sheet-classic';
@@ -15,11 +16,19 @@ import { DownloadPdfButton } from '@/components/invoices/download-pdf-button';
 import { GenerateEinvoiceButton } from './generate-einvoice-button';
 import { GenerateEwaybillButton } from './generate-ewaybill-button';
 import { InvoiceCompletenessChecklist } from '@/components/invoices/invoice-completeness-checklist';
+import { InlinePdfPreview } from './inline-pdf-preview';
 
 export const dynamic = 'force-dynamic';
 
-export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function InvoiceDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ pdfRender?: string }> }) {
   const { id } = await params;
+  // Set only by the PDF-generation route's own internal navigation (see
+  // src/app/api/invoices/[id]/pdf/route.ts) — InlinePdfPreview fetches that
+  // same route to render inline, so it must not mount while Playwright is
+  // rendering *this* page for that route, or every PDF request would
+  // recursively spawn another one from inside itself.
+  const { pdfRender } = await searchParams;
+  const isPdfRender = pdfRender === '1';
   const [invoice, company] = await Promise.all([
     prisma.invoice.findUnique({
       where: { id },
@@ -104,6 +113,13 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
         </Link>
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={invoice.status} overdue={invoice.status !== 'PAID' && invoice.due < new Date()} />
+          {invoice.status === 'DRAFT' && (
+            <Button asChild variant="outline" size="sm">
+              <Link href={`/invoices/new?edit=${invoice.id}`}>
+                <Pencil size={13} /> Edit
+              </Link>
+            </Button>
+          )}
           {isClassic && (
             <>
               <GenerateEinvoiceButton invoiceId={invoice.id} hasCredentials={!!company.nicUsername} status={invoice.einvoiceStatus} />
@@ -124,7 +140,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
             </>
           )}
           <DownloadPdfButton invoiceId={invoice.id} invoiceNumber={invoice.number} />
-          <PrintButton />
+          <PrintButton invoiceId={invoice.id} />
         </div>
       </div>
 
@@ -145,21 +161,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
 
       {isClassic && <InvoiceCompletenessChecklist items={checklistItems} />}
 
-      {/* Opens the in-app PDF preview (./preview, still inside the (app)
-          shell — sidebar/top bar stay visible) — renders the real generated
-          PDF via pdf.js (canvas), which works identically on every device,
-          unlike an embedded <iframe> relying on the browser's own PDF
-          plugin (a blank box on most mobile browsers). */}
-      <Link
-        href={`/invoices/${invoice.id}/preview`}
-        className="mx-auto flex max-w-[900px] flex-col items-center gap-2.5 rounded-xl2 border border-dashed border-line bg-surface p-10 text-center shadow-card transition-colors hover:border-brand/50 print:hidden"
-      >
-        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-light text-brand-dark">
-          <Eye size={20} />
-        </span>
-        <span className="text-[14px] font-bold text-ink">Preview PDF</span>
-        <span className="text-[11.5px] text-ink-faint">View the exact PDF that downloads, without leaving the app</span>
-      </Link>
+      {!isPdfRender && <InlinePdfPreview invoiceId={invoice.id} />}
 
       {/* Kept in the DOM (invisible on screen) purely so PrintButton's
           window.print() has real content to print — see the `.invoice-print`
@@ -193,6 +195,9 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                   }
                 : null
             }
+            amountPaid={amountPaid}
+            notes={invoice.notes}
+            deliveryInstructions={invoice.deliveryInstructions}
             editable={false}
           />
         ) : (
@@ -205,24 +210,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
             lines={lines}
             totals={totals}
             totalSavings={totalSavings}
+            amountPaid={amountPaid}
             discountType={invoice.overallDiscountType}
             discountValue={Number(invoice.overallDiscountValue)}
             editable={false}
           />
-        )}
-        {amountPaid > 0 && (
-          <div className="mt-3 flex justify-end">
-            <div className="w-full max-w-[280px] rounded-md2 border border-line bg-surface p-3 text-[12px]">
-              <div className="flex justify-between text-green">
-                <span>Paid</span>
-                <span className="font-mono font-bold">−{fmtInr(amountPaid)}</span>
-              </div>
-              <div className="mt-1 flex justify-between border-t border-dashed border-line pt-1 text-[13px] font-extrabold text-ink">
-                <span>Balance</span>
-                <span className="font-mono">{fmtInr(totals.total - amountPaid)}</span>
-              </div>
-            </div>
-          </div>
         )}
         {isClassic && invoice.ewbNo && (
           <InvoiceEwayBillSheet

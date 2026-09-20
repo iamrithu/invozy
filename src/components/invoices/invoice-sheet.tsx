@@ -1,5 +1,5 @@
 import { Minus, Plus, Trash2 } from 'lucide-react';
-import { computeTotals, fmtInr, formatInvoiceDate } from '@/lib/gst';
+import { computeTotals, fmtInr, formatInvoiceDate, formatUnit } from '@/lib/gst';
 import { numberToWords } from '@/lib/number-to-words';
 import { gstStateCode } from '@/lib/gst-state-codes';
 
@@ -21,6 +21,10 @@ export type InvoiceSheetCompany = {
   cgstEnabled: boolean;
   sgstEnabled: boolean;
   igstEnabled: boolean;
+  /** Per-company display currency for printed amounts — defaults to INR via fmtInr() when absent. */
+  currency?: string;
+  /** PDF section toggle from Company settings — undefined behaves as "off" (hidden). */
+  pdfShowBankDetails?: boolean;
 };
 
 export type InvoiceSheetCustomer = {
@@ -54,11 +58,14 @@ export function InvoiceSheet({
   lines,
   totals,
   totalSavings,
+  amountPaid,
   discountType,
   discountValue,
+  applyPerItem,
   editable,
   onDiscountTypeChange,
   onDiscountValueChange,
+  onApplyPerItemChange,
   onIncrement,
   onDecrement,
   onUpdateLine,
@@ -72,11 +79,22 @@ export function InvoiceSheet({
   lines: InvoiceSheetLine[];
   totals: ReturnType<typeof computeTotals>;
   totalSavings: number;
+  /** Sum of Payment rows recorded against this invoice — shown as a
+   * Paid/Balance line right under the total when there's a partial or full
+   * payment on file. Omitted (or 0) shows nothing, same as before this
+   * prop existed. */
+  amountPaid?: number;
   discountType: 'PERCENT' | 'FLAT';
   discountValue: number;
+  /** When true, the discount % box broadcasts to every line's own discount
+   * field instead of being a single reduction applied once at invoice
+   * level — see builder-client.tsx's handling for how the two stay
+   * mutually exclusive (never double-discounting the same amount). */
+  applyPerItem?: boolean;
   editable: boolean;
   onDiscountTypeChange?: (t: 'PERCENT' | 'FLAT') => void;
   onDiscountValueChange?: (v: number) => void;
+  onApplyPerItemChange?: (v: boolean) => void;
   onIncrement?: (lineId: string) => void;
   onDecrement?: (lineId: string) => void;
   onUpdateLine?: (lineId: string, patch: Partial<InvoiceSheetLine>) => void;
@@ -84,6 +102,10 @@ export function InvoiceSheet({
 }) {
   return (
     <div className="rounded-b-lg2 border border-t-0 border-line bg-white p-[26px] pt-[26px] text-ink-body shadow-card print:rounded-none print:border-none print:shadow-none">
+      <table className="w-full">
+      <thead>
+      <tr>
+      <td>
       <div className="flex flex-wrap items-start justify-between gap-4 border-b-2 border-ink pb-4">
         <div className="flex items-start gap-3">
           {company.logoUrl && (
@@ -100,21 +122,25 @@ export function InvoiceSheet({
         </div>
         <div className="rounded-lg2 border border-line bg-bg px-3.5 py-2.5 text-right print:rounded-none print:border-black print:bg-transparent">
           <div className="text-[10px] font-extrabold uppercase tracking-[0.08em] text-brand print:text-black">Tax invoice</div>
-          <div className="mt-1.5 grid grid-cols-2 gap-x-3 text-left text-[11px] leading-relaxed text-ink-soft">
-            <div>
-              No.
-              <div className="font-mono text-[13px] font-extrabold text-ink">{invoiceNumber ?? 'Draft'}</div>
-            </div>
-            <div>
-              Date
-              <div className="font-mono text-[13px] font-extrabold text-ink">{formatInvoiceDate(date)}</div>
-            </div>
-          </div>
+          {/* No number exists yet in the builder's live preview — the real
+              one is only claimed from the sequential counter on Save (see
+              createInvoice), so this never shows a workflow-status word like
+              "Draft" on what could become a customer-facing PDF. */}
+          <div className="mt-1 font-mono text-[17px] font-extrabold text-ink">{invoiceNumber ?? '—'}</div>
           <div className="mt-1.5 text-[11px] leading-relaxed text-ink-soft">
+            Dated <span className="font-mono font-semibold text-ink-body">{formatInvoiceDate(date)}</span>
+          </div>
+          <div className="text-[11px] leading-relaxed text-ink-soft">
             Due <span className="font-mono text-ink-body">{formatInvoiceDate(due)}</span>
           </div>
         </div>
       </div>
+      </td>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>
 
       <div className="border-b border-line py-3.5">
         <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-ink-faint">Bill to</div>
@@ -163,7 +189,7 @@ export function InvoiceSheet({
                 const extraPieces = packQty ? Math.round((l.qty - boxes!) * packQty) : null;
                 const qtyHint = packQty
                   ? extraPieces! > 0
-                    ? `${boxes} ${l.unit}${boxes !== 1 ? 's' : ''} + ${extraPieces} pc`
+                    ? `${boxes} ${formatUnit(l.unit)}${boxes !== 1 ? 's' : ''} + ${extraPieces} pc`
                     : `≈${packQty * l.qty} pcs`
                   : null;
 
@@ -173,7 +199,7 @@ export function InvoiceSheet({
                       <span className="inline-flex items-center gap-1.5">
                         {l.name}
                         {!l.productId && (
-                          <span title="Not from your product catalog" className="rounded-full bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-ink-faint print:hidden">
+                          <span title="Not from your product catalog" className="rounded-sm2 bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-ink-faint print:hidden">
                             Custom
                           </span>
                         )}
@@ -183,24 +209,24 @@ export function InvoiceSheet({
                     <td className="whitespace-nowrap py-2 pr-1.5 text-right print:border print:border-black print:px-2 print:py-1.5">
                       {editable ? (
                         <div className="flex flex-col items-end gap-0.5">
-                          <div className="inline-flex items-center gap-1 rounded-full bg-bg p-0.5">
-                            <button onClick={() => onDecrement?.(l.lineId)} aria-label={`Decrease ${l.name} quantity`} className="flex h-[18px] w-[18px] items-center justify-center rounded-full border border-line bg-surface text-ink-soft hover:border-brand hover:text-brand">
+                          <div className="inline-flex items-center gap-1 rounded-sm2 bg-bg p-0.5">
+                            <button onClick={() => onDecrement?.(l.lineId)} aria-label={`Decrease ${l.name} quantity`} className="flex h-[18px] w-[18px] items-center justify-center rounded-sm2 border border-line bg-surface text-ink-soft hover:border-brand hover:text-brand">
                               <Minus size={9} />
                             </button>
                             <span key={l.qty} className="min-w-[14px] animate-bump text-center font-mono text-[11.5px] font-bold">
                               {l.qty}
                             </span>
-                            <button onClick={() => onIncrement?.(l.lineId)} aria-label={`Increase ${l.name} quantity`} className="flex h-[18px] w-[18px] items-center justify-center rounded-full border border-line bg-surface text-ink-soft hover:border-brand hover:text-brand">
+                            <button onClick={() => onIncrement?.(l.lineId)} aria-label={`Increase ${l.name} quantity`} className="flex h-[18px] w-[18px] items-center justify-center rounded-sm2 border border-line bg-surface text-ink-soft hover:border-brand hover:text-brand">
                               <Plus size={9} />
                             </button>
                           </div>
-                          <span className="pr-0.5 text-[9.5px] font-semibold text-ink-faint">{l.unit}</span>
+                          <span className="pr-0.5 text-[9.5px] font-semibold text-ink-faint">{formatUnit(l.unit)}</span>
                         </div>
                       ) : (
                         <span className="font-mono">
                           {packQty && extraPieces! > 0
-                            ? `${boxes} ${l.unit}${boxes !== 1 ? 's' : ''} + ${extraPieces} pc`
-                            : `${l.qty} ${l.unit}`}
+                            ? `${boxes} ${formatUnit(l.unit)}${boxes !== 1 ? 's' : ''} + ${extraPieces} pc`
+                            : `${l.qty} ${formatUnit(l.unit)}`}
                         </span>
                       )}
                     </td>
@@ -215,7 +241,7 @@ export function InvoiceSheet({
                           className="w-[56px] rounded-sm2 border border-line bg-surface px-1.5 py-1 text-right font-mono text-[11.5px] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-light"
                         />
                       ) : (
-                        <span className="font-mono">{fmtInr(l.rate)}</span>
+                        <span className="font-mono">{fmtInr(l.rate, company.currency)}</span>
                       )}
                     </td>
                     {editable && (
@@ -231,10 +257,10 @@ export function InvoiceSheet({
                         />
                       </td>
                     )}
-                    <td className="whitespace-nowrap py-2 pr-1.5 text-right font-mono print:border print:border-black print:px-2 print:py-1.5">{fmtInr(lineTaxable)}</td>
+                    <td className="whitespace-nowrap py-2 pr-1.5 text-right font-mono print:border print:border-black print:px-2 print:py-1.5">{fmtInr(lineTaxable, company.currency)}</td>
                     {editable && (
                       <td className="whitespace-nowrap py-2">
-                        <button onClick={() => onRemoveLine?.(l.lineId)} aria-label={`Remove ${l.name}`} className="flex h-[22px] w-[22px] items-center justify-center rounded-full text-ink-faint hover:bg-brand-light hover:text-brand-dark">
+                        <button onClick={() => onRemoveLine?.(l.lineId)} aria-label={`Remove ${l.name}`} className="flex h-[22px] w-[22px] items-center justify-center rounded-sm2 text-ink-faint hover:bg-brand-light hover:text-brand-dark">
                           <Trash2 size={12} />
                         </button>
                       </td>
@@ -248,48 +274,73 @@ export function InvoiceSheet({
       </div>
 
       {editable && lines.length > 0 && (
-        <div className="mt-0.5 flex items-center gap-2.5 border-t border-dashed border-line px-1.5 py-2.5 text-[12px] font-bold text-ink-soft">
-          <span>Overall discount</span>
-          <div className="flex rounded-full bg-bg p-0.5">
-            <button onClick={() => onDiscountTypeChange?.('PERCENT')} aria-label="Percent discount" className={`rounded-full px-3 py-1 text-[11px] font-extrabold ${discountType === 'PERCENT' ? 'bg-brand text-white' : 'text-ink-faint'}`}>
-              %
-            </button>
-            <button onClick={() => onDiscountTypeChange?.('FLAT')} aria-label="Flat rupee discount" className={`rounded-full px-3 py-1 text-[11px] font-extrabold ${discountType === 'FLAT' ? 'bg-brand text-white' : 'text-ink-faint'}`}>
-              ₹
-            </button>
+        <div className="mt-0.5 flex flex-col gap-1.5 border-t border-dashed border-line px-1.5 py-2.5">
+          <div className="flex items-center gap-2.5 text-[12px] font-bold text-ink-soft">
+            <span>{applyPerItem ? 'Discount per item' : 'Overall discount'}</span>
+            <div className="flex rounded-sm2 bg-bg p-0.5">
+              <button onClick={() => onDiscountTypeChange?.('PERCENT')} aria-label="Percent discount" className={`rounded-sm2 px-3 py-1 text-[11px] font-extrabold ${discountType === 'PERCENT' ? 'bg-brand text-white' : 'text-ink-faint'}`}>
+                %
+              </button>
+              <button
+                onClick={() => onDiscountTypeChange?.('FLAT')}
+                disabled={applyPerItem}
+                aria-label="Flat rupee discount"
+                className={`rounded-sm2 px-3 py-1 text-[11px] font-extrabold disabled:cursor-not-allowed disabled:opacity-40 ${discountType === 'FLAT' ? 'bg-brand text-white' : 'text-ink-faint'}`}
+              >
+                ₹
+              </button>
+            </div>
+            <input
+              type="number"
+              min={0}
+              step="0.5"
+              value={discountValue}
+              onChange={(e) => onDiscountValueChange?.(parseFloat(e.target.value) || 0)}
+              className="ml-auto w-20 rounded-sm2 border border-line bg-surface px-2 py-1 text-right font-mono text-[12.5px] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-light"
+            />
           </div>
-          <input
-            type="number"
-            min={0}
-            step="0.5"
-            value={discountValue}
-            onChange={(e) => onDiscountValueChange?.(parseFloat(e.target.value) || 0)}
-            className="ml-auto w-20 rounded-sm2 border border-line bg-surface px-2 py-1 text-right font-mono text-[12.5px] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-light"
-          />
+          <label className="flex items-center gap-1.5 text-[10.5px] font-semibold text-ink-faint">
+            <input
+              type="checkbox"
+              checked={!!applyPerItem}
+              onChange={(e) => onApplyPerItemChange?.(e.target.checked)}
+              className="h-3.5 w-3.5 rounded-sm2 border-line accent-brand"
+            />
+            Apply this % to every line item instead of one overall reduction
+          </label>
         </div>
       )}
 
       <div className="mt-2 flex justify-end">
         <div className="w-full max-w-[280px] rounded-md2 border border-line bg-bg p-3 text-[12px] print:rounded-none print:border-black print:bg-transparent">
-          <TotalsRow k="Subtotal" v={fmtInr(totals.subtotal)} />
-          {totals.overallDiscountAmount > 0 && <TotalsRow k="Discount" v={`−${fmtInr(totals.overallDiscountAmount)}`} negative />}
-          <TotalsRow k="Taxable value" v={fmtInr(totals.taxable)} />
+          <TotalsRow k="Subtotal" v={fmtInr(totals.subtotal, company.currency)} />
+          {totals.overallDiscountAmount > 0 && <TotalsRow k="Discount" v={`−${fmtInr(totals.overallDiscountAmount, company.currency)}`} negative />}
+          <TotalsRow k="Taxable value" v={fmtInr(totals.taxable, company.currency)} />
           {totals.useIgst ? (
-            <TotalsRow k={`IGST @ ${company.igstRate}%`} v={fmtInr(totals.igst)} />
+            <TotalsRow k={`IGST @ ${company.igstRate}%`} v={fmtInr(totals.igst, company.currency)} />
           ) : (
             <>
-              {company.cgstEnabled && <TotalsRow k={`CGST @ ${company.cgstRate}%`} v={fmtInr(totals.cgst)} />}
-              {company.sgstEnabled && <TotalsRow k={`SGST @ ${company.sgstRate}%`} v={fmtInr(totals.sgst)} />}
+              {company.cgstEnabled && <TotalsRow k={`CGST @ ${company.cgstRate}%`} v={fmtInr(totals.cgst, company.currency)} />}
+              {company.sgstEnabled && <TotalsRow k={`SGST @ ${company.sgstRate}%`} v={fmtInr(totals.sgst, company.currency)} />}
             </>
           )}
-          <TotalsRow k="Round off" v={`${totals.roundOff >= 0 ? '+' : ''}${fmtInr(totals.roundOff)}`} />
+          <TotalsRow k="Round off" v={`${totals.roundOff >= 0 ? '+' : ''}${fmtInr(totals.roundOff, company.currency)}`} />
           <div className="mt-1.5 flex justify-between border-t-2 border-ink pt-2 text-[14px] font-extrabold text-brand-dark print:text-black">
             <span>Total due</span>
             <span key={totals.total} className="animate-total-pulse font-mono">
-              {fmtInr(totals.total)}
+              {fmtInr(totals.total, company.currency)}
             </span>
           </div>
-          {totalSavings > 0 && <TotalsRow k="You saved" v={fmtInr(totalSavings)} good />}
+          {totalSavings > 0 && <TotalsRow k="You saved" v={fmtInr(totalSavings, company.currency)} good />}
+          {!!amountPaid && amountPaid > 0 && (
+            <>
+              <TotalsRow k="Paid" v={`−${fmtInr(amountPaid, company.currency)}`} negative />
+              <div className="mt-1 flex justify-between border-t border-dashed border-line px-1.5 pt-1.5 text-[12.5px] font-extrabold text-ink print:text-black">
+                <span>Balance due</span>
+                <span className="font-mono">{fmtInr(totals.total - amountPaid, company.currency)}</span>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -300,6 +351,7 @@ export function InvoiceSheet({
       )}
 
       <div className="mt-5 flex flex-wrap justify-between gap-5 border-t border-line pt-3.5">
+        {company.pdfShowBankDetails && company.bankName && (
         <div>
           <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-ink-faint">Bank details</div>
           <div className="font-mono text-[11px] leading-relaxed text-ink-soft">
@@ -318,6 +370,7 @@ export function InvoiceSheet({
             ) : null}
           </div>
         </div>
+        )}
         <div>
           <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-ink-faint">Terms</div>
           <p className="max-w-[210px] text-[10.5px] leading-relaxed text-ink-faint">{company.terms}</p>
@@ -327,13 +380,18 @@ export function InvoiceSheet({
           <div className="ml-auto mt-[30px] w-[140px] border-t border-line pt-1.5 text-[10.5px] text-ink-faint">Authorised signatory</div>
         </div>
       </div>
+
+      </td>
+      </tr>
+      </tbody>
+      </table>
     </div>
   );
 }
 
 function TotalsRow({ k, v, negative, good }: { k: string; v: string; negative?: boolean; good?: boolean }) {
   return (
-    <div className={`flex justify-between px-1.5 py-1 print:text-black ${negative ? 'text-brand-dark' : good ? 'font-bold text-green' : 'text-ink-soft'}`}>
+    <div className={`flex justify-between px-1.5 py-1 print:text-black ${negative ? 'text-red' : good ? 'font-bold text-green' : 'text-ink-soft'}`}>
       <span>{k}</span>
       <span className="font-mono">{v}</span>
     </div>

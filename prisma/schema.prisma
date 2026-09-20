@@ -45,6 +45,16 @@ model Company {
   terms              String?
   logoUrl            String?
   themeColor         String          @default("red")
+  // Symbol-only — what prints on invoices/amounts (fmtInr in src/lib/gst.ts).
+  // GST math (CGST/SGST/IGST) always stays India-specific regardless of this.
+  currency           String          @default("INR")
+  // PDF-handling toggles — what shows on the generated invoice PDF, read by
+  // both invoice-sheet.tsx (MODERN) and invoice-sheet-classic.tsx (CLASSIC).
+  pdfShowBankDetails Boolean         @default(true)
+  // Per-HSN-code tax breakdown table (CLASSIC only) — off by default since
+  // most businesses don't need this granularity on the printed invoice;
+  // the calculation (computeHsnSummary in src/lib/gst.ts) stays available.
+  pdfShowHsnSummary  Boolean         @default(false)
   createdAt          DateTime        @default(now())
   // GST-compliance seller details — needed to render/generate a CLASSIC
   // (Tally-style) invoice and to populate SellerDtls in the e-Invoice/e-Way
@@ -140,8 +150,31 @@ model Product {
   altUnit       String?
   altQtyPerUnit Decimal?
   invoiceItems  InvoiceItem[]
+  // Additional unit+price pricing options for this same product (e.g. sold
+  // as a Box at one price with a minimum order quantity, and as a loose
+  // Piece at a plain price) — `unit`/`price` above stay the "primary" pair
+  // used by dashboard/reports/list views; the invoice builder reads
+  // `priceTiers` to offer every pricing option. See src/actions/products.ts.
+  priceTiers    ProductPriceTier[]
 
   @@index([companyId, category])
+}
+
+model ProductPriceTier {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  unit      String
+  price     Decimal
+  // Approximate quantity of the catalog's base unit this tier's own unit
+  // represents (e.g. "1 Box ≈ 40 Piece") — purely informational, used only
+  // to derive a per-piece price for comparison (price / approxQty). Never a
+  // purchase minimum: adding a Box to an invoice always starts at qty 1,
+  // and InvoiceItem never needs to know about this at all.
+  approxQty Decimal?
+  sortOrder Int      @default(0)
+
+  @@index([productId])
 }
 
 model Customer {
@@ -182,6 +215,11 @@ model Invoice {
   status               InvoiceStatus @default(DRAFT)
   overallDiscountType  DiscountType  @default(PERCENT)
   overallDiscountValue Decimal       @default(0)
+  // Free-text, per-invoice (unlike Company.terms, which is the same on every
+  // invoice) — notes prints near the totals/declaration, deliveryInstructions
+  // repeats in the buyer block since it's what the delivery crew needs to see.
+  notes                String?
+  deliveryInstructions String?
   items                InvoiceItem[]
   payments             Payment[]
   createdAt            DateTime      @default(now())

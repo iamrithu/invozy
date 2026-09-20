@@ -44,6 +44,11 @@ const CompanySchema = z.object({
   invoiceTemplate: z.enum(['MODERN', 'CLASSIC']).optional(),
   fssaiNo: z.string().optional().nullable(),
   pincode: z.string().optional().nullable(),
+  // Per-company currency + PDF-handling toggles — plain fields, no
+  // encryption needed (not secrets), same path as invoiceTemplate/cgstEnabled.
+  currency: z.string().min(1).optional(),
+  pdfShowBankDetails: z.coerce.boolean().optional(),
+  pdfShowHsnSummary: z.coerce.boolean().optional(),
   // NIC e-Invoice/e-Way Bill sandbox (or production) credentials — all
   // optional, a company may not have registered yet. Password/client
   // secret are handled outside this schema (see updateCompany below): an
@@ -71,6 +76,8 @@ export async function updateCompany(_prev: CompanyFormState, formData: FormData)
     sgstEnabled: raw.sgstEnabled === 'on' || raw.sgstEnabled === 'true',
     igstEnabled: raw.igstEnabled === 'on' || raw.igstEnabled === 'true',
     nicSandbox: raw.nicSandbox === 'on' || raw.nicSandbox === 'true',
+    pdfShowBankDetails: raw.pdfShowBankDetails === 'on' || raw.pdfShowBankDetails === 'true',
+    pdfShowHsnSummary: raw.pdfShowHsnSummary === 'on' || raw.pdfShowHsnSummary === 'true',
   });
   if (!parsed.success) {
     return { error: 'Check the highlighted fields.', fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string> };

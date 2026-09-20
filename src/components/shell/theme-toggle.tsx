@@ -24,7 +24,7 @@ export function ThemeToggle({ className, iconSize = 16 }: { className?: string; 
       onClick={() => dispatch(toggleTheme())}
       title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
       aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-      className={cn('flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-line bg-surface text-ink-soft', className)}
+      className={cn('flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-sm2 border border-line bg-surface text-ink-soft', className)}
     >
       {theme === 'dark' ? <Sun size={iconSize} /> : <Moon size={iconSize} />}
     </button>

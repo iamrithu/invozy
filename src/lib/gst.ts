@@ -102,8 +102,35 @@ export function deriveStatus(total: number, amountPaid: number, wasSent: boolean
   return wasSent ? 'SENT' : 'DRAFT';
 }
 
-export function fmtInr(n: number): string {
-  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(n || 0);
+// Locale paired with each supported currency so grouping/symbol placement
+// reads naturally (e.g. ₹1,23,456 for INR's lakh/crore grouping vs
+// $123,456 for USD) — see Company.currency (prisma/schema.prisma) and the
+// currency picker in company-form.tsx. Latin-digit locales throughout
+// (e.g. 'en-AE' not 'ar-AE') so amounts never switch numeral systems.
+const CURRENCY_LOCALE: Record<string, string> = {
+  INR: 'en-IN',
+  USD: 'en-US',
+  EUR: 'en-IE',
+  GBP: 'en-GB',
+  AED: 'en-AE',
+};
+
+/** Kept as `fmtInr` (not renamed) since ~70 call sites already use it —
+ * `currency` is optional and defaults to INR, so every existing call is
+ * unaffected. Callers with a `company` in scope should pass
+ * `company.currency` to respect the per-company currency setting. */
+export function fmtInr(n: number, currency: string = 'INR'): string {
+  const locale = CURRENCY_LOCALE[currency] ?? 'en-IN';
+  return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: 2 }).format(n || 0);
+}
+
+/** Display-only capitalization for a unit string ("kg" -> "Kg", "box" ->
+ * "Box") — never applied to what's stored, matched in a <select>'s value,
+ * or sent to the NIC e-Invoice/e-Way Bill payloads (those uppercase
+ * independently, see src/lib/nic/*.ts). */
+export function formatUnit(unit: string | null | undefined): string {
+  if (!unit) return '';
+  return unit.charAt(0).toUpperCase() + unit.slice(1);
 }
 
 /** The invoice sheets are handed plain `yyyy-mm-dd` strings (the same value
@@ -123,6 +150,30 @@ export function formatInvoiceDate(iso: string | null | undefined): string {
  * (edible ice) — used as the printed default whenever a line item has no
  * HSN/SAC of its own, so the PDF never shows a blank/placeholder code. */
 export const DEFAULT_HSN = '21050000';
+
+export type UnitSummaryRow = { unit: string; count: number; qty: number };
+
+/** Per-unit quantity totals across every line item — e.g. "135 Box, 4,075 Pc"
+ * — so whoever's loading the delivery can see total boxes/kg/pieces without
+ * adding up the Qty column themselves. Row order follows each unit's first
+ * appearance in `lines`, so it reads in the same order as the item table
+ * rather than jumping around alphabetically. */
+export function computeUnitSummary(lines: { unit: string; qty: number }[]): UnitSummaryRow[] {
+  const order: string[] = [];
+  const byUnit = new Map<string, UnitSummaryRow>();
+  for (const l of lines) {
+    const unit = l.unit || '—';
+    let row = byUnit.get(unit);
+    if (!row) {
+      row = { unit, count: 0, qty: 0 };
+      byUnit.set(unit, row);
+      order.push(unit);
+    }
+    row.count++;
+    row.qty += l.qty;
+  }
+  return order.map((u) => byUnit.get(u)!);
+}
 
 export type HsnSummaryRow = {
   hsn: string;

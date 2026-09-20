@@ -25,6 +25,13 @@
     --gold-soft: 42 89% 93%;
     --green: 134 52% 47%;
     --green-soft: 140 52% 94%;
+    /* Fixed standard "error/danger" red — deliberately does NOT follow the
+       per-company brand color (unlike --brand), the same way --green/--gold
+       stay fixed for success/warning regardless of theme. Error text,
+       delete confirmations, and validation messages must read as red even
+       when a company's brand color is itself red, blue, or black. */
+    --red: 356 75% 53%;
+    --red-soft: 356 86% 95%;
     /* Fixed near-black "chrome" — floating bars, tooltips, the block-ice
        tile — deliberately does NOT follow the theme (unlike --ink), the
        same way the reference design keeps a couple of always-dark UI
@@ -47,12 +54,12 @@
     --muted-foreground: var(--ink-soft);
     --accent: var(--brand-light);
     --accent-foreground: var(--brand-dark);
-    --destructive: var(--brand-dark);
+    --destructive: var(--red);
     --destructive-foreground: 0 0% 100%;
     --border: var(--line);
     --input: var(--line);
     --ring: var(--brand);
-    --radius: 0.625rem;
+    --radius: 2px;
   }
 
   .dark {
@@ -71,6 +78,8 @@
     --gold-soft: 40 40% 18%;
     --green: 134 45% 52%;
     --green-soft: 134 35% 16%;
+    --red: 356 78% 62%;
+    --red-soft: 356 40% 18%;
     --accent-foreground: 355 75% 78%;
   }
 }
@@ -135,15 +144,35 @@ main:has(> .invoice-builder-root) {
 
 /* Professional print/PDF output for invoices (via the browser's native
    print-to-PDF, no image/canvas capture involved) — everything outside the
-   invoice sheet is hidden, the sheet fills the printed page edge-to-edge,
-   its table header repeats on every page, and rows never split across a
-   page break. Applied to both the invoice detail page and the invoice
-   builder's preview dialog (see .invoice-print usages). */
+   invoice sheet is hidden and the sheet fills the printed page edge-to-edge.
+   Applied to both the invoice detail page and the invoice builder's preview
+   dialog (see .invoice-print usages).
+   The CLASSIC template (invoice-sheet-classic.tsx) does its own explicit
+   multi-page layout — pre-splitting line items into physical <div
+   className="invoice-page"> blocks with the header/buyer markup duplicated
+   on each one — rather than relying on a repeating <thead>/<tfoot>, which
+   turned out to have a real, reproducible Chromium ceiling: past roughly
+   190-200px of header content it silently stops repeating past page 1. See
+   the pagination comment at the top of that file for the full story. */
 @media print {
   @page {
     size: A4;
     margin: 14mm 12mm;
   }
+  /* Deliberately NOT given a min-height to force its footer/closing block
+     flush against the very bottom of the page — that was tried, and it
+     backfires badly: the moment real content (which varies invoice to
+     invoice: bank details on or off, notes present or not, HSN breakup on
+     or off) lands even a few mm over whatever height was chosen, that
+     small overflow gets padded out to an entire extra, otherwise-blank,
+     page rather than just flowing onto a mostly-full next page. Each
+     page's item-row budget (see ITEMS_PER_MIDDLE_PAGE et al. in
+     invoice-sheet-classic.tsx) is instead sized, from real measurements of
+     every section's rendered height, to leave a safety margin under one
+     page's content box — so the closing block sits close to the bottom in
+     the common case without a hard mechanism that turns "close" into
+     "an entire spare page" whenever a company's specific settings push
+     it slightly further than expected. */
   /* visibility (not display) is what lets .invoice-print opt back in from
      an otherwise-hidden ancestor chain — display:none can't be undone by a
      descendant. But visibility:hidden alone preserves layout height, so a
@@ -172,7 +201,21 @@ main:has(> .invoice-builder-root) {
   .invoice-print table thead {
     display: table-header-group;
   }
-  .invoice-print table tr {
+  /* tfoot's UA-default display (table-footer-group) repeats it on every
+     printed page a table spans — the same mechanism that makes thead
+     repeat, applied to the wrong end. For the items/HSN tables' totals
+     rows that means "Subtotal…Total" printing again on every page instead
+     of once at the end. Demoting to table-row-group makes it behave like
+     an ordinary row group: printed once, wherever the last row lands. */
+  .invoice-print table tfoot {
+    display: table-row-group;
+  }
+  /* Defensive only, at this point — the CLASSIC template's own page-chunking
+     already keeps each page's row count within a conservative budget, so no
+     row should ever need to split. This just guards against a single row
+     splitting mid-row if some unusually long content (e.g. a wrapped product
+     name) pushes a page slightly over. */
+  .invoice-print table tbody tr {
     break-inside: avoid;
   }
   /* CLASSIC template's e-Way Bill sheet (invoice-eway-bill-sheet.tsx) is a

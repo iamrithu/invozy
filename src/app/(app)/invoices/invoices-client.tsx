@@ -1,16 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Receipt, Copy, Trash2, IndianRupee, ArrowRight, Filter, Plus } from 'lucide-react';
+import { Receipt, Copy, Trash2, Eye, Pencil, IndianRupee, ArrowRight, Filter, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Pagination } from '@/components/ui/pagination';
-import { SkeletonList } from '@/components/ui/skeleton';
+import { SkeletonTable } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Sheet, SheetBody, SheetContent, SheetFooter, SheetHeader, SheetIcon, SheetTitle } from '@/components/ui/sheet';
 import { fmtInr } from '@/lib/gst';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useInvoicesPage, useInvoiceStatusCounts, useDeleteInvoice, useDuplicateInvoice, useRecordPayment } from '@/hooks/use-invoices';
@@ -42,7 +44,7 @@ const FILTERS = [
 const GROUP_ORDER = ['Overdue', 'DRAFT', 'SENT', 'PARTIALLY_PAID', 'PAID'];
 const GROUP_LABEL: Record<string, string> = { Overdue: 'Overdue', DRAFT: 'Draft', SENT: 'Sent', PARTIALLY_PAID: 'Partially Paid', PAID: 'Paid' };
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 function groupKey(inv: Invoice) {
   return inv.isOverdue ? 'Overdue' : inv.status;
@@ -55,6 +57,9 @@ export function InvoicesClient({ initialData, initialStatus }: { initialData: { 
   const [sort, setSort] = useState<InvoiceSort>('newest');
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const deleteInvoice = useDeleteInvoice();
+  const duplicateInvoice = useDuplicateInvoice();
 
   useEffect(() => setPage(1), [search, filter, sort]);
 
@@ -74,9 +79,31 @@ export function InvoicesClient({ initialData, initialStatus }: { initialData: { 
   }, [pageItems, filter, total, statusCounts]);
 
   const selected = pageItems.find((i) => i.id === selectedId) ?? null;
+  const deleteTarget = pageItems.find((i) => i.id === deleteTargetId) ?? null;
 
   function selectRow(id: string) {
     setSelectedId((prev) => (prev === id ? null : id));
+  }
+
+  async function handleDelete() {
+    if (!deleteTargetId) return;
+    try {
+      await deleteInvoice.mutateAsync(deleteTargetId);
+      toast.success('Invoice deleted');
+      if (selectedId === deleteTargetId) setSelectedId(null);
+      setDeleteTargetId(null);
+    } catch (e: any) {
+      toast.error(e.message ?? 'Could not delete this invoice');
+    }
+  }
+
+  async function handleDuplicate(id: string) {
+    try {
+      const newId = await duplicateInvoice.mutateAsync(id);
+      window.location.href = `/invoices/${newId}`;
+    } catch (e: any) {
+      toast.error(e.message ?? 'Could not duplicate this invoice');
+    }
   }
 
   return (
@@ -95,176 +122,252 @@ export function InvoicesClient({ initialData, initialStatus }: { initialData: { 
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[350px_1fr]">
-        <div className="flex max-h-[74vh] flex-col rounded-xl2 border border-line bg-surface shadow-card">
-          <div className={`flex-1 overflow-y-auto transition-opacity ${isFetching ? 'opacity-60' : ''}`}>
-            <div className="sticky top-0 z-[1] space-y-2 border-b border-line bg-surface p-3">
-              <Input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Search number or customer…" />
-              <div className="flex items-center gap-2">
-                <div className="flex flex-1 gap-1 overflow-x-auto">
-                  {FILTERS.map((f) => (
-                    <Button key={f.id} type="button" size="sm" variant={filter === f.id ? 'default' : 'outline'} onClick={() => setFilter(f.id)}>
-                      {f.label}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-              <Select value={sort} onValueChange={(v) => setSort(v as InvoiceSort)}>
-                <SelectTrigger className="h-8 w-full text-[11.5px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="newest">Newest first</SelectItem>
-                  <SelectItem value="oldest">Oldest first</SelectItem>
-                  <SelectItem value="amount-desc">Amount: high-low</SelectItem>
-                  <SelectItem value="amount-asc">Amount: low-high</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {isLoading ? (
-              <SkeletonList />
-            ) : (
-              <>
-                {total === 0 && (
-                  <div className="p-8 text-center text-ink-faint">
-                    <Filter size={22} className="mx-auto mb-2" />
-                    <p className="text-[13px]">No invoices match these filters.</p>
-                  </div>
-                )}
-                {groups.map((g) => (
-                  <div key={g.key}>
-                    {filter === 'all' && (
-                      <div className="sticky top-[125px] z-[1] bg-surface-alt px-3.5 py-1.5 text-[10.5px] font-extrabold uppercase tracking-wide text-ink-soft">
-                        {GROUP_LABEL[g.key]} · {g.count}
-                      </div>
-                    )}
-                    {g.items.map((inv) => (
-                      <button
-                        key={inv.id}
-                        onClick={() => selectRow(inv.id)}
-                        className={`flex w-full items-center gap-3 border-b border-line px-3.5 py-2.5 text-left last:border-0 hover:bg-bg ${
-                          selectedId === inv.id ? 'bg-brand-light shadow-[inset_3px_0_0_theme(colors.brand.DEFAULT)]' : ''
-                        }`}
-                      >
-                        <span className="min-w-0 flex-1">
-                          <div className="truncate text-[13px] font-bold text-ink">{inv.number}</div>
-                          <div className="truncate text-[11px] text-ink-faint">
-                            {inv.customer.name} · {new Date(inv.date).toLocaleDateString('en-IN')}
-                          </div>
-                        </span>
-                        <span className="flex flex-shrink-0 flex-col items-end gap-1">
-                          <StatusBadge status={inv.status} />
-                          <span className="font-mono text-[11.5px] font-bold text-ink-soft">{fmtInr(inv.computedTotal)}</span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
-          <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl2 border border-line bg-surface p-3 shadow-card">
+        <Input
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Search number or customer…"
+          className="max-w-xs flex-shrink-0"
+        />
+        <div className="flex flex-1 gap-1 overflow-x-auto">
+          {FILTERS.map((f) => (
+            <Button key={f.id} type="button" size="sm" variant={filter === f.id ? 'default' : 'outline'} onClick={() => setFilter(f.id)}>
+              {f.label}
+            </Button>
+          ))}
         </div>
-
-        <div className="rounded-xl2 border border-line bg-surface p-5 shadow-card">
-          {selected ? (
-            <InvoiceDetail key={selected.id} invoice={selected} onDeleted={() => setSelectedId(null)} />
-          ) : (
-            <div className="flex flex-col items-center justify-center gap-3 py-16 text-center text-ink-faint">
-              <Receipt size={34} />
-              <p className="text-[13.5px] font-bold text-ink-soft">Select an invoice to see its details</p>
-              <Button asChild>
-                <Link href="/invoices/new">New invoice</Link>
-              </Button>
-            </div>
-          )}
-        </div>
+        <Select value={sort} onValueChange={(v) => setSort(v as InvoiceSort)}>
+          <SelectTrigger className="h-8 w-[180px] flex-shrink-0 text-[11.5px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="newest">Newest first</SelectItem>
+            <SelectItem value="oldest">Oldest first</SelectItem>
+            <SelectItem value="amount-desc">Amount: high-low</SelectItem>
+            <SelectItem value="amount-asc">Amount: low-high</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
+
+      {isLoading ? (
+        <SkeletonTable cols={6} />
+      ) : total === 0 ? (
+        <div className="rounded-xl2 border border-line bg-surface p-12 text-center text-ink-faint shadow-card">
+          <Filter size={22} className="mx-auto mb-2" />
+          <p className="text-[13px]">No invoices match these filters.</p>
+        </div>
+      ) : (
+        <div className={`rounded-xl2 border border-line bg-surface shadow-card transition-opacity ${isFetching ? 'opacity-60' : ''}`}>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Invoice #</TableHead>
+                <TableHead>Customer</TableHead>
+                <TableHead>Date</TableHead>
+                <TableHead>Due</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead className="text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {groups.map((g) => (
+                <Fragment key={g.key}>
+                  {filter === 'all' && (
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell colSpan={7} className="bg-surface-alt py-1.5 text-[10.5px] font-extrabold uppercase tracking-wide text-ink-soft">
+                        {GROUP_LABEL[g.key]} · {g.count}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {g.items.map((inv) => (
+                    <TableRow
+                      key={inv.id}
+                      onClick={() => selectRow(inv.id)}
+                      className={`cursor-pointer ${selectedId === inv.id ? 'bg-brand-light' : ''}`}
+                    >
+                      <TableCell className="font-mono font-bold text-ink">{inv.number}</TableCell>
+                      <TableCell className="text-ink-body">{inv.customer.name}</TableCell>
+                      <TableCell className="text-ink-faint">{new Date(inv.date).toLocaleDateString('en-IN')}</TableCell>
+                      <TableCell className="text-ink-faint">{new Date(inv.due).toLocaleDateString('en-IN')}</TableCell>
+                      <TableCell>
+                        <StatusBadge status={inv.status} />
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-bold text-ink-soft">{fmtInr(inv.computedTotal)}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            aria-label="View invoice"
+                            className="h-8 w-8"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              selectRow(inv.id);
+                            }}
+                          >
+                            <Eye size={14} />
+                          </Button>
+                          {inv.status === 'DRAFT' && (
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              aria-label="Edit invoice"
+                              className="h-8 w-8"
+                              asChild
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Link href={`/invoices/new?edit=${inv.id}`}>
+                                <Pencil size={14} />
+                              </Link>
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            aria-label="Duplicate invoice"
+                            className="h-8 w-8"
+                            disabled={duplicateInvoice.isPending}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDuplicate(inv.id);
+                            }}
+                          >
+                            <Copy size={14} />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            aria-label="Delete invoice"
+                            className="h-8 w-8 hover:bg-brand-light hover:text-brand-dark"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteTargetId(inv.id);
+                            }}
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </Fragment>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
+
+      <Sheet open={selectedId !== null} onOpenChange={(open) => !open && setSelectedId(null)}>
+        <SheetContent>
+          {selected && (
+            <InvoiceDetail
+              key={selected.id}
+              invoice={selected}
+              onDeleteClick={() => setDeleteTargetId(selected.id)}
+              onDuplicate={() => handleDuplicate(selected.id)}
+              duplicatePending={duplicateInvoice.isPending}
+            />
+          )}
+        </SheetContent>
+      </Sheet>
+
+      <ConfirmDialog
+        open={deleteTargetId !== null}
+        onOpenChange={(open) => !open && setDeleteTargetId(null)}
+        title="Delete invoice"
+        description={
+          <>
+            Delete <b className="font-mono font-bold text-ink">{deleteTarget?.number}</b>? This can&apos;t be undone.
+          </>
+        }
+        confirmLabel="Delete invoice"
+        pending={deleteInvoice.isPending}
+        onConfirm={handleDelete}
+      />
     </div>
   );
 }
 
-function InvoiceDetail({ invoice, onDeleted }: { invoice: Invoice; onDeleted: () => void }) {
+function InvoiceDetail({
+  invoice,
+  onDeleteClick,
+  onDuplicate,
+  duplicatePending,
+}: {
+  invoice: Invoice;
+  onDeleteClick: () => void;
+  onDuplicate: () => void;
+  duplicatePending: boolean;
+}) {
   const [showPayment, setShowPayment] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const deleteInvoice = useDeleteInvoice();
-  const duplicateInvoice = useDuplicateInvoice();
-  const pending = deleteInvoice.isPending || duplicateInvoice.isPending;
-
-  async function handleDelete() {
-    try {
-      await deleteInvoice.mutateAsync(invoice.id);
-      setDeleteOpen(false);
-      toast.success('Invoice deleted');
-      onDeleted();
-    } catch (e: any) {
-      setDeleteOpen(false);
-      toast.error(e.message ?? 'Could not delete this invoice');
-    }
-  }
-
-  async function handleDuplicate() {
-    try {
-      const newId = await duplicateInvoice.mutateAsync(invoice.id);
-      window.location.href = `/invoices/${newId}`;
-    } catch (e: any) {
-      toast.error(e.message ?? 'Could not duplicate this invoice');
-    }
-  }
 
   return (
-    <div>
-      <div className="mb-4 flex items-start justify-between border-b border-line pb-4">
-        <div className="flex items-center gap-3">
-          <span className="flex h-11 w-11 items-center justify-center rounded-sm2 bg-surface-alt text-brand">
-            <Receipt size={19} />
-          </span>
-          <div>
-            <h3 className="font-mono text-[16px] font-extrabold text-ink">{invoice.number}</h3>
-            <p className="text-[12px] text-ink-soft">
-              {invoice.customer.name} · {new Date(invoice.date).toLocaleDateString('en-IN')}
-            </p>
-          </div>
+    <>
+      <SheetHeader>
+        <SheetIcon>
+          <Receipt size={16} />
+        </SheetIcon>
+        <div className="min-w-0 flex-1">
+          <SheetTitle className="font-mono">{invoice.number}</SheetTitle>
+          <p className="truncate text-[12px] text-ink-soft">
+            {invoice.customer.name} · {new Date(invoice.date).toLocaleDateString('en-IN')}
+          </p>
         </div>
         <StatusBadge status={invoice.status} overdue={invoice.isOverdue} />
-      </div>
+      </SheetHeader>
 
-      <div className="mb-4 grid grid-cols-4 gap-2.5">
-        <Stat label="Total" value={fmtInr(invoice.computedTotal)} />
-        <Stat label="Paid" value={fmtInr(invoice.amountPaid)} good={invoice.amountPaid > 0} />
-        <Stat label="Balance due" value={fmtInr(invoice.balanceDue)} warn={invoice.balanceDue > 0} />
-        <Stat label="Line items" value={String(invoice.items.length)} />
-      </div>
-
-      <div className="space-y-1.5 text-[12.5px]">
-        <Row k="Due" v={new Date(invoice.due).toLocaleDateString('en-IN')} />
-        <Row k="Bill to" v={`${invoice.customer.name} · ${invoice.customer.state}`} />
-      </div>
-
-      {invoice.payments.length > 0 && (
-        <div className="mt-4">
-          <div className="mb-1.5 text-[11px] font-extrabold uppercase tracking-wide text-ink-soft">Payment history</div>
-          {invoice.payments.map((p, i) => (
-            <Row key={i} k={`${new Date(p.date).toLocaleDateString('en-IN')}${p.mode ? ' · ' + p.mode : ''}`} v={`+${fmtInr(p.amount)}`} good />
-          ))}
+      <SheetBody>
+        <div className="mb-4 grid grid-cols-4 gap-2.5">
+          <Stat label="Total" value={fmtInr(invoice.computedTotal)} />
+          <Stat label="Paid" value={fmtInr(invoice.amountPaid)} good={invoice.amountPaid > 0} />
+          <Stat label="Balance due" value={fmtInr(invoice.balanceDue)} warn={invoice.balanceDue > 0} />
+          <Stat label="Line items" value={String(invoice.items.length)} />
         </div>
-      )}
 
-      {showPayment && (
-        <PaymentForm
-          invoiceId={invoice.id}
-          maxAmount={invoice.balanceDue}
-          onDone={() => setShowPayment(false)}
-          onCancel={() => setShowPayment(false)}
-        />
-      )}
+        <div className="space-y-1.5 text-[12.5px]">
+          <Row k="Due" v={new Date(invoice.due).toLocaleDateString('en-IN')} />
+          <Row k="Bill to" v={`${invoice.customer.name} · ${invoice.customer.state}`} />
+        </div>
 
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-4">
+        {invoice.payments.length > 0 && (
+          <div className="mt-4">
+            <div className="mb-1.5 text-[11px] font-extrabold uppercase tracking-wide text-ink-soft">Payment history</div>
+            {invoice.payments.map((p, i) => (
+              <Row key={i} k={`${new Date(p.date).toLocaleDateString('en-IN')}${p.mode ? ' · ' + p.mode : ''}`} v={`+${fmtInr(p.amount)}`} good />
+            ))}
+          </div>
+        )}
+
+        {showPayment && (
+          <PaymentForm
+            invoiceId={invoice.id}
+            maxAmount={invoice.balanceDue}
+            onDone={() => setShowPayment(false)}
+            onCancel={() => setShowPayment(false)}
+          />
+        )}
+      </SheetBody>
+
+      <SheetFooter>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => setDeleteOpen(true)} disabled={pending} className="border-brand-light text-brand-dark hover:bg-brand-light">
+          <Button type="button" variant="outline" size="sm" onClick={onDeleteClick} className="border-red-soft text-red hover:bg-red-soft">
             <Trash2 size={12} /> Delete
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={handleDuplicate} disabled={pending}>
+          {invoice.status === 'DRAFT' && (
+            <Button asChild variant="outline" size="sm">
+              <Link href={`/invoices/new?edit=${invoice.id}`}>
+                <Pencil size={12} /> Edit
+              </Link>
+            </Button>
+          )}
+          <Button type="button" variant="outline" size="sm" onClick={onDuplicate} disabled={duplicatePending}>
             <Copy size={12} /> Duplicate
           </Button>
           {invoice.balanceDue > 0 && !showPayment && (
@@ -278,22 +381,8 @@ function InvoiceDetail({ invoice, onDeleted }: { invoice: Invoice; onDeleted: ()
             Open full view <ArrowRight size={13} />
           </Link>
         </Button>
-      </div>
-
-      <ConfirmDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        title="Delete invoice"
-        description={
-          <>
-            Delete <b className="font-mono font-bold text-ink">{invoice.number}</b>? This can&apos;t be undone.
-          </>
-        }
-        confirmLabel="Delete invoice"
-        pending={deleteInvoice.isPending}
-        onConfirm={handleDelete}
-      />
-    </div>
+      </SheetFooter>
+    </>
   );
 }
 
@@ -343,7 +432,7 @@ function PaymentForm({
 function Stat({ label, value, warn, good }: { label: string; value: string; warn?: boolean; good?: boolean }) {
   return (
     <div className="rounded-md2 bg-bg p-2.5 text-center">
-      <div className={`font-mono text-[14px] font-extrabold ${warn ? 'text-brand-dark' : good ? 'text-green' : 'text-ink'}`}>{value}</div>
+      <div className={`font-mono text-[14px] font-extrabold ${warn ? 'text-red' : good ? 'text-green' : 'text-ink'}`}>{value}</div>
       <div className="mt-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-faint">{label}</div>
     </div>
   );

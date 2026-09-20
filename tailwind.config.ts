@@ -20,6 +20,7 @@ const config: Config = {
         },
         gold: { DEFAULT: 'hsl(var(--gold))', soft: 'hsl(var(--gold-soft))' },
         green: { DEFAULT: 'hsl(var(--green))', soft: 'hsl(var(--green-soft))' },
+        red: { DEFAULT: 'hsl(var(--red))', soft: 'hsl(var(--red-soft))' },
         ink: {
           DEFAULT: 'hsl(var(--ink))',
           body: 'hsl(var(--ink-body))',
@@ -68,34 +69,26 @@ const config: Config = {
         },
       },
       fontFamily: {
-        sans: ['"Times New Roman"', 'Times', 'Georgia', 'serif'],
-        mono: ['"Times New Roman"', 'Times', 'Georgia', 'serif'],
+        // IBM Plex Sans/Mono (src/app/layout.tsx) — used app-wide including
+        // the printed/PDF invoices (Playwright renders the same page/CSS
+        // for those). `mono` now has a real monospace face — every
+        // `font-mono`/`.font-tabular` use (amounts, GSTINs, invoice
+        // numbers) previously just re-rendered the sans font.
+        sans: ['var(--font-plex-sans)', 'system-ui', 'sans-serif'],
+        mono: ['var(--font-plex-mono)', 'ui-monospace', 'monospace'],
       },
-      // Times New Roman only ships true Regular/Bold masters — the
-      // in-between weights (medium/semibold/extrabold/black) used
-      // throughout the app for headers/labels would otherwise render as
-      // browser-synthesized "fake bold" or just fall back to Regular,
-      // which is exactly the "too light" look this maps everything at or
-      // above medium straight to real Bold to avoid.
-      fontWeight: {
-        thin: '400',
-        extralight: '400',
-        light: '400',
-        normal: '400',
-        medium: '700',
-        semibold: '700',
-        bold: '700',
-        extrabold: '700',
-        black: '700',
-      },
+      // Boxy with a hint of softness — every corner in the app is a fixed
+      // 2px, not a hard 0px. `rounded-full` circles/pills throughout were
+      // already replaced with sm2 (see button.tsx, badge.tsx, switch.tsx,
+      // etc.), so setting this one scale is enough to apply it everywhere.
       borderRadius: {
-        xl2: '16px',
-        lg2: '13px',
-        md2: '10px',
-        sm2: '8px',
-        lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        xl2: '2px',
+        lg2: '2px',
+        md2: '2px',
+        sm2: '2px',
+        lg: '2px',
+        md: '2px',
+        sm: '2px',
       },
       boxShadow: {
         card: '0 1px 2px rgba(28,28,28,.06), 0 1px 6px rgba(28,28,28,.05)',

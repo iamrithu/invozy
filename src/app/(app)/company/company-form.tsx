@@ -11,7 +11,7 @@ import { updateCompany, type CompanyFormState } from '@/actions/company';
 import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { Dialog, DialogFormContent, DialogFormHeader, DialogFormIcon, DialogFormBody, DialogFormFooter } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetIcon, SheetBody, SheetFooter } from '@/components/ui/sheet';
 import { ZoomableImage } from '@/components/ui/image-lightbox';
 import { StateSelect, DistrictSelect } from '@/components/ui/location-field';
 import { isThemePresetKey, THEME_PRESET_KEYS, THEME_PRESETS } from '@/lib/theme-presets';
@@ -105,21 +105,21 @@ export function CompanyForm({ company }: { company: Company }) {
         <Pencil size={13} /> Edit details
       </Button>
 
-      <Dialog
+      <Sheet
         open={open}
         onOpenChange={(next) => {
           setOpen(next);
           if (next) setTab('identity');
         }}
       >
-        <DialogFormContent wide>
+        <SheetContent wide>
           <form onSubmit={handleSubmit} className="contents">
-            <DialogFormHeader>
-              <DialogFormIcon>
+            <SheetHeader>
+              <SheetIcon>
                 <Building2 size={16} />
-              </DialogFormIcon>
+              </SheetIcon>
               <div className="text-[15px] font-extrabold text-ink">Edit company profile</div>
-            </DialogFormHeader>
+            </SheetHeader>
 
             <div className="flex flex-shrink-0 gap-4 overflow-x-auto border-b border-line px-[22px]">
               {TABS.map((t) => {
@@ -140,7 +140,7 @@ export function CompanyForm({ company }: { company: Company }) {
               })}
             </div>
 
-            <DialogFormBody>
+            <SheetBody>
               <div className={tab === 'identity' ? 'grid grid-cols-2 gap-3' : 'hidden'}>
                 <Field label="Business name" name="name" icon={Building2} defaultValue={company.name} error={state.fieldErrors?.name} />
                 <Field label="Website / domain" name="domain" icon={Globe} defaultValue={company.domain ?? ''} />
@@ -230,19 +230,19 @@ export function CompanyForm({ company }: { company: Company }) {
                           onClick={() => setThemeColor(key)}
                           title={preset.label}
                           aria-label={preset.label}
-                          className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border-2 transition-colors ${active ? 'border-ink' : 'border-transparent'}`}
+                          className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-sm2 border-2 transition-colors ${active ? 'border-ink' : 'border-transparent'}`}
                         >
-                          <span className="h-6 w-6 rounded-full" style={{ background: `hsl(${preset.light.brand})` }} />
+                          <span className="h-6 w-6 rounded-sm2" style={{ background: `hsl(${preset.light.brand})` }} />
                         </button>
                       );
                     })}
                     <span className="h-6 w-px flex-shrink-0 bg-line" />
                     <label
                       title="Pick any custom color"
-                      className={`relative flex h-9 w-9 flex-shrink-0 cursor-pointer items-center justify-center rounded-full border-2 transition-colors ${isCustomActive ? 'border-ink' : 'border-transparent'}`}
+                      className={`relative flex h-9 w-9 flex-shrink-0 cursor-pointer items-center justify-center rounded-sm2 border-2 transition-colors ${isCustomActive ? 'border-ink' : 'border-transparent'}`}
                     >
                       <span
-                        className="h-6 w-6 rounded-full"
+                        className="h-6 w-6 rounded-sm2"
                         style={{ background: isCustomActive ? themeColor : 'conic-gradient(from 90deg, #ef4444, #f59e0b, #eab308, #22c55e, #06b6d4, #3b82f6, #8b5cf6, #ec4899, #ef4444)' }}
                       />
                       <input
@@ -314,6 +314,36 @@ export function CompanyForm({ company }: { company: Company }) {
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="FSSAI license no. (optional)" name="fssaiNo" icon={ShieldCheck} mono defaultValue={company.fssaiNo ?? ''} />
                   <Field label="Pincode" name="pincode" icon={MapPin} mono defaultValue={company.pincode ?? ''} />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold text-ink-faint">
+                    <Landmark size={12} className="flex-shrink-0" /> Currency
+                  </label>
+                  <select
+                    name="currency"
+                    defaultValue={company.currency || 'INR'}
+                    className="w-full rounded-sm2 border border-line bg-surface px-3 py-2 text-[13px] font-bold text-ink outline-none focus:border-brand"
+                  >
+                    <option value="INR">INR — Indian Rupee</option>
+                    <option value="USD">USD — US Dollar</option>
+                    <option value="EUR">EUR — Euro</option>
+                    <option value="GBP">GBP — British Pound</option>
+                    <option value="AED">AED — UAE Dirham</option>
+                  </select>
+                  <p className="mt-1.5 text-[11px] text-ink-faint">Used to format every amount shown across the app and on invoice PDFs.</p>
+                </div>
+
+                <div className="rounded-lg2 border border-line bg-bg p-3.5">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-[12.5px] font-bold text-ink-soft">Show bank details on invoice PDF</span>
+                    <Switch name="pdfShowBankDetails" defaultChecked={company.pdfShowBankDetails} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[12.5px] font-bold text-ink-soft">Show HSN-wise tax summary on invoice PDF</span>
+                    <Switch name="pdfShowHsnSummary" defaultChecked={company.pdfShowHsnSummary} />
+                  </div>
+                  <p className="mt-2 text-[11px] text-ink-faint">HSN-wise tax summary is an optional GST-compliance detail — off by default.</p>
                 </div>
 
                 <div className="rounded-lg2 border border-line bg-bg p-3.5">
@@ -395,18 +425,18 @@ export function CompanyForm({ company }: { company: Company }) {
               </div>
 
               {state.error && <p className="mt-3 text-[12.5px] font-bold text-destructive">{state.error}</p>}
-            </DialogFormBody>
-            <DialogFormFooter>
+            </SheetBody>
+            <SheetFooter>
               <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
                 Cancel
               </Button>
               <Button type="submit" disabled={pending}>
                 <Check size={13} /> {pending ? 'Saving…' : 'Save changes'}
               </Button>
-            </DialogFormFooter>
+            </SheetFooter>
           </form>
-        </DialogFormContent>
-      </Dialog>
+        </SheetContent>
+      </Sheet>
     </>
   );
 }

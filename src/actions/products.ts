@@ -20,6 +20,39 @@ const ProductSchema = z.object({
   altQtyPerUnit: z.coerce.number().min(0).optional().nullable(),
 });
 
+/** Additional unit+price pricing options for the same product (e.g. sold as
+ * a Box at one price with a minimum order quantity, and as a loose Piece at
+ * a plain price) — see ProductPriceTier in prisma/schema.prisma. Sent as a
+ * JSON-encoded `tiers` field rather than through the main
+ * `Object.fromEntries(formData)` parse above, same reason `images`/
+ * `newImages` are handled separately: FormData can't carry an array of
+ * objects, and `Object.fromEntries` would collapse repeated keys anyway. */
+const PriceTierSchema = z
+  .array(
+    z.object({
+      unit: z.string().min(1),
+      price: z.coerce.number().min(0),
+      // Informational only (e.g. "1 Box ≈ 40 Piece") — never a purchase
+      // minimum. See ProductPriceTier.approxQty in schema.prisma.
+      approxQty: z.coerce.number().min(0).optional().nullable(),
+    })
+  )
+  .min(1, 'At least one pricing option is required.');
+
+function parseTiers(formData: FormData): { tiers: z.infer<typeof PriceTierSchema> } | { error: string } {
+  const raw = formData.get('tiers');
+  if (typeof raw !== 'string' || !raw.trim()) return { error: 'At least one pricing option is required.' };
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw);
+  } catch {
+    return { error: 'Invalid pricing data.' };
+  }
+  const result = PriceTierSchema.safeParse(parsedJson);
+  if (!result.success) return { error: 'Check the pricing rows — each needs a unit and a price.' };
+  return { tiers: result.data };
+}
+
 /** Uploads any new image files in `newImages`, appends them to the URLs the
  * client says to keep (`images`), and caps the result at MAX_IMAGES. */
 async function resolveImages(formData: FormData, companyId: string, keep: string[]) {
@@ -40,6 +73,7 @@ export async function listProducts(opts?: { search?: string; category?: string; 
       ...(opts?.activeOnly ? { active: true } : {}),
     },
     orderBy: [{ category: 'asc' }, { name: 'asc' }],
+    include: { priceTiers: { orderBy: { sortOrder: 'asc' } } },
   });
 }
 
@@ -73,7 +107,13 @@ export async function listProductsPage(opts?: {
         : [{ category: 'asc' as const }, { name: 'asc' as const }];
 
   const [items, total] = await Promise.all([
-    prisma.product.findMany({ where, orderBy, skip: (page - 1) * pageSize, take: pageSize }),
+    prisma.product.findMany({
+      where,
+      orderBy,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      include: { priceTiers: { orderBy: { sortOrder: 'asc' } } },
+    }),
     prisma.product.count({ where }),
   ]);
   return { items: JSON.parse(JSON.stringify(items)), total };
@@ -101,6 +141,10 @@ export async function createProduct(_prev: ProductFormState, formData: FormData)
   if (!parsed.success) {
     return { error: 'Check the highlighted fields.', fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string> };
   }
+  const tiersResult = parseTiers(formData);
+  if ('error' in tiersResult) {
+    return { error: tiersResult.error, fieldErrors: { tiers: tiersResult.error } };
+  }
   const company = await getCompany();
   let images: string[];
   try {
@@ -108,8 +152,23 @@ export async function createProduct(_prev: ProductFormState, formData: FormData)
   } catch (e: any) {
     return { error: e.message ?? 'Could not upload photo.' };
   }
-  const product = await prisma.product.create({
-    data: { ...parsed.data, packQty: parsed.data.packQty ?? null, images, companyId: company.id },
+  // Product.unit/price stay the "primary" pair (dashboard/reports/quick list
+  // views keep reading them directly) — always mirrored from the first tier.
+  const primary = tiersResult.tiers[0];
+  const product = await prisma.$transaction(async (tx) => {
+    return tx.product.create({
+      data: {
+        ...parsed.data,
+        unit: primary.unit,
+        price: primary.price,
+        packQty: parsed.data.packQty ?? null,
+        images,
+        companyId: company.id,
+        priceTiers: {
+          create: tiersResult.tiers.map((t, i) => ({ unit: t.unit, price: t.price, approxQty: t.approxQty ?? null, sortOrder: i })),
+        },
+      },
+    });
   });
   revalidatePath('/products');
   return { id: product.id };
@@ -119,6 +178,10 @@ export async function updateProduct(id: string, _prev: ProductFormState, formDat
   const parsed = ProductSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) {
     return { error: 'Check the highlighted fields.', fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string> };
+  }
+  const tiersResult = parseTiers(formData);
+  if ('error' in tiersResult) {
+    return { error: tiersResult.error, fieldErrors: { tiers: tiersResult.error } };
   }
   const company = await getCompany();
   const existing = await prisma.product.findFirst({ where: { id, companyId: company.id } });
@@ -136,7 +199,26 @@ export async function updateProduct(id: string, _prev: ProductFormState, formDat
     return { error: e.message ?? 'Could not upload photo.' };
   }
 
-  await prisma.product.update({ where: { id }, data: { ...parsed.data, packQty: parsed.data.packQty ?? null, images } });
+  const primary = tiersResult.tiers[0];
+  await prisma.$transaction(async (tx) => {
+    // Replace-all rather than diffing tier identity across renames — the
+    // simplest correct way to keep ProductPriceTier in sync with the form's
+    // full tier list on every save.
+    await tx.productPriceTier.deleteMany({ where: { productId: id } });
+    await tx.product.update({
+      where: { id },
+      data: {
+        ...parsed.data,
+        unit: primary.unit,
+        price: primary.price,
+        packQty: parsed.data.packQty ?? null,
+        images,
+        priceTiers: {
+          create: tiersResult.tiers.map((t, i) => ({ unit: t.unit, price: t.price, approxQty: t.approxQty ?? null, sortOrder: i })),
+        },
+      },
+    });
+  });
   revalidatePath('/products');
   return {};
 }

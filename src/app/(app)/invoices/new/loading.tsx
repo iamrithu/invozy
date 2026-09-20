@@ -10,8 +10,8 @@ export default function NewInvoiceLoading() {
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Skeleton className="h-4 w-14" />
         <Skeleton className="h-4 w-24" />
-        <Skeleton className="h-6 w-14 rounded-full" />
-        <Skeleton className="ml-auto h-9 w-40 rounded-full" />
+        <Skeleton className="h-6 w-14 rounded-sm2" />
+        <Skeleton className="ml-auto h-9 w-40 rounded-sm2" />
         <Skeleton className="h-9 w-32 rounded-sm2" />
       </div>
 
@@ -21,11 +21,11 @@ export default function NewInvoiceLoading() {
         <div className="flex flex-col gap-3.5">
           <div className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
             <Skeleton className="mb-2.5 h-3 w-20" />
-            <Skeleton className="h-9 w-full rounded-full" />
+            <Skeleton className="h-9 w-full rounded-sm2" />
           </div>
           <div className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
             <Skeleton className="mb-2.5 h-3 w-24" />
-            <Skeleton className="h-9 w-full rounded-full" />
+            <Skeleton className="h-9 w-full rounded-sm2" />
           </div>
         </div>
         <Skeleton className="h-[70vh] w-full rounded-xl2" />

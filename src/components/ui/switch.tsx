@@ -8,8 +8,8 @@ export interface SwitchProps extends Omit<React.InputHTMLAttributes<HTMLInputEle
 const Switch = React.forwardRef<HTMLInputElement, SwitchProps>(({ className, ...props }, ref) => (
   <label className={cn('relative inline-flex h-[22px] w-[38px] flex-shrink-0 cursor-pointer items-center', className)}>
     <input ref={ref} type="checkbox" className="peer sr-only" {...props} />
-    <span className="absolute inset-0 rounded-full bg-surface-alt transition-colors peer-checked:bg-brand" />
-    <span className="absolute left-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4" />
+    <span className="absolute inset-0 rounded-sm2 bg-surface-alt transition-colors peer-checked:bg-brand" />
+    <span className="absolute left-[3px] h-4 w-4 rounded-sm2 bg-white shadow-sm transition-transform peer-checked:translate-x-4" />
   </label>
 ));
 Switch.displayName = 'Switch';

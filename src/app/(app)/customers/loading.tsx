@@ -1,8 +1,9 @@
-import { Skeleton, SkeletonList } from '@/components/ui/skeleton';
+import { Skeleton } from '@/components/ui/skeleton';
 
-// Mirrors customers-client.tsx's layout (header, left list panel with
-// search/filter chrome, right detail panel) so there's no layout shift once
-// the real data (fetched server-side in page.tsx) replaces it.
+// Mirrors customers-client.tsx's CURRENT layout: header, a toolbar row
+// (search + state/sort selects), then a full-width table with icon-sized
+// action skeletons on the right — so there's no layout shift once the real
+// data (fetched server-side in page.tsx) replaces it.
 export default function CustomersLoading() {
   return (
     <div>
@@ -14,15 +15,37 @@ export default function CustomersLoading() {
         <Skeleton className="h-9 w-36 rounded-sm2" />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[330px_1fr]">
-        <div className="max-h-[74vh] overflow-hidden rounded-xl2 border border-line bg-surface shadow-card">
-          <div className="space-y-2 border-b border-line p-3">
-            <Skeleton className="h-9 w-full" />
-            <Skeleton className="h-7 w-full" />
-          </div>
-          <SkeletonList />
+      <div className="mb-3 flex flex-wrap gap-2">
+        <Skeleton className="h-8 flex-1 sm:max-w-xs" />
+        <Skeleton className="h-8 w-[160px]" />
+        <Skeleton className="h-8 w-[160px]" />
+      </div>
+
+      <div className="rounded-xl2 border border-line bg-surface shadow-card">
+        <div className="flex items-center gap-4 border-b border-line px-4 py-3">
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-3 w-28" />
+          <Skeleton className="h-3 w-20" />
+          <Skeleton className="h-3 w-16" />
+          <Skeleton className="ml-auto h-3 w-10" />
         </div>
-        <div className="hidden rounded-xl2 border border-dashed border-line lg:block" />
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-4 border-b border-line px-4 py-3.5 last:border-0">
+            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+              <Skeleton className="h-8 w-8 flex-shrink-0 rounded-sm2" />
+              <Skeleton className="h-3.5 w-32" />
+            </div>
+            <Skeleton className="h-3.5 w-28 flex-shrink-0" />
+            <Skeleton className="h-3.5 w-24 flex-shrink-0" />
+            <Skeleton className="h-3.5 w-20 flex-shrink-0" />
+            <Skeleton className="h-3.5 w-16 flex-shrink-0" />
+            <div className="flex flex-shrink-0 gap-1.5">
+              <Skeleton className="h-8 w-8 rounded-sm2" />
+              <Skeleton className="h-8 w-8 rounded-sm2" />
+              <Skeleton className="h-8 w-8 rounded-sm2" />
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

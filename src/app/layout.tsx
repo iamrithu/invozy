@@ -1,7 +1,24 @@
 import type { Metadata } from 'next';
+import { IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google';
 import Script from 'next/script';
 import './globals.css';
 import { Providers } from '@/components/providers';
+
+// IBM Plex Sans/Mono — a typeface family literally designed for enterprise
+// software, matching the app's boxy/zero-radius direction better than the
+// earlier geometric picks (Poppins, then Outfit). Plex Mono also gives
+// numbers/GSTINs/invoice amounts a real monospace face for the first time —
+// every "font-mono" in this app previously just re-used the sans font.
+const plexSans = IBM_Plex_Sans({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-plex-sans',
+});
+const plexMono = IBM_Plex_Mono({
+  subsets: ['latin'],
+  weight: ['500', '600'],
+  variable: '--font-plex-mono',
+});
 
 // Applied before hydration so the dark/light class is correct on first
 // paint — otherwise the page flashes light before Redux hydrates.
@@ -25,7 +42,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {THEME_INIT_SCRIPT}
         </Script>
       </head>
-      <body className="font-sans antialiased">
+      <body className={`${plexSans.variable} ${plexMono.variable} font-sans antialiased`}>
         <Providers>{children}</Providers>
       </body>
     </html>

@@ -47,12 +47,12 @@ export function PdfPreviewPanel({ invoiceId, invoiceNumber }: { invoiceId: strin
 
       <div className="overflow-hidden rounded-xl2 border border-line shadow-card">
         <div className="flex flex-wrap items-center gap-2 border-b border-black/20 bg-chrome px-3 py-2.5 text-white">
-          <div className="flex flex-shrink-0 items-center gap-1 rounded-full bg-white/10 px-1 py-1">
+          <div className="flex flex-shrink-0 items-center gap-1 rounded-sm2 bg-white/10 px-1 py-1">
             <button
               onClick={() => setScale((s) => Math.max(MIN_SCALE, +(s - SCALE_STEP).toFixed(2)))}
               disabled={scale <= MIN_SCALE}
               aria-label="Zoom out"
-              className="flex h-6 w-6 items-center justify-center rounded-full text-white/80 hover:bg-white/10 disabled:opacity-40"
+              className="flex h-6 w-6 items-center justify-center rounded-sm2 text-white/80 hover:bg-white/10 disabled:opacity-40"
             >
               <Minus size={13} />
             </button>
@@ -63,12 +63,12 @@ export function PdfPreviewPanel({ invoiceId, invoiceNumber }: { invoiceId: strin
               onClick={() => setScale((s) => Math.min(MAX_SCALE, +(s + SCALE_STEP).toFixed(2)))}
               disabled={scale >= MAX_SCALE}
               aria-label="Zoom in"
-              className="flex h-6 w-6 items-center justify-center rounded-full text-white/80 hover:bg-white/10 disabled:opacity-40"
+              className="flex h-6 w-6 items-center justify-center rounded-sm2 text-white/80 hover:bg-white/10 disabled:opacity-40"
             >
               <Plus size={13} />
             </button>
             {scale !== 1 && (
-              <button onClick={() => setScale(1)} aria-label="Reset zoom to 100%" className="flex h-6 w-6 items-center justify-center rounded-full text-white/60 hover:bg-white/10 hover:text-white/80">
+              <button onClick={() => setScale(1)} aria-label="Reset zoom to 100%" className="flex h-6 w-6 items-center justify-center rounded-sm2 text-white/60 hover:bg-white/10 hover:text-white/80">
                 <RotateCcw size={12} />
               </button>
             )}

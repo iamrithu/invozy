@@ -8,7 +8,7 @@ import Link from 'next/link';
 import { updateMyProfile, changeMyPassword, type ProfileFormState, type PasswordFormState } from '@/actions/account';
 import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogFormContent, DialogFormHeader, DialogFormIcon, DialogFormBody, DialogFormFooter } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetIcon, SheetBody, SheetFooter } from '@/components/ui/sheet';
 import { initials, hashColor } from '@/lib/avatar';
 
 type AccountUser = { email: string | null; phone: string | null; role: string; companyName: string };
@@ -32,7 +32,7 @@ export function AccountClient({ user }: { user: AccountUser }) {
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
       <div className="flex flex-wrap items-center gap-4 rounded-xl2 border border-line bg-surface p-5 shadow-card lg:col-span-12">
         <span
-          className="flex h-[64px] w-[64px] flex-shrink-0 items-center justify-center rounded-full text-[20px] font-extrabold text-white shadow-brand"
+          className="flex h-[64px] w-[64px] flex-shrink-0 items-center justify-center rounded-sm2 text-[20px] font-extrabold text-white shadow-brand"
           style={{ background: hashColor(displayName) }}
         >
           {initials(displayName.includes('@') ? displayName.split('@')[0] : displayName)}
@@ -40,7 +40,7 @@ export function AccountClient({ user }: { user: AccountUser }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[18px] font-extrabold text-ink">{user.email ?? user.phone}</span>
-            <span className="rounded-full bg-brand-light px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-dark">
+            <span className="rounded-sm2 bg-brand-light px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-dark">
               <ShieldCheck size={10} className="mr-1 inline" /> {user.role === 'OWNER' ? 'Owner' : user.role}
             </span>
           </div>
@@ -60,20 +60,20 @@ export function AccountClient({ user }: { user: AccountUser }) {
         <p className="pt-2 text-[11.5px] text-ink-faint">Keep this to yourself — anyone with it can sign in to your workspace.</p>
       </InfoCard>
 
-      <Dialog
+      <Sheet
         open={open}
         onOpenChange={(next) => {
           setOpen(next);
           if (next) setTab('profile');
         }}
       >
-        <DialogFormContent>
-          <DialogFormHeader>
-            <DialogFormIcon>
+        <SheetContent>
+          <SheetHeader>
+            <SheetIcon>
               <IdCard size={16} />
-            </DialogFormIcon>
+            </SheetIcon>
             <div className="text-[15px] font-extrabold text-ink">My account</div>
-          </DialogFormHeader>
+          </SheetHeader>
 
           <div className="flex flex-shrink-0 gap-4 border-b border-line px-[22px]">
             {TABS.map((t) => {
@@ -95,8 +95,8 @@ export function AccountClient({ user }: { user: AccountUser }) {
           </div>
 
           {tab === 'profile' ? <ProfileTab user={user} onSaved={() => setOpen(false)} /> : <SecurityTab onSaved={() => setOpen(false)} />}
-        </DialogFormContent>
-      </Dialog>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
@@ -117,7 +117,7 @@ function InfoCard({
   return (
     <div className={`rounded-xl2 border border-line bg-surface p-4 shadow-card transition-colors hover:border-brand/50 ${className ?? ''}`}>
       <div className="mb-3 flex items-center gap-2">
-        <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-brand-light text-brand-dark">{icon}</span>
+        <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-sm2 bg-brand-light text-brand-dark">{icon}</span>
         <span className="flex-1 text-[11.5px] font-extrabold uppercase tracking-wide text-ink-soft">{title}</span>
         {action}
       </div>
@@ -162,19 +162,19 @@ function ProfileTab({ user, onSaved }: { user: AccountUser; onSaved: () => void 
 
   return (
     <form action={formAction} onSubmit={() => (submittedRef.current = true)} className="contents">
-      <DialogFormBody>
+      <SheetBody>
         <div className="space-y-3">
           <Field label="Email" name="email" type="email" icon={Mail} defaultValue={user.email ?? ''} error={state.fieldErrors?.email} />
           <Field label="Phone" name="phone" icon={Phone} defaultValue={user.phone ?? ''} error={state.fieldErrors?.phone} />
           <p className="text-[11px] text-ink-faint">Your company&apos;s contact email on the Company profile always matches this email.</p>
           {state.error && <p className="text-[12.5px] font-bold text-destructive">{state.error}</p>}
         </div>
-      </DialogFormBody>
-      <DialogFormFooter>
+      </SheetBody>
+      <SheetFooter>
         <Button type="submit" disabled={pending}>
           <Check size={13} /> {pending ? 'Saving…' : 'Save changes'}
         </Button>
-      </DialogFormFooter>
+      </SheetFooter>
     </form>
   );
 }
@@ -198,19 +198,19 @@ function SecurityTab({ onSaved }: { onSaved: () => void }) {
 
   return (
     <form ref={formRef} action={formAction} onSubmit={() => (submittedRef.current = true)} className="contents">
-      <DialogFormBody>
+      <SheetBody>
         <div className="space-y-3">
           <Field label="Current password" name="currentPassword" type="password" icon={KeyRound} error={state.fieldErrors?.currentPassword} />
           <Field label="New password" name="newPassword" type="password" icon={KeyRound} error={state.fieldErrors?.newPassword} />
           <Field label="Confirm new password" name="confirmPassword" type="password" icon={KeyRound} error={state.fieldErrors?.confirmPassword} />
           {state.error && <p className="text-[12.5px] font-bold text-destructive">{state.error}</p>}
         </div>
-      </DialogFormBody>
-      <DialogFormFooter>
+      </SheetBody>
+      <SheetFooter>
         <Button type="submit" disabled={pending}>
           <Check size={13} /> {pending ? 'Saving…' : 'Change password'}
         </Button>
-      </DialogFormFooter>
+      </SheetFooter>
     </form>
   );
 }

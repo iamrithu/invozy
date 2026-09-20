@@ -18,7 +18,7 @@ export function CompanyView({ company: co }: { company: Company }) {
             <div className="flex items-center gap-2">
               <span className="text-[19px] font-extrabold text-ink">{co.name}</span>
               <span
-                className="h-3 w-3 flex-shrink-0 rounded-full ring-2 ring-surface"
+                className="h-3 w-3 flex-shrink-0 rounded-sm2 ring-2 ring-surface"
                 style={{ background: themePreviewColor(co.themeColor) }}
                 title={`Theme: ${themeLabel}`}
               />
@@ -44,12 +44,12 @@ export function CompanyView({ company: co }: { company: Company }) {
       </div>
 
       {profileIncomplete && (
-        <div className="flex items-center gap-3 rounded-lg2 border border-brand bg-brand-light p-3 lg:col-span-12">
-          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-brand text-white">
+        <div className="flex items-center gap-3 rounded-lg2 border border-gold bg-gold-soft p-3 lg:col-span-12">
+          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-sm2 bg-gold text-white">
             <AlertTriangle size={16} />
           </span>
           <div className="flex-1">
-            <div className="text-[13px] font-extrabold text-brand-dark">Your profile isn&apos;t fully set up yet</div>
+            <div className="text-[13px] font-extrabold text-ink">Your profile isn&apos;t fully set up yet</div>
             <div className="mt-0.5 text-[12px] text-ink-soft">
               Add your {!co.gstin && 'GSTIN'}
               {!co.gstin && !co.bankAcc && ' and '}
@@ -91,7 +91,7 @@ function InfoCard({ icon, title, children, className }: { icon: React.ReactNode;
   return (
     <div className={`rounded-xl2 border border-line bg-surface p-4 shadow-card transition-colors hover:border-brand/50 ${className ?? ''}`}>
       <div className="mb-3 flex items-center gap-2">
-        <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-brand-light text-brand-dark">{icon}</span>
+        <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-sm2 bg-brand-light text-brand-dark">{icon}</span>
         <span className="text-[11.5px] font-extrabold uppercase tracking-wide text-ink-soft">{title}</span>
       </div>
       <div className="space-y-0">{children}</div>

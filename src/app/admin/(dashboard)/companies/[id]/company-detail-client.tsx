@@ -104,7 +104,7 @@ export function CompanyDetailClient({ company: initial }: { company: CompanyDeta
 function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) {
   return (
     <div className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
-      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-light text-brand-dark">{icon}</div>
+      <div className="flex h-7 w-7 items-center justify-center rounded-sm2 bg-brand-light text-brand-dark">{icon}</div>
       <div className="mt-2 font-mono text-[18px] font-extrabold text-ink">{value}</div>
       <div className="mt-0.5 text-[11px] text-ink-faint">{label}</div>
     </div>

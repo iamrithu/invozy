@@ -52,7 +52,7 @@ export function WelcomeCard({ show, companyName }: { show: boolean; companyName:
         <div className="mt-4 grid grid-cols-3 gap-2">
           {STEPS.map((s, i) => (
             <div key={s.label} className="flex flex-col items-center gap-1.5 rounded-lg2 border border-line bg-bg p-2.5">
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-light text-[11px] font-extrabold text-brand-dark">{i + 1}</span>
+              <span className="flex h-7 w-7 items-center justify-center rounded-sm2 bg-brand-light text-[11px] font-extrabold text-brand-dark">{i + 1}</span>
               <s.icon size={15} className="text-brand" />
               <span className="text-[10.5px] font-bold leading-tight text-ink-soft">{s.label}</span>
             </div>

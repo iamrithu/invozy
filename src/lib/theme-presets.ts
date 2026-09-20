@@ -48,30 +48,66 @@ export function isValidThemeColor(value: string): boolean {
   return isThemePresetKey(value) || isCustomThemeColor(value);
 }
 
-/** Custom colors keep the same saturation/lightness formula as the presets
- * (see file header) — only the hue comes from the picked color — so an
- * arbitrarily chosen color still gets contrast-safe light/dark variants
- * instead of being used verbatim. */
-function hexToHue(hex: string): number {
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
+}
+
+/** Full HSL, not just hue — a custom pick with little or no saturation
+ * (black, white, any gray) has no defined hue at all, and the previous
+ * hue-only extraction silently treated that as hue 0 (red). Extracting
+ * real saturation/lightness too lets a genuinely achromatic or muted pick
+ * render as picked instead of collapsing to red. */
+function hexToHsl(hex: string): { h: number; s: number; l: number } {
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;
   const b = parseInt(hex.slice(5, 7), 16) / 255;
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
   const d = max - min;
-  if (d === 0) return 0;
-  let h: number;
-  if (max === r) h = ((g - b) / d) % 6;
-  else if (max === g) h = (b - r) / d + 2;
-  else h = (r - g) / d + 4;
-  h *= 60;
-  if (h < 0) h += 360;
-  return Math.round(h);
+  let h = 0;
+  let s = 0;
+  if (d !== 0) {
+    s = d / (1 - Math.abs(2 * l - 1));
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return { h: Math.round(h), s: Math.round(s * 100), l: Math.round(l * 100) };
+}
+
+/** Builds light/dark triplets directly from a custom pick's own
+ * hue/saturation/lightness — unlike the 8 curated presets (which force a
+ * fixed 75%/55% formula onto just the hue, guaranteeing contrast for those
+ * specific hand-picked colors), a custom color is used close to as-picked.
+ * Dark mode still needs its own lightness so a near-black pick stays
+ * visible against the app's own near-black dark background, and a
+ * near-white pick doesn't wash out against it. */
+function tripletFromHsl(h: number, s: number, l: number): { light: Triplet; dark: Triplet } {
+  const lightL = clamp(l, 15, 62);
+  const darkL = clamp(l < 50 ? l + 32 : l - 6, 48, 72);
+  return {
+    light: {
+      brand: `${h} ${s}% ${lightL}%`,
+      brandDark: `${h} ${s}% ${clamp(lightL - 10, 10, 55)}%`,
+      brandLight: `${h} ${Math.min(s, 35)}% 94%`,
+    },
+    dark: {
+      brand: `${h} ${s}% ${darkL}%`,
+      brandDark: `${h} ${s}% ${clamp(darkL - 8, 40, 66)}%`,
+      brandLight: `${h} ${Math.min(s, 35)}% 20%`,
+    },
+  };
 }
 
 function resolveTriplets(key: string): { light: Triplet; dark: Triplet } {
   if (isThemePresetKey(key)) return THEME_PRESETS[key];
-  if (isCustomThemeColor(key)) return fromHue(hexToHue(key));
+  if (isCustomThemeColor(key)) {
+    const { h, s, l } = hexToHsl(key);
+    return tripletFromHsl(h, s, l);
+  }
   return THEME_PRESETS.red;
 }
 

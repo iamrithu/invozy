@@ -22,10 +22,54 @@ type ChecklistItem = {
  * at the point of actually generating a real e-Invoice), this is purely
  * informational. Rendered as a compact alert bar; the full list opens in a
  * dialog via "View" so it doesn't permanently eat page space. */
-export function InvoiceCompletenessChecklist({ items }: { items: ChecklistItem[] }) {
+export function InvoiceCompletenessChecklist({ items, compact }: { items: ChecklistItem[]; compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const missing = items.filter((i) => !i.done);
   if (missing.length === 0) return null;
+
+  if (compact) {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="flex w-fit flex-shrink-0 items-center gap-1 self-start rounded-sm2 bg-gold-soft px-1.5 py-0.5 text-[10px] font-bold text-ink print:hidden"
+        >
+          <AlertTriangle size={9} className="flex-shrink-0 text-gold" />
+          {missing.length} missing <span className="text-brand underline">View</span>
+        </button>
+
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogFormContent>
+            <DialogFormHeader>
+              <DialogFormIcon>
+                <AlertTriangle size={16} />
+              </DialogFormIcon>
+              <div className="min-w-0 flex-1">
+                <div className="text-[15px] font-extrabold text-ink">Complete these for a fully filled-in invoice</div>
+                <div className="text-[11.5px] text-ink-faint">Optional, but recommended before treating the PDF as final</div>
+              </div>
+            </DialogFormHeader>
+            <DialogFormBody>
+              <ul className="space-y-1.5">
+                {items.map((item) => (
+                  <li key={item.label} className={`flex items-center gap-2 text-[13px] ${item.done ? 'text-ink-soft' : 'text-ink-body'}`}>
+                    {item.done ? <CheckCircle2 size={15} className="flex-shrink-0 text-green" /> : <Circle size={15} className="flex-shrink-0 text-gold" />}
+                    <span className={item.done ? 'line-through decoration-ink-faint' : 'font-semibold'}>{item.label}</span>
+                    {!item.done && item.href && (
+                      <Link href={item.href} className="ml-auto flex-shrink-0 text-[11.5px] font-bold text-brand hover:underline" onClick={() => setOpen(false)}>
+                        Add
+                      </Link>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </DialogFormBody>
+          </DialogFormContent>
+        </Dialog>
+      </>
+    );
+  }
 
   return (
     <>

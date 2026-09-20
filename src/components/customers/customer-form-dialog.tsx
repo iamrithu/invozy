@@ -5,7 +5,7 @@ import { Users, Store, Contact, Phone, PhoneCall, Mail, IdCard, CalendarClock, I
 import { toast } from 'sonner';
 import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogFormContent, DialogFormHeader, DialogFormIcon, DialogFormBody, DialogFormFooter } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetIcon, SheetBody, SheetFooter } from '@/components/ui/sheet';
 import { StateSelect, DistrictSelect } from '@/components/ui/location-field';
 import { useCreateCustomer, useUpdateCustomer } from '@/hooks/use-customers';
 
@@ -88,19 +88,19 @@ export function CustomerFormDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogFormContent>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent>
         <form onSubmit={handleSubmit} className="contents">
-          <DialogFormHeader>
-            <DialogFormIcon>{mode === 'create' ? <Sparkles size={16} /> : <Users size={16} />}</DialogFormIcon>
+          <SheetHeader>
+            <SheetIcon>{mode === 'create' ? <Sparkles size={16} /> : <Users size={16} />}</SheetIcon>
             <div className="min-w-0 flex-1">
               <div className="text-[15px] font-extrabold text-ink">{mode === 'create' ? 'New customer' : customer?.name}</div>
               <div className="text-[11.5px] text-ink-faint">{mode === 'create' ? 'Add a customer to bill' : 'Edit customer details'}</div>
             </div>
-          </DialogFormHeader>
+          </SheetHeader>
 
-          <DialogFormBody>
-            <div className="grid grid-cols-2 gap-3">
+          <SheetBody>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Name" name="name" icon={Users} defaultValue={customer?.name} placeholder={prefillName} error={fieldErrors.name} />
               <Field label="Shop name (optional)" name="shopName" icon={Store} defaultValue={customer?.shopName ?? ''} />
               <Field label="Contact person" name="contact" icon={Contact} defaultValue={customer?.contact ?? ''} />
@@ -129,23 +129,23 @@ export function CustomerFormDialog({
               <Field label="Credit limit (₹)" name="creditLimit" type="number" icon={IndianRupee} mono defaultValue={customer?.creditLimit?.toString() ?? '0'} />
               <Field label="FSSAI No. (optional)" name="fssaiNo" icon={ShieldCheck} mono defaultValue={customer?.fssaiNo ?? ''} />
               <Field label="Pincode (optional)" name="pincode" icon={MapPin} mono defaultValue={customer?.pincode ?? ''} />
-              <div className="col-span-2">
+              <div className="col-span-1 sm:col-span-2">
                 <Field label="Billing address" name="address" as="textarea" icon={Home} defaultValue={customer?.address ?? ''} />
               </div>
             </div>
             {error && <p className="mt-3 text-[12.5px] font-bold text-destructive">{error}</p>}
-          </DialogFormBody>
+          </SheetBody>
 
-          <DialogFormFooter>
+          <SheetFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <Button type="submit" disabled={pending}>
               <Check size={13} /> {pending ? 'Saving…' : mode === 'create' ? 'Add customer' : 'Save changes'}
             </Button>
-          </DialogFormFooter>
+          </SheetFooter>
         </form>
-      </DialogFormContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   );
 }

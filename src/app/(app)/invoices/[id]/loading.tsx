@@ -9,7 +9,7 @@ export default function InvoiceDetailLoading() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <Skeleton className="h-4 w-32" />
         <div className="flex flex-wrap gap-2">
-          <Skeleton className="h-8 w-16 rounded-full" />
+          <Skeleton className="h-8 w-16 rounded-sm2" />
           <Skeleton className="h-8 w-28 rounded-sm2" />
           <Skeleton className="h-8 w-28 rounded-sm2" />
           <Skeleton className="h-8 w-28 rounded-sm2" />

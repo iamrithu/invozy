@@ -45,7 +45,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // no separate service-account/token scheme needed.
     if (cookies.length) await context.addCookies(cookies);
     const page = await context.newPage();
-    await page.goto(`${origin}/invoices/${id}`, { waitUntil: 'networkidle' });
+    // `pdfRender=1` tells the detail page to skip InlinePdfPreview (see
+    // src/app/(app)/invoices/[id]/page.tsx) — that component fetches this
+    // very endpoint to render inline, so without this guard rendering the
+    // page here would recursively re-trigger this same route from inside
+    // itself (each nested render spawning another browser context) until
+    // requests time out and the shared browser is left wedged.
+    await page.goto(`${origin}/invoices/${id}?pdfRender=1`, { waitUntil: 'networkidle' });
     await page.emulateMedia({ media: 'print' });
     const pdf = await page.pdf({
       format: 'A4',
@@ -58,18 +64,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       displayHeaderFooter: true,
       headerTemplate: '<span></span>',
       footerTemplate: `
-        <div style="width: 100%; font-size: 8.5px; font-family: 'Times New Roman', Times, serif; color: #888; text-align: center; padding: 0 12mm;">
+        <div style="width: 100%; font-size: 8.5px; font-family: 'IBM Plex Sans', system-ui, sans-serif; color: #888; text-align: center; padding: 0 12mm;">
           Page <span class="pageNumber"></span> of <span class="totalPages"></span>
         </div>
       `,
       margin: { top: '14mm', bottom: '14mm', left: '12mm', right: '12mm' },
     });
 
-    // `?inline=1` (used by the detail page's embedded preview iframe) shows
-    // the PDF in-browser instead of forcing a save-file prompt; the actual
-    // Download button never reads this header (it fetches as a blob and
-    // forces its own filename via an anchor's `download` attribute), so
-    // this only affects direct navigation / the iframe.
+    // `?inline=1` (used by InlinePdfPreview/PdfViewer) shows the PDF
+    // in-browser instead of forcing a save-file prompt; the actual Download
+    // button never reads this header (it fetches as a blob and forces its
+    // own filename via an anchor's `download` attribute), so this only
+    // affects the embedded viewers' direct navigation.
     const inline = req.nextUrl.searchParams.get('inline') === '1';
     const filename = invoice.number.replace(/[^a-zA-Z0-9-]/g, '-');
 

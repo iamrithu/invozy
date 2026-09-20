@@ -3,13 +3,18 @@ import { cva, type VariantProps } from 'class-variance-authority';
 
 import { cn } from '@/lib/utils';
 
-const badgeVariants = cva('inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold transition-colors', {
+// Solid-fill "rating chip" style — Zomato's own badges (delivery rating,
+// veg/non-veg, offer tags) are always a solid color with white text, never
+// a soft tint. `brand`/`gold`/`green` here follow that convention instead
+// of the shadcn-default pastel look.
+const badgeVariants = cva('inline-flex items-center rounded-sm2 px-2.5 py-1 text-[11px] font-extrabold transition-colors', {
   variants: {
     variant: {
       default: 'bg-surface-alt text-ink-soft',
-      brand: 'bg-brand-light text-brand-dark',
-      gold: 'bg-gold-soft text-gold',
-      green: 'bg-green-soft text-green',
+      brand: 'bg-brand text-white',
+      gold: 'bg-gold text-white',
+      green: 'bg-green text-white',
+      red: 'bg-red text-white',
       outline: 'border border-border text-ink-soft',
     },
   },

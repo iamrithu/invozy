@@ -9,6 +9,8 @@ import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
 import { Pagination } from '@/components/ui/pagination';
 import { SkeletonList } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFormContent, DialogFormHeader, DialogFormIcon, DialogFormBody, DialogFormFooter, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useCompaniesForAdmin, useCreateCompany, useResetUserPassword } from '@/hooks/use-admin';
@@ -59,47 +61,78 @@ export function AdminCompaniesClient({ initialData }: { initialData: { items: Co
         <Input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Search company name or owner email…" className="max-w-[340px]" />
       </div>
 
-      <div className={`flex flex-col rounded-xl2 border border-line bg-surface shadow-card transition-opacity ${isFetching ? 'opacity-60' : ''}`}>
+      <div className={`flex flex-col overflow-hidden rounded-xl2 border border-line bg-surface shadow-card transition-opacity ${isFetching ? 'opacity-60' : ''}`}>
         {isLoading ? (
           <SkeletonList />
         ) : total === 0 ? (
           <div className="p-8 text-center text-[13px] text-ink-faint">No companies match your search.</div>
         ) : (
-          <div className="divide-y divide-line">
-            {items.map((c) => {
-              const owner = c.users[0];
-              return (
-                <div key={c.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                  <Link href={`/admin/companies/${c.id}`} className="flex min-w-0 flex-1 items-center gap-3">
-                    <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-brand-light text-brand-dark">
-                      <Building2 size={15} />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13.5px] font-bold text-ink hover:text-brand">{c.name}</div>
-                      <div className="truncate text-[11.5px] text-ink-faint">
-                        {c.state} · {owner ? owner.email ?? owner.phone : 'No user'} ·{' '}
-                        {c.gstin ? <span className="font-semibold text-ink-soft">GST configured</span> : 'GST not set up'}
+          <Table className="min-w-[760px]">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Company</TableHead>
+                <TableHead>Owner</TableHead>
+                <TableHead>GST</TableHead>
+                <TableHead className="text-right">Invoices</TableHead>
+                <TableHead className="text-right">Customers</TableHead>
+                <TableHead className="text-right">Products</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((c) => {
+                const owner = c.users[0];
+                return (
+                  <TableRow key={c.id}>
+                    <TableCell>
+                      <Link href={`/admin/companies/${c.id}`} className="flex min-w-0 items-center gap-3">
+                        <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-sm2 bg-brand-light text-brand-dark">
+                          <Building2 size={15} />
+                        </span>
+                        <span className="min-w-0">
+                          <div className="truncate text-[13px] font-bold text-ink hover:text-brand">{c.name}</div>
+                          <div className="truncate text-[11px] text-ink-faint">{c.state}</div>
+                        </span>
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-ink-soft">{owner ? owner.email ?? owner.phone : 'No user'}</TableCell>
+                    <TableCell>
+                      {c.gstin ? <Badge variant="green">Verified</Badge> : <Badge variant="default">Pending</Badge>}
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-bold text-ink-soft">{c._count.invoices}</TableCell>
+                    <TableCell className="text-right font-mono font-bold text-ink-soft">{c._count.customers}</TableCell>
+                    <TableCell className="text-right font-mono font-bold text-ink-soft">{c._count.products}</TableCell>
+                    <TableCell className="whitespace-nowrap text-ink-faint">{new Date(c.createdAt).toLocaleDateString('en-IN')}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center justify-end gap-1">
+                        {owner && (
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            aria-label="Reset owner password"
+                            className="h-8 w-8"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setResetTarget(owner);
+                            }}
+                          >
+                            <KeyRound size={14} />
+                          </Button>
+                        )}
+                        <Button asChild type="button" size="icon" variant="ghost" aria-label="View company" className="h-8 w-8">
+                          <Link href={`/admin/companies/${c.id}`} onClick={(e) => e.stopPropagation()}>
+                            <ChevronRight size={14} />
+                          </Link>
+                        </Button>
                       </div>
-                    </div>
-                  </Link>
-                  <div className="flex items-center gap-3 text-[11px] font-semibold text-ink-faint">
-                    <span>{c._count.invoices} invoices</span>
-                    <span>{c._count.customers} customers</span>
-                    <span>{c._count.products} products</span>
-                  </div>
-                  <span className="text-[11px] text-ink-faint">{new Date(c.createdAt).toLocaleDateString('en-IN')}</span>
-                  {owner && (
-                    <Button type="button" variant="outline" size="sm" onClick={() => setResetTarget(owner)}>
-                      <KeyRound size={12} /> Reset password
-                    </Button>
-                  )}
-                  <Link href={`/admin/companies/${c.id}`} className="flex flex-shrink-0 items-center justify-center text-ink-faint hover:text-brand">
-                    <ChevronRight size={16} />
-                  </Link>
-                </div>
-              );
-            })}
-          </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
         )}
         <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
       </div>
@@ -194,7 +227,7 @@ export function ResetPasswordDialog({ user, onOpenChange }: { user: CompanyUser 
       <DialogContent className="max-w-[380px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2.5">
-            <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-brand-light text-brand-dark">
+            <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-sm2 bg-brand-light text-brand-dark">
               <ShieldCheck size={15} />
             </span>
             Reset password

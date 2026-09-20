@@ -30,14 +30,15 @@ import {
   Tag,
   X,
   IndianRupee,
+  Info,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { searchCustomersForBilling, getCustomerLedger } from '@/actions/customers';
-import { createInvoice } from '@/actions/invoices';
+import { createInvoice, updateInvoice } from '@/actions/invoices';
 import { frequentProductIdsForCustomer } from '@/actions/products';
 import { useCreateCustomer } from '@/hooks/use-customers';
 import { useCreateProduct } from '@/hooks/use-products';
-import { computeTotals, fmtInr, type LineInput } from '@/lib/gst';
+import { computeTotals, fmtInr, formatUnit, type LineInput } from '@/lib/gst';
 import { numberToWords } from '@/lib/number-to-words';
 import { CustomerFormDialog } from '@/components/customers/customer-form-dialog';
 import { Field } from '@/components/ui/field';
@@ -46,6 +47,7 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { StateSelect } from '@/components/ui/location-field';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Pagination } from '@/components/ui/pagination';
 import { InvoiceSheet } from '@/components/invoices/invoice-sheet';
 import { InvoiceSheetClassic } from '@/components/invoices/invoice-sheet-classic';
 import { InvoiceCompletenessChecklist } from '@/components/invoices/invoice-completeness-checklist';
@@ -53,7 +55,28 @@ import { ResponsiveSheetScale } from '@/components/invoices/responsive-sheet-sca
 import { hashColor, initials } from '@/lib/avatar';
 import { PAPER_STYLE } from '@/lib/paper-theme';
 
-type Product = { id: string; name: string; category: string; unit: string; price: string | number; packQty?: number | null; hsn?: string | null; altUnit?: string | null; altQtyPerUnit?: string | number | null };
+type PriceTier = { id?: string; unit: string; price: string | number; approxQty: string | number | null };
+type Product = {
+  id: string;
+  name: string;
+  category: string;
+  unit: string;
+  price: string | number;
+  packQty?: number | null;
+  hsn?: string | null;
+  altUnit?: string | null;
+  altQtyPerUnit?: string | number | null;
+  priceTiers?: PriceTier[];
+};
+
+/** Every pricing option for a product, oldest-field-compatible: falls back
+ * to a single synthetic tier built from unit/price/packQty if a product
+ * somehow has none (shouldn't happen once the backfill migration has run,
+ * but keeps this screen working regardless). */
+function tiersFor(p: Product): PriceTier[] {
+  if (p.priceTiers && p.priceTiers.length > 0) return p.priceTiers;
+  return [{ unit: p.unit, price: p.price, approxQty: p.packQty ?? null }];
+}
 type Company = {
   name: string;
   address: string;
@@ -78,6 +101,7 @@ type Company = {
   pan?: string | null;
   phone?: string | null;
   altPhone?: string | null;
+  email?: string | null;
   signatoryName?: string | null;
   signatureUrl?: string | null;
 };
@@ -133,6 +157,23 @@ const CATEGORY_ICON: Record<string, React.ComponentType<{ size?: number }>> = {
 // refresh/close of this one tab.
 const DRAFT_KEY = 'invozy_invoice_draft';
 
+// Pre-fill shape for editing an existing DRAFT invoice in place (see
+// src/app/(app)/invoices/new/page.tsx's `?edit=<id>` handling) — everything
+// the builder needs to resume it as if it were being built for the first
+// time, plus the id/number so save() knows to update rather than create.
+type EditInvoice = {
+  id: string;
+  number: string;
+  customer: Customer;
+  date: string;
+  due: string;
+  overallDiscountType: 'PERCENT' | 'FLAT';
+  overallDiscountValue: number;
+  notes: string;
+  deliveryInstructions: string;
+  lines: Line[];
+};
+
 function categoryTile(cat: string) {
   return CATEGORY_TILE[cat] ?? 'bg-surface-alt text-ink-soft';
 }
@@ -141,21 +182,29 @@ function CategoryIcon({ category, size = 15 }: { category: string; size?: number
   return <Icon size={size} />;
 }
 
-export function BuilderClient({ products, company }: { products: Product[]; company: Company }) {
+export function BuilderClient({ products, company, editInvoice }: { products: Product[]; company: Company; editInvoice?: EditInvoice | null }) {
   const router = useRouter();
-  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [customer, setCustomer] = useState<Customer | null>(editInvoice?.customer ?? null);
   const [custQuery, setCustQuery] = useState('');
   const [custResults, setCustResults] = useState<Customer[]>([]);
   const [custLoading, setCustLoading] = useState(false);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showCustomItemForm, setShowCustomItemForm] = useState(false);
-  const [lines, setLines] = useState<Line[]>([]);
+  const [lines, setLines] = useState<Line[]>(editInvoice?.lines ?? []);
   const [productQuery, setProductQuery] = useState('');
   const [frequentIds, setFrequentIds] = useState<string[]>([]);
-  const [discountType, setDiscountType] = useState<'PERCENT' | 'FLAT'>('PERCENT');
-  const [discountValue, setDiscountValue] = useState(0);
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [due, setDue] = useState(() => new Date().toISOString().slice(0, 10));
+  const [discountType, setDiscountType] = useState<'PERCENT' | 'FLAT'>(editInvoice?.overallDiscountType ?? 'PERCENT');
+  const [discountValue, setDiscountValue] = useState(editInvoice?.overallDiscountValue ?? 0);
+  // When true, the % typed above broadcasts to every line's own `discount`
+  // field (so it prints per-item) instead of being one reduction applied
+  // once at invoice level — the two are mutually exclusive: computeTotals
+  // below is fed a zeroed-out overall discount whenever this is on, since
+  // the reduction is already fully baked into each line's own subtotal.
+  const [applyDiscountPerItem, setApplyDiscountPerItem] = useState(false);
+  const [notes, setNotes] = useState(editInvoice?.notes ?? '');
+  const [deliveryInstructions, setDeliveryInstructions] = useState(editInvoice?.deliveryInstructions ?? '');
+  const [date, setDate] = useState(() => editInvoice?.date ?? new Date().toISOString().slice(0, 10));
+  const [due, setDue] = useState(() => editInvoice?.due ?? new Date().toISOString().slice(0, 10));
   const [saving, startSaving] = useTransition();
   const [error, setError] = useState<string | undefined>();
   const [outstandingElsewhere, setOutstandingElsewhere] = useState(0);
@@ -164,8 +213,15 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
   const [editCustomerOpen, setEditCustomerOpen] = useState(false);
   const hydratedDraftRef = useRef(false);
 
-  // Restore an unsaved draft left over from a refresh/accidental close, once.
+  // Restore an unsaved draft left over from a refresh/accidental close, once
+  // — never when editing an existing DRAFT invoice, since that's already
+  // hydrated from the server and this localStorage draft is for an unrelated
+  // "new invoice" attempt (overwriting it here would lose that instead).
   useEffect(() => {
+    if (editInvoice) {
+      hydratedDraftRef.current = true;
+      return;
+    }
     try {
       const raw = localStorage.getItem(DRAFT_KEY);
       if (raw) {
@@ -177,6 +233,8 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
           if (typeof draft.discountValue === 'number') setDiscountValue(draft.discountValue);
           if (draft.date) setDate(draft.date);
           if (draft.due) setDue(draft.due);
+          if (typeof draft.notes === 'string') setNotes(draft.notes);
+          if (typeof draft.deliveryInstructions === 'string') setDeliveryInstructions(draft.deliveryInstructions);
           toast.info('Restored your unsaved invoice draft', {
             action: {
               label: 'Discard',
@@ -200,17 +258,17 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
 
   // Keep the draft in sync so a refresh/accidental close never loses it.
   useEffect(() => {
-    if (!hydratedDraftRef.current) return;
+    if (!hydratedDraftRef.current || editInvoice) return;
     try {
       if (!customer && lines.length === 0) {
         localStorage.removeItem(DRAFT_KEY);
       } else {
-        localStorage.setItem(DRAFT_KEY, JSON.stringify({ customer, lines, discountType, discountValue, date, due }));
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ customer, lines, discountType, discountValue, date, due, notes, deliveryInstructions }));
       }
     } catch {
       // best-effort only
     }
-  }, [customer, lines, discountType, discountValue, date, due]);
+  }, [customer, lines, discountType, discountValue, date, due, notes, deliveryInstructions]);
 
   useEffect(() => {
     if (customer) return;
@@ -243,11 +301,24 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
     return frequentIds.map((id) => products.find((p) => p.id === id)).filter((p): p is Product => !!p);
   }, [frequentIds, products, productQuery]);
 
+  // Real pagination (not an infinite scroll list) for the catalog picker —
+  // resets to page 1 whenever the search narrows/widens the result set.
+  const PRODUCTS_PER_PAGE = 6;
+  const [productPage, setProductPage] = useState(1);
+  useEffect(() => setProductPage(1), [productQuery]);
+  const pagedProducts = useMemo(
+    () => filteredProducts.slice((productPage - 1) * PRODUCTS_PER_PAGE, productPage * PRODUCTS_PER_PAGE),
+    [filteredProducts, productPage]
+  );
+
   const totals = useMemo(() => {
     const lineInputs: LineInput[] = lines.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount }));
     return computeTotals(
       lineInputs,
-      { type: discountType, value: discountValue },
+      // Per-item mode's reduction is already inside each line's own qty*rate
+      // math (see lineInputs above) — feeding the same % in here too would
+      // double-discount, so the "overall" side is forced to zero instead.
+      applyDiscountPerItem ? { type: 'PERCENT', value: 0 } : { type: discountType, value: discountValue },
       {
         cgstRate: Number(company.cgstRate),
         sgstRate: Number(company.sgstRate),
@@ -259,24 +330,27 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
       company.state,
       customer?.state ?? company.state
     );
-  }, [lines, discountType, discountValue, company, customer]);
+  }, [lines, discountType, discountValue, applyDiscountPerItem, company, customer]);
 
   const lineDiscountTotal = lines.reduce((s, l) => s + l.qty * l.rate * (l.discount / 100), 0);
   const totalSavings = lineDiscountTotal + totals.overallDiscountAmount;
   const totalUnits = lines.reduce((s, l) => s + l.qty, 0);
 
-  // A product with a known pack size (packQty) can be billed as two
-  // independent line items — e.g. "4 Box" and "30 pc" on the same invoice —
-  // rather than one line with a fractional box qty. Keyed by (productId,
-  // unit) so the box-line and the piece-line for the same product never
-  // collide and increment independently.
-  function addProductVariant(p: Product, variant: 'unit' | 'piece') {
-    const unit = variant === 'unit' ? p.unit : 'pc';
-    const rate = variant === 'unit' ? Number(p.price) : Number(p.price) / Number(p.packQty || 1);
+  // A product can have multiple pricing tiers (e.g. "Box" at one price and a
+  // loose "Piece" at a plain price) — each becomes an independent line item,
+  // keyed by (productId, unit) so a box-line and a piece-line for the same
+  // product never collide and increment independently. See ProductPriceTier
+  // (prisma/schema.prisma). A tier's approxQty (e.g. "1 Box ≈ 40 Piece") is
+  // purely informational — never a purchase minimum — so every tier always
+  // starts at qty 1 here, regardless of approxQty.
+  function addProductTier(p: Product, tier: PriceTier) {
+    const unit = tier.unit;
+    const rate = Number(tier.price);
     setLines((prev) => {
       const existing = prev.find((l) => l.productId === p.id && l.unit === unit);
       if (existing) return prev.map((l) => (l === existing ? { ...l, qty: l.qty + 1 } : l));
-      toast.success(`${p.name} added${variant === 'piece' ? ' (loose pc)' : ''}`);
+      const isPrimary = unit === p.unit;
+      toast.success(`${p.name} added${isPrimary ? '' : ` (${formatUnit(unit)})`}`);
       return [
         ...prev,
         {
@@ -287,15 +361,15 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
           qty: 1,
           rate,
           discount: 0,
-          packQty: variant === 'unit' ? p.packQty : null,
+          packQty: isPrimary ? p.packQty : null,
           hsn: p.hsn,
-          altUnit: variant === 'unit' ? p.altUnit : null,
-          altQtyPerUnit: variant === 'unit' && p.altQtyPerUnit ? Number(p.altQtyPerUnit) : null,
+          altUnit: isPrimary ? p.altUnit : null,
+          altQtyPerUnit: isPrimary && p.altQtyPerUnit ? Number(p.altQtyPerUnit) : null,
         },
       ];
     });
   }
-  function decrementProductVariant(productId: string, unit: string) {
+  function decrementProductTier(productId: string, unit: string) {
     setLines((prev) => {
       const l = prev.find((x) => x.productId === productId && x.unit === unit);
       if (!l) return prev;
@@ -327,6 +401,25 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
   function removeLine(lineId: string) {
     setLines((prev) => prev.filter((l) => l.lineId !== lineId));
   }
+  function changeDiscountValue(v: number) {
+    setDiscountValue(v);
+    // Per-item mode: the box's number IS every line's discount — keep them
+    // in lockstep on every keystroke instead of a separate "apply" step.
+    if (applyDiscountPerItem) setLines((prev) => prev.map((l) => ({ ...l, discount: v })));
+  }
+  function toggleApplyDiscountPerItem(checked: boolean) {
+    setApplyDiscountPerItem(checked);
+    if (checked) {
+      // Per-line discounts are percent-only — switch the box to match, and
+      // broadcast its current value to every line right away.
+      setDiscountType('PERCENT');
+      setLines((prev) => prev.map((l) => ({ ...l, discount: discountValue })));
+    } else {
+      // Back to a single overall reduction — clear what was broadcast so
+      // the two modes never silently combine into a double discount.
+      setLines((prev) => prev.map((l) => ({ ...l, discount: 0 })));
+    }
+  }
 
   function save(mode: 'draft' | 'sent' | 'paid') {
     if (!customer) {
@@ -341,16 +434,23 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
     }
     setError(undefined);
     startSaving(async () => {
-      const result = await createInvoice({
+      const payload = {
         customerId: customer.id,
         date,
         due,
         items: lines,
-        overallDiscountType: discountType,
-        overallDiscountValue: discountValue,
+        // Per-item mode already baked its % into every line's own discount
+        // (see toggleApplyDiscountPerItem/changeDiscountValue above) — the
+        // overall figure must persist as inert (0) or the server would
+        // recompute the same reduction a second time on top of that.
+        overallDiscountType: applyDiscountPerItem ? 'PERCENT' : discountType,
+        overallDiscountValue: applyDiscountPerItem ? 0 : discountValue,
+        notes,
+        deliveryInstructions,
         markSent: mode !== 'draft',
         markPaid: mode === 'paid',
-      });
+      };
+      const result = editInvoice ? await updateInvoice(editInvoice.id, payload) : await createInvoice(payload);
       if (result.error) {
         setError(result.error);
         toast.error(result.error);
@@ -369,7 +469,6 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
     });
   }
 
-  const hasCustomer = !!customer;
   const hasItems = lines.length > 0;
   const projectedBalance = outstandingElsewhere + totals.total;
   const creditLimit = Number(customer?.creditLimit ?? 0);
@@ -403,13 +502,19 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
       totals={totals}
       discountType={discountType}
       discountValue={discountValue}
+      applyPerItem={applyDiscountPerItem}
+      notes={notes}
+      deliveryInstructions={deliveryInstructions}
       editable
       onDiscountTypeChange={setDiscountType}
-      onDiscountValueChange={setDiscountValue}
+      onDiscountValueChange={changeDiscountValue}
+      onApplyPerItemChange={toggleApplyDiscountPerItem}
       onIncrement={incrementLineQty}
       onDecrement={decrementLineQty}
       onUpdateLine={updateLine}
       onRemoveLine={removeLine}
+      onNotesChange={setNotes}
+      onDeliveryInstructionsChange={setDeliveryInstructions}
     />
   ) : (
     <InvoiceSheet
@@ -422,9 +527,11 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
       totalSavings={totalSavings}
       discountType={discountType}
       discountValue={discountValue}
+      applyPerItem={applyDiscountPerItem}
       editable
       onDiscountTypeChange={setDiscountType}
-      onDiscountValueChange={setDiscountValue}
+      onDiscountValueChange={changeDiscountValue}
+      onApplyPerItemChange={toggleApplyDiscountPerItem}
       onIncrement={incrementLineQty}
       onDecrement={decrementLineQty}
       onUpdateLine={updateLine}
@@ -446,18 +553,18 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
       <div className="invoice-builder-root print:hidden">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex flex-wrap items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => router.push('/invoices')}>
+          <Button variant="ghost" size="sm" onClick={() => router.push(editInvoice ? `/invoices/${editInvoice.id}` : '/invoices')}>
             <ArrowLeft size={13} /> Back
           </Button>
-          <span className="font-mono text-[13px] font-semibold text-ink-soft">New invoice</span>
-          <span className="rounded-full bg-surface-alt px-2.5 py-1 text-[11px] font-bold text-ink-soft">Draft</span>
+          <span className="font-mono text-[13px] font-semibold text-ink-soft">{editInvoice ? `Editing ${editInvoice.number}` : 'New invoice'}</span>
+          <span className="rounded-sm2 bg-surface-alt px-2.5 py-1 text-[11px] font-bold text-ink-soft">Draft</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-[11.5px] text-ink-soft">
+          <div className="flex items-center gap-1.5 rounded-sm2 border border-line bg-surface px-3 py-1.5 text-[11.5px] text-ink-soft">
             <Clock size={12} /> Date
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="border-none bg-transparent font-mono text-[11.5px] text-ink-body outline-none" />
           </div>
-          <div className="flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-[11.5px] text-ink-soft">
+          <div className="flex items-center gap-1.5 rounded-sm2 border border-line bg-surface px-3 py-1.5 text-[11.5px] text-ink-soft">
             <Clock size={12} /> Due
             <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="border-none bg-transparent font-mono text-[11.5px] text-ink-body outline-none" />
           </div>
@@ -467,25 +574,28 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
         </div>
       </div>
 
-      <ProgressStepper hasCustomer={hasCustomer} hasItems={hasItems} />
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[300px_1fr]">
-        <div className="flex flex-col gap-3.5">
-          <div data-tour="bill-to" className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
-            <div className="mb-2.5 flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wide text-ink-faint">
-              <Users size={13} className="text-brand" /> Bill to
+      <div className="grid grid-cols-1 gap-4 pb-24 lg:grid-cols-[40fr_60fr] lg:pb-4">
+        {/* LEFT 40% — every action/input control, kept as compact as
+            possible so the right column (the live, real-time PDF preview —
+            re-renders on every state change, no separate "preview" step)
+            gets the most room. */}
+        <div className="flex flex-col gap-2.5">
+          {isClassic && <InvoiceCompletenessChecklist items={checklistItems} compact />}
+          <div data-tour="bill-to" className="rounded-xl2 border border-line bg-surface p-2.5 shadow-card">
+            <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-ink-faint">
+              <Users size={11} className="text-brand" /> Bill to
             </div>
             {customer ? (
-              <div className="flex items-center gap-2.5 rounded-lg2 border border-line bg-bg px-3 py-2.5">
-                <span className="flex h-8.5 w-[34px] flex-shrink-0 items-center justify-center rounded-full text-[12.5px] font-extrabold text-white" style={{ background: hashColor(customer.name) }}>
+              <div className="flex items-center gap-2 rounded-lg2 border border-line bg-bg px-2.5 py-2">
+                <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-sm2 text-[11px] font-extrabold text-white" style={{ background: hashColor(customer.name) }}>
                   {initials(customer.name)}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[12.5px] font-bold text-ink">
+                  <div className="truncate text-[12px] font-bold text-ink">
                     {customer.name}
-                    {customer.guest && <span className="ml-1.5 rounded-full bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold text-ink-faint">Guest</span>}
+                    {customer.guest && <span className="ml-1.5 rounded-sm2 bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold text-ink-faint">Guest</span>}
                   </div>
-                  <div className="truncate text-[11px] text-ink-faint">
+                  <div className="truncate text-[10.5px] text-ink-faint">
                     {customer.shopName ? customer.shopName + ' · ' : ''}
                     {customer.phone ? customer.phone + ' · ' : ''}
                     {customer.state}
@@ -509,22 +619,22 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
               />
             ) : (
               <div className="relative">
-                <div className="flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-2 focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-light">
-                  <Search size={14} className="flex-shrink-0 text-ink-faint" />
+                <div className="flex items-center gap-2 rounded-sm2 border border-line bg-surface px-2.5 py-1.5 focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-light">
+                  <Search size={12} className="flex-shrink-0 text-ink-faint" />
                   <input
                     value={custQuery}
                     onChange={(e) => setCustQuery(e.target.value)}
                     placeholder="Name or mobile number…"
                     autoComplete="off"
-                    className="w-full bg-transparent text-[13px] outline-none"
+                    className="w-full bg-transparent text-[12px] outline-none"
                   />
                 </div>
-                <div className="mt-1.5 max-h-56 overflow-y-auto rounded-lg2 border border-line bg-surface shadow-elevated">
+                <div className="mt-1.5 max-h-44 overflow-y-auto rounded-lg2 border border-line bg-surface shadow-elevated">
                   {custLoading ? (
                     <div className="space-y-1.5 p-2">
                       {Array.from({ length: 3 }).map((_, i) => (
                         <div key={i} className="flex items-center gap-2.5 px-1 py-1.5">
-                          <Skeleton className="h-[30px] w-[30px] flex-shrink-0 rounded-full" />
+                          <Skeleton className="h-[26px] w-[26px] flex-shrink-0 rounded-sm2" />
                           <Skeleton className="h-3 flex-1" />
                         </div>
                       ))}
@@ -534,42 +644,42 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
                       <button
                         key={c.id}
                         onClick={() => setCustomer(c)}
-                        className="flex w-full items-center gap-2.5 border-b border-line px-3 py-2.5 text-left last:border-0 hover:bg-brand-light"
+                        className="flex w-full items-center gap-2 border-b border-line px-2.5 py-1.5 text-left last:border-0 hover:bg-brand-light"
                       >
-                        <span className="flex h-[30px] w-[30px] flex-shrink-0 items-center justify-center rounded-full text-[11.5px] font-extrabold text-white" style={{ background: hashColor(c.name) }}>
-                          {initials(c.name)}
+                        <span className="flex h-[26px] w-[26px] flex-shrink-0 items-center justify-center rounded-sm2 text-[10.5px] font-extrabold text-white" style={{ background: hashColor(c.name) }}>
+                          {initials(c.shopName || c.name)}
                         </span>
-                        <span className="min-w-0 flex-1 truncate text-[12.5px] font-bold text-ink">{c.name}</span>
-                        <span className="flex-shrink-0 text-[11px] text-ink-faint">{c.phone || c.state}</span>
+                        <span className="min-w-0 flex-1">
+                          <div className="truncate text-[12px] font-bold text-ink">{c.shopName || c.name}</div>
+                          <div className="truncate text-[10.5px] text-ink-faint">{c.shopName ? `${c.name}${c.phone ? ` · ${c.phone}` : ''}` : c.phone || c.state}</div>
+                        </span>
                       </button>
                     ))
                   )}
-                  <button onClick={() => setShowQuickAdd(true)} className="flex w-full items-center gap-1.5 border-t border-line px-3 py-2.5 text-left text-[12.5px] font-bold text-brand hover:bg-brand-light">
-                    <Plus size={13} /> Add &quot;{custQuery || 'someone new'}&quot; as a new customer
+                  <button onClick={() => setShowQuickAdd(true)} className="flex w-full items-center gap-1.5 border-t border-line px-2.5 py-1.5 text-left text-[11.5px] font-bold text-brand hover:bg-brand-light">
+                    <Plus size={12} /> Add &quot;{custQuery || 'someone new'}&quot; as a new customer
                   </button>
                 </div>
               </div>
             )}
 
             {customer && (
-              <div className="mt-2.5 rounded-md2 bg-bg p-2.5 text-[12px] leading-relaxed text-ink-soft">
-                <div className="text-[13px] font-bold text-ink">{customer.name}</div>
-                {customer.shopName && <div className="font-semibold">{customer.shopName}</div>}
-                {customer.address && <div>{customer.address}</div>}
+              <div className="mt-1.5 rounded-md2 bg-bg p-2 text-[11px] leading-relaxed text-ink-soft">
+                {customer.address && <div className="truncate">{customer.address}</div>}
                 <div>
                   {customer.state} {customer.gstin ? `· GSTIN ${customer.gstin}` : '· unregistered'}
                 </div>
-                <div className="mt-1 flex items-center gap-1.5 font-bold text-brand-dark">
-                  {totals.useIgst ? `Different state — IGST ${company.igstRate}%` : `Same state — CGST ${company.cgstRate}% + SGST ${company.sgstRate}%`}
+                <div className="mt-0.5 flex items-center gap-1.5 font-bold text-ink">
+                  {totals.useIgst ? `IGST ${company.igstRate}%` : `CGST ${company.cgstRate}% + SGST ${company.sgstRate}%`}
                 </div>
                 {overLimit ? (
-                  <div className="mt-1.5 flex items-start gap-1.5 border-t border-dashed border-line pt-1.5 font-bold text-brand-dark">
-                    <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" /> This invoice would put them at {fmtInr(projectedBalance)} — over their {fmtInr(creditLimit)} credit limit
+                  <div className="mt-1 flex items-start gap-1.5 border-t border-dashed border-line pt-1 font-bold text-red">
+                    <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" /> Puts them at {fmtInr(projectedBalance)} — over their {fmtInr(creditLimit)} credit limit
                   </div>
                 ) : (
                   outstandingElsewhere > 0.004 && (
-                    <div className="mt-1.5 flex items-start gap-1.5 border-t border-dashed border-line pt-1.5 font-bold text-brand-dark">
-                      <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" /> Already owes {fmtInr(outstandingElsewhere)} from other invoices
+                    <div className="mt-1 flex items-start gap-1.5 border-t border-dashed border-line pt-1 font-bold text-gold">
+                      <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" /> Already owes {fmtInr(outstandingElsewhere)} from other invoices
                     </div>
                   )
                 )}
@@ -587,58 +697,55 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
             />
           )}
 
-          <div data-tour="add-products" className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
-            <div className="mb-2.5 flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wide text-ink-faint">
-              <Package size={13} className="text-brand" /> Add products
+          <div data-tour="add-products" className="rounded-xl2 border border-line bg-surface p-2.5 shadow-card">
+            <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-ink-faint">
+              <Package size={11} className="text-brand" /> Add products
             </div>
-            <div className="flex items-center gap-2 rounded-full border border-line bg-bg px-3 py-2 focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-light">
-              <Search size={14} className="flex-shrink-0 text-ink-faint" />
+            <div className="flex items-center gap-2 rounded-sm2 border border-line bg-bg px-2.5 py-1.5 focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-light">
+              <Search size={12} className="flex-shrink-0 text-ink-faint" />
               <input
                 value={productQuery}
                 onChange={(e) => setProductQuery(e.target.value)}
                 placeholder="Search catalog to add…"
                 autoComplete="off"
-                className="w-full bg-transparent text-[13px] outline-none"
+                className="w-full bg-transparent text-[12px] outline-none"
               />
             </div>
-            <div className="mt-1.5 max-h-[420px] overflow-y-auto pr-1">
+            <div className="mt-1">
               {frequentProducts.length > 0 && (
                 <>
-                  <div className="px-2 pb-0.5 pt-0 text-[11px] font-bold text-brand-dark">
-                    <Sparkles size={11} className="mr-1 inline" /> Frequently ordered by this customer
+                  <div className="px-1.5 pb-0.5 pt-1 text-[10px] font-bold text-brand-dark">
+                    <Sparkles size={10} className="mr-1 inline" /> Frequently ordered by this customer
                   </div>
                   {frequentProducts.map((p) => (
                     <ProductRow
                       key={p.id}
                       product={p}
-                      boxQty={lines.find((l) => l.productId === p.id && l.unit === p.unit)?.qty ?? 0}
-                      pieceQty={lines.find((l) => l.productId === p.id && l.unit === 'pc')?.qty ?? 0}
-                      onAddBox={() => addProductVariant(p, 'unit')}
-                      onDecrementBox={() => decrementProductVariant(p.id, p.unit)}
-                      onAddPiece={() => addProductVariant(p, 'piece')}
-                      onDecrementPiece={() => decrementProductVariant(p.id, 'pc')}
+                      lines={lines}
+                      onAddTier={(tier) => addProductTier(p, tier)}
+                      onDecrementTier={(unit) => decrementProductTier(p.id, unit)}
                     />
                   ))}
-                  <div className="mt-2 border-t border-line px-2 pb-1 pt-2.5 text-[11px] text-ink-faint">All products (A–Z)</div>
+                  <div className="mt-1 border-t border-line px-1.5 pb-0.5 pt-1.5 text-[10px] text-ink-faint">All products (A–Z)</div>
                 </>
               )}
-              {filteredProducts.length === 0 ? (
-                <p className="py-8 text-center text-[12px] text-ink-faint">No active products found.</p>
+              {pagedProducts.length === 0 ? (
+                <p className="py-6 text-center text-[12px] text-ink-faint">No active products found.</p>
               ) : (
-                filteredProducts.map((p) => (
+                pagedProducts.map((p) => (
                   <ProductRow
                     key={p.id}
                     product={p}
-                    boxQty={lines.find((l) => l.productId === p.id && l.unit === p.unit)?.qty ?? 0}
-                    pieceQty={lines.find((l) => l.productId === p.id && l.unit === 'pc')?.qty ?? 0}
-                    onAddBox={() => addProductVariant(p, 'unit')}
-                    onDecrementBox={() => decrementProductVariant(p.id, p.unit)}
-                    onAddPiece={() => addProductVariant(p, 'piece')}
-                    onDecrementPiece={() => decrementProductVariant(p.id, 'pc')}
+                    lines={lines}
+                    onAddTier={(tier) => addProductTier(p, tier)}
+                    onDecrementTier={(unit) => decrementProductTier(p.id, unit)}
                   />
                 ))
               )}
             </div>
+            {filteredProducts.length > PRODUCTS_PER_PAGE && (
+              <Pagination page={productPage} pageSize={PRODUCTS_PER_PAGE} total={filteredProducts.length} onPageChange={setProductPage} className="border-t-0 px-0 py-1.5" />
+            )}
             <div data-tour="custom-item">
               {showCustomItemForm ? (
                 <AddCustomItemForm
@@ -648,40 +755,56 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
               ) : (
                 <button
                   onClick={() => setShowCustomItemForm(true)}
-                  className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg2 border border-dashed border-line py-2 text-[11.5px] font-bold text-ink-faint hover:border-brand hover:text-brand"
+                  className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg2 border border-dashed border-line py-1.5 text-[11px] font-bold text-ink-faint hover:border-brand hover:text-brand"
                 >
-                  <Tag size={12} /> Bill something not in your catalog
+                  <Tag size={11} /> Bill something not in your catalog
                 </button>
               )}
             </div>
           </div>
         </div>
 
-        <div data-tour="invoice-sheet" className="relative max-w-[900px]" style={PAPER_STYLE}>
-          {isClassic && <InvoiceCompletenessChecklist items={checklistItems} />}
+        {/* RIGHT 60% — the live, real-time PDF view only, nothing else. */}
+        <div data-tour="invoice-sheet" className="relative" style={PAPER_STYLE}>
           <div className="h-[5px] rounded-t-lg2 bg-brand" />
           <ResponsiveSheetScale>{sheet}</ResponsiveSheetScale>
         </div>
       </div>
 
       {hasItems && (
-        <div className="sticky bottom-[calc(60px+14px)] mt-3.5 flex flex-wrap items-center gap-2.5 rounded-full bg-chrome px-2.5 py-2.5 pl-4 text-white shadow-elevated md:bottom-3.5">
-          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-brand">
+        <div className="sticky bottom-[136px] z-20 mt-3.5 flex flex-wrap items-center gap-2.5 rounded-sm2 bg-chrome px-2.5 py-2.5 pl-4 text-white shadow-elevated md:bottom-[72px]">
+          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-sm2 bg-brand">
             <ShoppingCart size={13} />
           </span>
           <span className="flex-1 text-[12px] font-semibold leading-tight">
             <b className="font-mono">{lines.length}</b> product{lines.length !== 1 ? 's' : ''} · <b className="font-mono">{Math.round(totalUnits * 100) / 100}</b> unit
             {totalUnits !== 1 ? 's' : ''} &nbsp;·&nbsp; <b className="font-mono">{fmtInr(totals.total)}</b>
           </span>
-          <button onClick={() => setPreviewOpen(true)} className="flex flex-shrink-0 items-center gap-1.5 rounded-full bg-brand px-3.5 py-2 text-[11.5px] font-extrabold text-white">
+          <button onClick={() => setPreviewOpen(true)} className="flex flex-shrink-0 items-center gap-1.5 rounded-sm2 bg-brand px-3.5 py-2 text-[11.5px] font-extrabold text-white">
             <ArrowRight size={12} /> View
           </button>
         </div>
       )}
 
-      {error && <p className="mt-3 text-[12.5px] font-bold text-destructive">{error}</p>}
-
-      <div data-tour="save-buttons" className="mt-3.5 flex flex-wrap justify-end gap-2.5">
+      {/* Full-width save bar, pinned to the bottom of the viewport (above
+          the mobile BottomNav, flush with it on desktop where that's
+          hidden) — breaks out of main's own side padding (see
+          (app)/layout.tsx) via matching negative margins so it spans the
+          whole content width edge-to-edge, regardless of which column the
+          click that triggered it came from. */}
+      <div
+        data-tour="save-buttons"
+        className="sticky bottom-[60px] z-20 -mx-4 mt-3.5 flex flex-wrap items-center justify-end gap-2.5 border-t border-line bg-surface px-4 py-3 shadow-elevated md:bottom-0 md:-mx-6 md:px-6"
+      >
+        {error ? (
+          <p className="mr-auto flex items-center gap-1.5 text-[12px] font-bold text-destructive">
+            <AlertTriangle size={12} className="flex-shrink-0" /> {error}
+          </p>
+        ) : (
+          <p className="mr-auto hidden items-center gap-1.5 text-[10.5px] text-ink-faint sm:flex">
+            <Info size={11} className="flex-shrink-0" /> The invoice number is assigned the moment you save.
+          </p>
+        )}
         <Button variant="outline" onClick={() => save('draft')} disabled={saving}>
           <FileText size={13} /> Save as draft
         </Button>
@@ -692,9 +815,6 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
           <CheckCircle2 size={13} /> {saving ? 'Saving…' : 'Save & mark as sent'}
         </Button>
       </div>
-      <p className="mt-2.5 flex items-center gap-1.5 text-[10.5px] text-ink-faint">
-        <AlertTriangle size={11} /> The invoice number is assigned the moment you save — nothing here is final until then.
-      </p>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="max-w-[720px]" mobileFullScreen>
@@ -706,7 +826,18 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
           <div className="max-h-[70vh] overflow-y-auto" style={PAPER_STYLE}>
             <ResponsiveSheetScale>
               {isClassic ? (
-                <InvoiceSheetClassic company={company} customer={customer} date={date} lines={lines} totals={totals} discountType={discountType} discountValue={discountValue} editable={false} />
+                <InvoiceSheetClassic
+                  company={company}
+                  customer={customer}
+                  date={date}
+                  lines={lines}
+                  totals={totals}
+                  discountType={discountType}
+                  discountValue={discountValue}
+                  notes={notes}
+                  deliveryInstructions={deliveryInstructions}
+                  editable={false}
+                />
               ) : (
                 <InvoiceSheet
                   company={company}
@@ -760,7 +891,18 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
           calls window.print(). */}
       <div className="invoice-print hidden print:block" style={PAPER_STYLE}>
         {isClassic ? (
-          <InvoiceSheetClassic company={company} customer={customer} date={date} lines={lines} totals={totals} discountType={discountType} discountValue={discountValue} editable={false} />
+          <InvoiceSheetClassic
+            company={company}
+            customer={customer}
+            date={date}
+            lines={lines}
+            totals={totals}
+            discountType={discountType}
+            discountValue={discountValue}
+            notes={notes}
+            deliveryInstructions={deliveryInstructions}
+            editable={false}
+          />
         ) : (
           <InvoiceSheet
             company={company}
@@ -780,130 +922,134 @@ export function BuilderClient({ products, company }: { products: Product[]; comp
   );
 }
 
-function ProgressStepper({ hasCustomer, hasItems }: { hasCustomer: boolean; hasItems: boolean }) {
-  const steps = [
-    { label: 'Customer', done: hasCustomer },
-    { label: 'Items', done: hasItems },
-    { label: 'Review & send', done: hasCustomer && hasItems },
-  ];
-  return (
-    <div className="mb-4 flex items-center gap-1.5">
-      {steps.map((s, i) => (
-        <div key={s.label} className="flex flex-1 items-center gap-1.5 last:flex-none">
-          <div className="flex items-center gap-2">
-            <span
-              className={`flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-extrabold transition-all duration-200 ${
-                s.done ? 'scale-105 bg-brand text-white' : 'bg-surface-alt text-ink-faint'
-              }`}
-            >
-              {s.done ? <CheckCircle2 size={13} /> : i + 1}
-            </span>
-            <span className={`whitespace-nowrap text-[11.5px] font-bold transition-colors ${s.done ? 'text-ink' : 'text-ink-faint'}`}>{s.label}</span>
-          </div>
-          {i < steps.length - 1 && <div className={`h-0.5 min-w-4 flex-1 rounded-full transition-colors duration-300 ${s.done ? 'bg-brand' : 'bg-line'}`} />}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function ProductRow({
   product,
-  boxQty,
-  pieceQty,
-  onAddBox,
-  onDecrementBox,
-  onAddPiece,
-  onDecrementPiece,
+  lines,
+  onAddTier,
+  onDecrementTier,
 }: {
   product: Product;
-  boxQty: number;
-  pieceQty: number;
-  onAddBox: () => void;
-  onDecrementBox: () => void;
-  onAddPiece: () => void;
-  onDecrementPiece: () => void;
+  lines: Line[];
+  onAddTier: (tier: PriceTier) => void;
+  onDecrementTier: (unit: string) => void;
 }) {
-  const hasPack = !!product.packQty && Number(product.packQty) > 0;
-  const perPieceRate = hasPack ? Number(product.price) / Number(product.packQty) : null;
-  const active = boxQty > 0 || pieceQty > 0;
+  const tiers = tiersFor(product);
+  const single = tiers.length === 1;
+  const qtyFor = (unit: string) => lines.find((l) => l.productId === product.id && l.unit === unit)?.qty ?? 0;
+  const active = tiers.some((t) => qtyFor(t.unit) > 0);
+  // e.g. "₹20.00/Piece · ₹450.00/Box (≈₹11.25/Piece)" — the per-piece figure
+  // is price ÷ approxQty, purely a comparison aid; approxQty is never a
+  // purchase minimum, see ProductPriceTier.approxQty.
+  const tierSummary = tiers
+    .map((t) => {
+      const price = Number(t.price);
+      const approxQty = t.approxQty != null ? Number(t.approxQty) : 0;
+      const perPiece = approxQty > 0 ? price / approxQty : null;
+      return `${fmtInr(price)}/${formatUnit(t.unit)}${perPiece != null ? ` (≈${fmtInr(perPiece)}/Piece)` : ''}`;
+    })
+    .join(' · ');
   return (
-    <div className={`rounded-lg2 px-2.5 py-2.5 transition-colors hover:bg-bg ${active ? 'bg-brand-light' : ''}`}>
-      <div className="flex items-center gap-2.5">
-        <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full ${categoryTile(product.category)}`}>
-          <CategoryIcon category={product.category} size={15} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[12.5px] font-bold text-ink">{product.name}</div>
-          <div className="text-[11px] text-ink-faint">
-            {fmtInr(Number(product.price))} / {product.unit}
-            {perPieceRate ? ` · ${fmtInr(perPieceRate)}/pc` : ''}
-          </div>
-        </div>
-        {/* Simple products (no known pack size) keep one compact counter here.
-            A product sold with a known pack size gets the fuller two-up
-            layout below instead, so "as box" vs "as piece" never has to be
-            inferred from a cramped pair of stacked pills. */}
-        {!hasPack && <QtyCounter unitLabel={product.unit} qty={boxQty} onAdd={onAddBox} onDecrement={onDecrementBox} name={product.name} />}
+    <div className={`flex items-start gap-2 rounded-lg2 px-1.5 py-1.5 transition-colors hover:bg-bg ${active ? 'bg-brand-light' : ''}`}>
+      <span className={`mt-0.5 flex h-[26px] w-[26px] flex-shrink-0 items-center justify-center rounded-sm2 ${categoryTile(product.category)}`}>
+        <CategoryIcon category={product.category} size={12} />
+      </span>
+      <div className="min-w-0 flex-1 pt-0.5">
+        <div className="truncate text-[11.5px] font-bold text-ink">{product.name}</div>
+        <div className="truncate text-[10px] text-ink-faint">{tierSummary}</div>
       </div>
-      {hasPack && (
-        <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-dashed border-line pt-2.5">
-          <UnitCounterBlock caption="As box" unitLabel={product.unit} qty={boxQty} onAdd={onAddBox} onDecrement={onDecrementBox} name={product.name} />
-          <UnitCounterBlock caption="As piece" unitLabel="pc" qty={pieceQty} onAdd={onAddPiece} onDecrement={onDecrementPiece} name={`${product.name} (loose pc)`} />
+      {/* A product with exactly one pricing tier keeps one compact counter
+          here. Two or more tiers (e.g. Box + Piece + Kg) stack vertically
+          on the right instead, each tinted its own accent color, so each
+          unit's control stays visually distinct without eating horizontal
+          width the way an equal-column grid underneath used to. */}
+      {single ? (
+        <QtyCounter qty={qtyFor(tiers[0].unit)} onAdd={() => onAddTier(tiers[0])} onDecrement={() => onDecrementTier(tiers[0].unit)} name={product.name} />
+      ) : (
+        <div className="flex flex-shrink-0 flex-col gap-1">
+          {tiers.map((t, i) => (
+            <TierCounterRow
+              key={t.id ?? `${t.unit}-${i}`}
+              accent={TIER_ACCENTS[i % TIER_ACCENTS.length]}
+              caption={formatUnit(t.unit)}
+              qty={qtyFor(t.unit)}
+              onAdd={() => onAddTier(t)}
+              onDecrement={() => onDecrementTier(t.unit)}
+              name={`${product.name} (${formatUnit(t.unit)})`}
+            />
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-/** Compact right-aligned +/- pill, used inline for products with no pack
- * size to convert to (nothing to choose between). */
-function QtyCounter({ unitLabel, qty, onAdd, onDecrement, name }: { unitLabel: string; qty: number; onAdd: () => void; onDecrement: () => void; name: string }) {
+/** Compact right-aligned +/- pill, used inline for products with exactly
+ * one pricing tier (nothing to choose between). */
+function QtyCounter({ qty, onAdd, onDecrement, name }: { qty: number; onAdd: () => void; onDecrement: () => void; name: string }) {
   if (qty > 0) {
     return (
-      <div className="flex flex-shrink-0 items-center gap-1.5 rounded-full border-[1.5px] border-brand bg-surface p-0.5">
-        <button onClick={onDecrement} aria-label={`Decrease ${name} quantity`} className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-brand-light text-brand-dark">
-          <Minus size={11} />
+      <div className="flex flex-shrink-0 items-center gap-1.5 rounded-sm2 border-[1.5px] border-brand bg-surface p-0.5">
+        <button onClick={onDecrement} aria-label={`Decrease ${name} quantity`} className="flex h-[20px] w-[20px] items-center justify-center rounded-sm2 bg-brand-light text-brand-dark">
+          <Minus size={10} />
         </button>
-        <span key={qty} className="min-w-[20px] animate-bump text-center font-mono text-[12px] font-extrabold">
+        <span key={qty} className="min-w-[18px] animate-bump text-center font-mono text-[11.5px] font-extrabold">
           {qty}
         </span>
-        <button onClick={onAdd} aria-label={`Increase ${name} quantity`} className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-brand-light text-brand-dark">
-          <Plus size={11} />
+        <button onClick={onAdd} aria-label={`Increase ${name} quantity`} className="flex h-[20px] w-[20px] items-center justify-center rounded-sm2 bg-brand-light text-brand-dark">
+          <Plus size={10} />
         </button>
       </div>
     );
   }
   return (
-    <button onClick={onAdd} className="flex flex-shrink-0 items-center gap-1 rounded-full bg-brand px-3 py-1.5 text-[11.5px] font-extrabold text-white">
-      <Plus size={12} /> Add
+    <button onClick={onAdd} className="flex flex-shrink-0 items-center gap-1 rounded-sm2 bg-brand px-2.5 py-1 text-[11px] font-extrabold text-white">
+      <Plus size={11} /> Add
     </button>
   );
 }
 
-/** Full-width labeled counter — one of the two "As box" / "As piece" blocks
- * shown for a product with a known pack size. Deliberately roomier and
- * captioned (rather than two small stacked pills) so it's unambiguous which
- * unit each control adds, both while empty and once a line exists. */
-function UnitCounterBlock({ caption, unitLabel, qty, onAdd, onDecrement, name }: { caption: string; unitLabel: string; qty: number; onAdd: () => void; onDecrement: () => void; name: string }) {
+// Decorative, per-tier-position accents (not tied to any status/semantic
+// meaning — unlike --red/--green/--gold, which stay reserved for
+// error/success/warning). Cycles for a 4th+ tier.
+const TIER_ACCENTS = ['border-l-brand', 'border-l-gold', 'border-l-chrome', 'border-l-ink-faint'];
+
+/** One pricing tier's +/- control, stacked vertically alongside its
+ * siblings (see ProductRow) — a colored left edge is each tier's only
+ * visual distinguisher, so the caption/counter itself stays as compact as
+ * the single-tier QtyCounter. */
+function TierCounterRow({
+  accent,
+  caption,
+  qty,
+  onAdd,
+  onDecrement,
+  name,
+}: {
+  accent: string;
+  caption: string;
+  qty: number;
+  onAdd: () => void;
+  onDecrement: () => void;
+  name: string;
+}) {
   return (
-    <div className="flex flex-col items-center gap-1 rounded-lg2 bg-bg py-2">
-      <span className="text-[9px] font-bold uppercase tracking-wide text-ink-faint">{caption}</span>
+    <div className={`flex items-center gap-1.5 rounded-sm2 border-l-[3px] ${accent} bg-bg pl-1.5 pr-1 py-0.5`}>
+      <span className="w-[34px] flex-shrink-0 truncate text-[8.5px] font-bold uppercase tracking-wide text-ink-faint">{caption}</span>
       {qty > 0 ? (
-        <div className="flex items-center gap-1.5 rounded-full border-[1.5px] border-brand bg-surface p-0.5">
-          <button onClick={onDecrement} aria-label={`Decrease ${name} quantity`} className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-brand-light text-brand-dark">
-            <Minus size={11} />
+        <div className="flex items-center gap-1 rounded-sm2 border border-line bg-surface p-0.5">
+          <button onClick={onDecrement} aria-label={`Decrease ${name} quantity`} className="flex h-[16px] w-[16px] items-center justify-center rounded-sm2 text-ink-soft hover:bg-surface-alt">
+            <Minus size={9} />
           </button>
-          <span key={qty} className="min-w-[38px] animate-bump text-center font-mono text-[12px] font-extrabold">
-            {qty} {unitLabel}
+          <span key={qty} className="min-w-[14px] animate-bump text-center font-mono text-[10.5px] font-extrabold">
+            {qty}
           </span>
-          <button onClick={onAdd} aria-label={`Increase ${name} quantity`} className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-brand-light text-brand-dark">
-            <Plus size={11} />
+          <button onClick={onAdd} aria-label={`Increase ${name} quantity`} className="flex h-[16px] w-[16px] items-center justify-center rounded-sm2 text-ink-soft hover:bg-surface-alt">
+            <Plus size={9} />
           </button>
         </div>
       ) : (
-        <button onClick={onAdd} className="flex items-center gap-1 rounded-full bg-brand px-3 py-1.5 text-[11px] font-extrabold text-white">
-          <Plus size={11} /> {unitLabel}
+        <button onClick={onAdd} aria-label={`Add ${name}`} className="flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-sm2 bg-brand text-white">
+          <Plus size={10} />
         </button>
       )}
     </div>
@@ -950,11 +1096,13 @@ function AddCustomItemForm({
     let productId: string | undefined;
     if (saveAsProduct) {
       const formData = new FormData();
+      const tierUnit = unit.trim() || 'pc';
       formData.set('name', name.trim());
       formData.set('category', 'Uncategorized');
-      formData.set('unit', unit.trim() || 'pc');
+      formData.set('unit', tierUnit);
       formData.set('price', String(rateNum));
       if (packQtyNum > 0) formData.set('packQty', String(packQtyNum));
+      formData.set('tiers', JSON.stringify([{ unit: tierUnit, price: rateNum, approxQty: packQtyNum > 0 ? packQtyNum : null }]));
       const result = await createProduct.mutateAsync(formData);
       if (result.error) {
         setError(result.error);
@@ -1093,10 +1241,10 @@ function ShareDialog({
         </DialogHeader>
         <p className="text-[12.5px] leading-relaxed text-ink-soft">Sends a text summary of the invoice — for the full document, use Download / print first and attach that.</p>
         <div className="flex flex-col gap-2.5">
-          <a href={waUrl} target="_blank" rel="noopener" className="flex items-center justify-center gap-2 rounded-full bg-surface-alt px-4 py-2.5 text-[13px] font-bold text-ink">
+          <a href={waUrl} target="_blank" rel="noopener" className="flex items-center justify-center gap-2 rounded-sm2 bg-surface-alt px-4 py-2.5 text-[13px] font-bold text-ink">
             <MessageCircle size={14} /> Share via WhatsApp{waDigits ? '' : ' (no phone on file)'}
           </a>
-          <a href={mailUrl} className="flex items-center justify-center gap-2 rounded-full border border-line px-4 py-2.5 text-[13px] font-bold text-ink">
+          <a href={mailUrl} className="flex items-center justify-center gap-2 rounded-sm2 border border-line px-4 py-2.5 text-[13px] font-bold text-ink">
             <Mail size={14} /> Share via Email{customer.email ? '' : ' (no email on file)'}
           </a>
         </div>

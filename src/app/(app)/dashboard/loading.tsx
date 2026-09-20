@@ -14,7 +14,7 @@ export default function DashboardLoading() {
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
         {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="rounded-xl2 border border-line bg-surface p-3 shadow-card">
-            <Skeleton className="h-7 w-7 rounded-full" />
+            <Skeleton className="h-7 w-7 rounded-sm2" />
             <Skeleton className="mt-2 h-4 w-16" />
             <Skeleton className="mt-1.5 h-2.5 w-20" />
           </div>
@@ -46,7 +46,7 @@ export default function DashboardLoading() {
         <div className="overflow-hidden rounded-xl2 border border-line bg-surface shadow-card">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="flex items-center gap-3 border-b border-line p-3 last:border-0">
-              <Skeleton className="h-8 w-8 flex-shrink-0 rounded-full" />
+              <Skeleton className="h-8 w-8 flex-shrink-0 rounded-sm2" />
               <div className="min-w-0 flex-1 space-y-1.5">
                 <Skeleton className="h-3 w-24" />
                 <Skeleton className="h-2.5 w-36" />
