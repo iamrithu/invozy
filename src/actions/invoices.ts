@@ -57,7 +57,10 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
     getCompany(),
     prisma.customer.findUnique({ where: { id: data.customerId } }),
   ]);
-  if (!customer) return { error: 'Customer not found' };
+  // Without the companyId check, an invoice could be created against another
+  // company's customer row — leaking that customer's name/GSTIN/address into
+  // this invoice and corrupting their data with a foreign invoice reference.
+  if (!customer || customer.companyId !== company.id) return { error: 'Customer not found' };
 
   const totals = computeTotals(
     data.items.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount })),
@@ -172,7 +175,7 @@ export async function updateInvoice(invoiceId: string, input: InvoiceInput): Pro
   ]);
   if (!existing || existing.companyId !== company.id) return { error: 'Invoice not found' };
   if (existing.status === 'PAID') return { error: 'This invoice is already paid in full and can no longer be edited' };
-  if (!customer) return { error: 'Customer not found' };
+  if (!customer || customer.companyId !== company.id) return { error: 'Customer not found' };
   // Real money already recorded (e.g. a PARTIALLY_PAID invoice) — markPaid
   // below must only top up the remaining balance, never re-insert the full
   // total as a second payment on top of what's already on file.
@@ -374,11 +377,16 @@ export async function listInvoicesPage(opts?: { status?: string; search?: string
 
 export async function recordPayment(invoiceId: string, amount: number, date: string, mode?: string) {
   if (amount <= 0) throw new Error('Amount must be greater than zero');
-  const invoice = await prisma.invoice.findUniqueOrThrow({
-    where: { id: invoiceId },
-    include: { items: true, payments: true, customer: true },
-  });
-  const company = await getCompany();
+  const [invoice, company] = await Promise.all([
+    prisma.invoice.findUniqueOrThrow({
+      where: { id: invoiceId },
+      include: { items: true, payments: true, customer: true },
+    }),
+    getCompany(),
+  ]);
+  // Without this, any logged-in user could record a fake payment against —
+  // and flip the status of — another company's invoice.
+  if (invoice.companyId !== company.id) throw new Error('Invoice not found');
 
   await prisma.payment.create({ data: { invoiceId, amount, date: new Date(date), mode } });
 
@@ -405,13 +413,20 @@ export async function recordPayment(invoiceId: string, amount: number, date: str
 }
 
 export async function deleteInvoice(id: string) {
+  const [invoice, company] = await Promise.all([prisma.invoice.findUniqueOrThrow({ where: { id } }), getCompany()]);
+  // Without this, any logged-in user could delete any other company's
+  // invoice (cascading to its items + payments) just by knowing its id.
+  if (invoice.companyId !== company.id) throw new Error('Invoice not found');
   await prisma.invoice.delete({ where: { id } }); // cascades to items + payments
   revalidatePath('/invoices');
 }
 
 export async function duplicateInvoice(id: string) {
-  const src = await prisma.invoice.findUniqueOrThrow({ where: { id }, include: { items: true } });
-  const company = await getCompany();
+  const [src, company] = await Promise.all([prisma.invoice.findUniqueOrThrow({ where: { id }, include: { items: true } }), getCompany()]);
+  // Without this, any logged-in user could read — and copy into their own
+  // company — another company's full invoice (items, discounts, customer
+  // reference).
+  if (src.companyId !== company.id) throw new Error('Invoice not found');
 
   const created = await prisma.$transaction(async (tx) => {
     const freshCompany = await tx.company.findUniqueOrThrow({ where: { id: company.id } });

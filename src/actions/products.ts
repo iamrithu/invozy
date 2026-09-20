@@ -225,8 +225,12 @@ export async function updateProduct(id: string, _prev: ProductFormState, formDat
 
 /** Powers the invoice builder's "frequently ordered by this customer" shortcut. */
 export async function frequentProductIdsForCustomer(customerId: string, limit = 4) {
+  const company = await getCompany();
   const items = await prisma.invoiceItem.findMany({
-    where: { invoice: { customerId } },
+    // Scoped by companyId (not just customerId) so a foreign customerId
+    // can't be used to probe which of another company's products get
+    // reordered most.
+    where: { invoice: { customerId, companyId: company.id } },
     select: { productId: true, qty: true },
   });
   const counts = new Map<string, number>();

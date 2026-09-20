@@ -116,12 +116,20 @@ export async function updateCustomer(id: string, _prev: CustomerFormState, formD
   if (!parsed.success) {
     return { error: 'Check the highlighted fields.', fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string> };
   }
+  const [company, existing] = await Promise.all([getCompany(), prisma.customer.findUnique({ where: { id } })]);
+  // Without this, any logged-in user could overwrite another company's
+  // customer record (name, GSTIN, address, credit limit, contact info).
+  if (!existing || existing.companyId !== company.id) return { error: 'Customer not found.' };
   await prisma.customer.update({ where: { id }, data: parsed.data });
   revalidatePath('/customers');
   return {};
 }
 
 export async function deleteCustomer(id: string) {
+  const [company, existing] = await Promise.all([getCompany(), prisma.customer.findUnique({ where: { id } })]);
+  // Without this, any logged-in user could delete another company's
+  // customer (as long as it happens to have no invoices on file).
+  if (!existing || existing.companyId !== company.id) throw new Error('Customer not found.');
   const hasInvoices = await prisma.invoice.findFirst({ where: { customerId: id } });
   if (hasInvoices) {
     throw new Error('This customer has invoices on file and can\u2019t be deleted.');
@@ -170,6 +178,10 @@ export async function getCustomerLedger(id: string) {
     }),
     getCompany(),
   ]);
+  // Without this, any logged-in user could pull another company's full
+  // customer record plus every invoice (line items, payments, totals) just
+  // by knowing/guessing the customer's id.
+  if (customer.companyId !== company.id) throw new Error('Customer not found.');
 
   const { computeTotals } = await import('@/lib/gst');
 

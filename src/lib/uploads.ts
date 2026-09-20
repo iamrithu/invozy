@@ -37,6 +37,16 @@ export async function saveUploadedImage(file: File, companyId: string, kind: Upl
     return blob.url;
   }
 
+  // No Blob token configured — on a serverless host the filesystem below is
+  // read-only (public/uploads can't be created), so failing fast here with
+  // an actionable message beats the raw ENOENT this used to throw when it
+  // tried anyway. Connect a Vercel Blob store to this project (Storage tab)
+  // so BLOB_READ_WRITE_TOKEN gets auto-injected and the branch above is used.
+  const isServerless = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME;
+  if (isServerless) {
+    throw new Error('Image uploads need a Vercel Blob store connected to this project — ask an admin to connect one under Storage in the Vercel dashboard.');
+  }
+
   const dir = path.join(UPLOAD_ROOT, companyId, kind);
   await fs.mkdir(dir, { recursive: true });
   const buffer = Buffer.from(await file.arrayBuffer());

@@ -36,7 +36,11 @@ export default async function InvoiceDetailPage({ params, searchParams }: { para
     }),
     getCompany(),
   ]);
-  if (!invoice) notFound();
+  // Without this, any logged-in user from any company could view another
+  // company's invoice just by knowing/guessing its id — this page never
+  // otherwise checks tenant ownership (unlike the PDF download route, which
+  // already does).
+  if (!invoice || invoice.companyId !== company.id) notFound();
 
   const lines = invoice.items.map((it) => ({
     lineId: it.id,
