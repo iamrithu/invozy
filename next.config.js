@@ -8,17 +8,30 @@ const nextConfig = {
     },
   },
   // Vercel's build only bundles files it can trace a static require()/import
-  // to. playwright-core's coreBundle.js resolves browsers.json (and a few
-  // other data files) at runtime via a dynamic path lookup, not a literal
-  // require, so the tracer misses it — the deployed function then throws
-  // "Cannot find module '/var/task/node_modules/playwright-core/browsers.json'"
-  // the moment src/lib/pdf-browser.ts's serverless branch (@sparticuz/chromium
-  // + playwright-core) tries to launch a browser. Forcing the whole package
-  // (plus @sparticuz/chromium's own bundled binary, same class of issue) into
-  // the trace for just this one route fixes it without pulling either into
-  // every other route's bundle.
+  // to. playwright-core's coreBundle.js resolves browsers.json via a
+  // *computed* require(path.join(runtimeVar, 'browsers.json')) — not a
+  // literal string — so the tracer's static analysis can't follow it, and
+  // the deployed function throws "Cannot find module
+  // '/var/task/node_modules/playwright-core/browsers.json'" the moment
+  // src/lib/pdf-browser.ts's serverless branch (@sparticuz/chromium +
+  // playwright-core) even imports the package (this happens at import time,
+  // before any browser is launched — confirmed locally by hiding the file
+  // and reproducing the exact same error from a bare `require('playwright-core')`).
+  //
+  // IMPORTANT: the route key below is NOT a real glob against the live
+  // request URL — Next's docs sample `/products/[id]` verbatim as a key, but
+  // empirically (verified with real local production builds, inspecting the
+  // resulting .next/server/**/*.nft.json) that literal `[id]` bracket form
+  // never matches this dynamic route at all — `outputFileTracingIncludes`
+  // silently does nothing. `*` in that same position does. Do not "fix" this
+  // back to `[id]` bracket notation without re-verifying against a real
+  // build's .nft.json — it looks more idiomatic but is actually broken.
   outputFileTracingIncludes: {
-    '/api/invoices/[id]/pdf': ['./node_modules/playwright-core/**/*', './node_modules/@sparticuz/chromium/**/*'],
+    '/api/invoices/*/pdf': [
+      './node_modules/playwright-core/**/*',
+      './node_modules/playwright-core/browsers.json',
+      './node_modules/@sparticuz/chromium/**/*',
+    ],
   },
 };
 
