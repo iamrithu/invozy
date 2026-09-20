@@ -19,16 +19,17 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: P
       include: { customer: true, items: { include: { product: { select: { packQty: true } } } } },
     });
     if (!invoice || invoice.companyId !== companyRow.id) notFound();
-    // Editing in place is only supported for DRAFT invoices — once one is
-    // SENT/PARTIALLY_PAID/PAID it's treated as issued (recordPayment /
+    // Editing in place is allowed any time up to (not including) PAID —
+    // once fully paid it's treated as settled/closed (recordPayment /
     // duplicateInvoice are the supported paths after that point). A stale
     // Edit link (opened before the status changed elsewhere) lands on the
     // real invoice instead of a dead end.
-    if (invoice.status !== 'DRAFT') redirect(`/invoices/${edit}`);
+    if (invoice.status === 'PAID') redirect(`/invoices/${edit}`);
 
     editInvoice = {
       id: invoice.id,
       number: invoice.number,
+      status: invoice.status,
       customer: invoice.customer,
       date: invoice.date.toISOString().slice(0, 10),
       due: invoice.due.toISOString().slice(0, 10),

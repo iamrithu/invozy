@@ -126,7 +126,7 @@ export function InvoicesClient({ initialData, initialStatus }: { initialData: { 
         <Input
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
-          placeholder="Search number or customer…"
+          placeholder="Search invoice #, customer, or shop name…"
           className="max-w-xs flex-shrink-0"
         />
         <div className="flex flex-1 gap-1 overflow-x-auto">
@@ -209,7 +209,7 @@ export function InvoicesClient({ initialData, initialStatus }: { initialData: { 
                           >
                             <Eye size={14} />
                           </Button>
-                          {inv.status === 'DRAFT' && (
+                          {inv.status !== 'PAID' && (
                             <Button
                               type="button"
                               size="icon"
@@ -360,7 +360,7 @@ function InvoiceDetail({
           <Button type="button" variant="outline" size="sm" onClick={onDeleteClick} className="border-red-soft text-red hover:bg-red-soft">
             <Trash2 size={12} /> Delete
           </Button>
-          {invoice.status === 'DRAFT' && (
+          {invoice.status !== 'PAID' && (
             <Button asChild variant="outline" size="sm">
               <Link href={`/invoices/new?edit=${invoice.id}`}>
                 <Pencil size={12} /> Edit
@@ -420,7 +420,7 @@ function PaymentForm({
         <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="font-mono" />
       </div>
       <Button type="submit" disabled={recordPayment.isPending}>
-        {recordPayment.isPending ? 'Saving…' : 'Record'}
+        {recordPayment.isPending ? 'Saving…' : 'Received'}
       </Button>
       <Button type="button" variant="outline" onClick={onCancel}>
         Cancel

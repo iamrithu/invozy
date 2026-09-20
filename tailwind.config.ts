@@ -77,18 +77,19 @@ const config: Config = {
         sans: ['var(--font-plex-sans)', 'system-ui', 'sans-serif'],
         mono: ['var(--font-plex-mono)', 'ui-monospace', 'monospace'],
       },
-      // Boxy with a hint of softness — every corner in the app is a fixed
-      // 2px, not a hard 0px. `rounded-full` circles/pills throughout were
-      // already replaced with sm2 (see button.tsx, badge.tsx, switch.tsx,
-      // etc.), so setting this one scale is enough to apply it everywhere.
+      // Boxy with a standard "md" corner (Tailwind's own rounded-md value)
+      // everywhere, not the earlier hard 0px / bare 2px. `rounded-full`
+      // circles/pills throughout were already replaced with sm2 (see
+      // button.tsx, badge.tsx, switch.tsx, etc.), so setting this one scale
+      // is enough to apply it app-wide.
       borderRadius: {
-        xl2: '2px',
-        lg2: '2px',
-        md2: '2px',
-        sm2: '2px',
-        lg: '2px',
-        md: '2px',
-        sm: '2px',
+        xl2: '6px',
+        lg2: '6px',
+        md2: '6px',
+        sm2: '6px',
+        lg: '6px',
+        md: '6px',
+        sm: '6px',
       },
       boxShadow: {
         card: '0 1px 2px rgba(28,28,28,.06), 0 1px 6px rgba(28,28,28,.05)',

@@ -157,7 +157,17 @@ export function CommandPalette({
               <div className="px-2.5 pb-1 pt-2.5 text-[10.5px] font-extrabold uppercase tracking-wide text-ink-faint">Customers</div>
               {matchedCustomers.map((c: any) => {
                 const idx = rows.findIndex((r) => r.type === 'customer' && r.item.id === c.id);
-                return <PaletteRow key={c.id} icon={<Users size={15} />} name={c.name} hint={c.state} active={idx === activeIndex} onClick={() => runRow(rows[idx])} onHover={() => setActiveIndex(idx)} />;
+                return (
+                  <PaletteRow
+                    key={c.id}
+                    icon={<Users size={15} />}
+                    name={c.shopName ? `${c.shopName} · ${c.name}` : c.name}
+                    hint={c.state}
+                    active={idx === activeIndex}
+                    onClick={() => runRow(rows[idx])}
+                    onHover={() => setActiveIndex(idx)}
+                  />
+                );
               })}
             </>
           )}
@@ -166,7 +176,17 @@ export function CommandPalette({
               <div className="px-2.5 pb-1 pt-2.5 text-[10.5px] font-extrabold uppercase tracking-wide text-ink-faint">Invoices</div>
               {matchedInvoices.map((inv: any) => {
                 const idx = rows.findIndex((r) => r.type === 'invoice' && r.item.id === inv.id);
-                return <PaletteRow key={inv.id} icon={<Receipt size={15} />} name={inv.number} hint={inv.status} active={idx === activeIndex} onClick={() => runRow(rows[idx])} onHover={() => setActiveIndex(idx)} />;
+                return (
+                  <PaletteRow
+                    key={inv.id}
+                    icon={<Receipt size={15} />}
+                    name={inv.customer ? `${inv.number} · ${inv.customer.shopName || inv.customer.name}` : inv.number}
+                    hint={inv.status}
+                    active={idx === activeIndex}
+                    onClick={() => runRow(rows[idx])}
+                    onHover={() => setActiveIndex(idx)}
+                  />
+                );
               })}
             </>
           )}

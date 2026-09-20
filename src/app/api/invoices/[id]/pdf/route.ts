@@ -4,6 +4,13 @@ import { prisma } from '@/lib/prisma';
 import { getSharedBrowser } from '@/lib/pdf-browser';
 
 export const dynamic = 'force-dynamic';
+// Launching @sparticuz/chromium cold (extracting its bundled binary) plus a
+// full page render/networkidle wait routinely takes longer than a
+// serverless function's default duration — Vercel's default is 15s on Pro
+// (10s on Hobby, which cannot be raised past this at all), well under what
+// a cold start needs. See vercel.json for the matching memory bump; chromium
+// is memory-hungry enough that the default 1024MB can also cause failures.
+export const maxDuration = 60;
 
 /**
  * Real, one-click PDF download (as opposed to PrintButton's window.print(),

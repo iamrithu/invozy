@@ -113,7 +113,7 @@ export default async function InvoiceDetailPage({ params, searchParams }: { para
         </Link>
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={invoice.status} overdue={invoice.status !== 'PAID' && invoice.due < new Date()} />
-          {invoice.status === 'DRAFT' && (
+          {invoice.status !== 'PAID' && (
             <Button asChild variant="outline" size="sm">
               <Link href={`/invoices/new?edit=${invoice.id}`}>
                 <Pencil size={13} /> Edit

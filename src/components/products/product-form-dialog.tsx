@@ -13,7 +13,7 @@ import { useCreateProduct, useUpdateProduct, useDeleteProduct, useToggleProductA
 import { CategoryCombobox } from '@/components/products/category-combobox';
 import { ProductImagesField, type PendingImages } from '@/components/products/product-images-field';
 
-const UNITS = ['Piece', 'kg', 'bag', 'box', 'block', 'slab'];
+const UNITS = ['box', 'Piece', 'kg', 'bag', 'block', 'slab'];
 
 type PriceTier = { id?: string; unit: string; price: string | number; approxQty: string | number | null };
 
@@ -60,7 +60,7 @@ function buildInitialTiers(product?: Product, prefill?: { name?: string; unit?: 
   if (product) {
     return [{ unit: product.unit, price: String(product.price), approxQty: product.packQty ? String(product.packQty) : '' }];
   }
-  return [{ unit: prefill?.unit ?? 'kg', price: prefill?.price ?? '', approxQty: '' }];
+  return [{ unit: prefill?.unit ?? 'box', price: prefill?.price ?? '', approxQty: '' }];
 }
 
 /** Consistent section header used throughout the form — icon + title, plus
@@ -110,7 +110,7 @@ export function ProductFormDialog({
 
   function resetForCreate() {
     setCategory('');
-    setTiers([{ unit: 'kg', price: '', approxQty: '' }]);
+    setTiers([{ unit: 'box', price: '', approxQty: '' }]);
     setImages({ existing: [], files: [] });
   }
 
@@ -118,7 +118,7 @@ export function ProductFormDialog({
     setTiers((prev) => prev.map((t, idx) => (idx === i ? { ...t, ...patch } : t)));
   }
   function addTier() {
-    setTiers((prev) => [...prev, { unit: 'kg', price: '', approxQty: '' }]);
+    setTiers((prev) => [...prev, { unit: 'box', price: '', approxQty: '' }]);
   }
   function removeTier(i: number) {
     setTiers((prev) => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));

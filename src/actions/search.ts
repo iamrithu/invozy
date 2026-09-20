@@ -17,12 +17,24 @@ export async function globalSearch(term: string) {
       orderBy: { name: 'asc' },
     }),
     prisma.customer.findMany({
-      where: { companyId: company.id, guest: false, name: { contains: q, mode: 'insensitive' } },
+      where: {
+        companyId: company.id,
+        guest: false,
+        OR: [{ name: { contains: q, mode: 'insensitive' } }, { shopName: { contains: q, mode: 'insensitive' } }],
+      },
       take: 5,
       orderBy: { name: 'asc' },
     }),
     prisma.invoice.findMany({
-      where: { companyId: company.id, number: { contains: q, mode: 'insensitive' } },
+      where: {
+        companyId: company.id,
+        OR: [
+          { number: { contains: q, mode: 'insensitive' } },
+          { customer: { name: { contains: q, mode: 'insensitive' } } },
+          { customer: { shopName: { contains: q, mode: 'insensitive' } } },
+        ],
+      },
+      include: { customer: { select: { name: true, shopName: true } } },
       take: 5,
       orderBy: { date: 'desc' },
     }),

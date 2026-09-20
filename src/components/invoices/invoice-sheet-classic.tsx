@@ -338,21 +338,29 @@ export function InvoiceSheetClassic(props: {
           <div key={i} className={`invoice-page flex flex-col ${i > 0 ? 'mt-6 print:mt-0' : ''} ${!isLast ? 'print:break-after-page' : ''}`}>
             {/* print:min-h anchors this box to (a safety-margined) full page
                 height so the print:flex-1 spacer below has real slack to
-                grow into — pushing the closing block (or the "Continued…"
-                line) down to sit flush against the bottom of the page
-                instead of floating right under the items table with a big
-                blank gap under it. Safe to do now in a way it wasn't
-                earlier in this file's history (see the pagination comment
-                above): back then the page budgets themselves were
-                miscalibrated, so a min-height sized on a wrong guess turned
-                any underestimate into an entire extra blank page. Now that
-                every page's item count is chosen specifically so header +
-                items + closing already fit inside USABLE_MM with margin to
-                spare, stretching a spacer up to that same, already-proven
-                safe height doesn't change what fits — it just redistributes
-                slack that was always going to be there from the bottom of
-                the closing block to right above it instead. */}
-            <div className="invoice-page-inner flex flex-1 flex-col border border-ink print:min-h-[263mm]">
+                grow into — pushing the closing block down to sit flush
+                against the bottom of the page instead of floating right
+                under the items table with a big blank gap under it. Safe to
+                do now in a way it wasn't earlier in this file's history (see
+                the pagination comment above): back then the page budgets
+                themselves were miscalibrated, so a min-height sized on a
+                wrong guess turned any underestimate into an entire extra
+                blank page. Now that every page's item count is chosen
+                specifically so header + items + closing already fit inside
+                USABLE_MM with margin to spare, stretching a spacer up to
+                that same, already-proven safe height doesn't change what
+                fits — it just redistributes slack that was always going to
+                be there from the bottom of the closing block to right above
+                it instead.
+
+                Deliberately ONLY on the last page: a continuation page has
+                no closing block to anchor, just a one-line "Continued on
+                Page N" strip — stretching *that* page to full height too
+                dragged the strip down and left a large, clearly-visible
+                empty gap inside the bordered box above it (reported as
+                "too much space on page 1"). Left unstretched, the box just
+                ends where its content ends, like a normal short page. */}
+            <div className={`invoice-page-inner flex flex-1 flex-col border border-ink ${isLast ? 'print:min-h-[263mm]' : ''}`}>
               <ClassicHeader {...shared} />
               {/* The closing block (totals + amount-in-words + qty summary
                   + optional HSN table + bank/terms + notes + declaration +
@@ -366,7 +374,7 @@ export function InvoiceSheetClassic(props: {
                   earlier in that case. */}
               {(!isLast || isTrueSinglePage) && <ClassicBuyerRow {...shared} />}
               {pageLines.length > 0 && <ClassicItemsTable {...shared} lines={pageLines} startSerial={startSerial} />}
-              <div className="print:flex-1" />
+              {isLast && <div className="print:flex-1" />}
               {isLast ? (
                 <>
                   <ClassicClosing {...shared} />

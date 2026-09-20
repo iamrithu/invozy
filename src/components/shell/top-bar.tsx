@@ -91,7 +91,10 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
                   {customers.map((c: any) => (
                     <button key={c.id} onMouseDown={() => goTo('/customers')} className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-brand-light">
                       <Users size={14} className="flex-shrink-0 text-brand" />
-                      <span className="flex-1 truncate text-[12.5px] font-bold text-ink">{c.name}</span>
+                      <span className="min-w-0 flex-1 truncate text-[12.5px] font-bold text-ink">
+                        {c.shopName || c.name}
+                        {c.shopName && <span className="ml-1.5 font-normal text-ink-faint">{c.name}</span>}
+                      </span>
                       <span className="flex-shrink-0 text-[11px] text-ink-faint">{c.state}</span>
                     </button>
                   ))}
@@ -103,7 +106,10 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
                   {invoices.map((inv: any) => (
                     <button key={inv.id} onMouseDown={() => goTo(`/invoices/${inv.id}`)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-brand-light">
                       <Receipt size={14} className="flex-shrink-0 text-brand" />
-                      <span className="flex-1 truncate text-[12.5px] font-bold text-ink">{inv.number}</span>
+                      <span className="min-w-0 flex-1 truncate text-[12.5px] font-bold text-ink">
+                        {inv.number}
+                        {inv.customer && <span className="ml-1.5 font-normal text-ink-faint">{inv.customer.shopName || inv.customer.name}</span>}
+                      </span>
                       <span className="flex-shrink-0 text-[11px] text-ink-faint">{inv.status}</span>
                     </button>
                   ))}

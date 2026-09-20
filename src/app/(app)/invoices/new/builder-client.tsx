@@ -54,6 +54,7 @@ import { InvoiceCompletenessChecklist } from '@/components/invoices/invoice-comp
 import { ResponsiveSheetScale } from '@/components/invoices/responsive-sheet-scale';
 import { hashColor, initials } from '@/lib/avatar';
 import { PAPER_STYLE } from '@/lib/paper-theme';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 type PriceTier = { id?: string; unit: string; price: string | number; approxQty: string | number | null };
 type Product = {
@@ -157,13 +158,16 @@ const CATEGORY_ICON: Record<string, React.ComponentType<{ size?: number }>> = {
 // refresh/close of this one tab.
 const DRAFT_KEY = 'invozy_invoice_draft';
 
-// Pre-fill shape for editing an existing DRAFT invoice in place (see
-// src/app/(app)/invoices/new/page.tsx's `?edit=<id>` handling) — everything
-// the builder needs to resume it as if it were being built for the first
-// time, plus the id/number so save() knows to update rather than create.
+// Pre-fill shape for editing an existing invoice in place, any time up to
+// (not including) PAID (see src/app/(app)/invoices/new/page.tsx's
+// `?edit=<id>` handling) — everything the builder needs to resume it as if
+// it were being built for the first time, plus the id/number/status so
+// save() knows to update rather than create and the header badge reflects
+// the invoice's real current state rather than always saying "Draft".
 type EditInvoice = {
   id: string;
   number: string;
+  status: 'DRAFT' | 'SENT' | 'PARTIALLY_PAID' | 'PAID';
   customer: Customer;
   date: string;
   due: string;
@@ -633,7 +637,7 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
             <ArrowLeft size={13} /> Back
           </Button>
           <span className="font-mono text-[13px] font-semibold text-ink-soft">{editInvoice ? `Editing ${editInvoice.number}` : 'New invoice'}</span>
-          <span className="rounded-sm2 bg-surface-alt px-2.5 py-1 text-[11px] font-bold text-ink-soft">Draft</span>
+          {editInvoice ? <StatusBadge status={editInvoice.status} /> : <span className="rounded-sm2 bg-surface-alt px-2.5 py-1 text-[11px] font-bold text-ink-soft">Draft</span>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1.5 rounded-sm2 border border-line bg-surface px-3 py-1.5 text-[11.5px] text-ink-soft">

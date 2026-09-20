@@ -151,13 +151,12 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
 }
 
 /**
- * Full edit of an existing DRAFT invoice — same validation/totals/credit-limit
- * flow as createInvoice, but updates the invoice row + replaces its items
- * in place instead of claiming a new number. Only DRAFT invoices may be
- * edited this way: once an invoice is SENT/PARTIALLY_PAID/PAID it's treated
- * as issued, matching the same real-world constraint most billing software
- * enforces (recordPayment/duplicateInvoice are the supported paths after
- * that point).
+ * Full edit of an existing invoice — same validation/totals/credit-limit flow
+ * as createInvoice, but updates the invoice row + replaces its items in
+ * place instead of claiming a new number. Editable any time up to (not
+ * including) PAID — once fully paid it's treated as settled/closed, the
+ * same real-world constraint most billing software enforces past that
+ * point (recordPayment/duplicateInvoice are the supported paths after).
  */
 export async function updateInvoice(invoiceId: string, input: InvoiceInput): Promise<InvoiceActionResult> {
   const parsed = InvoiceInputSchema.safeParse(input);
@@ -168,12 +167,16 @@ export async function updateInvoice(invoiceId: string, input: InvoiceInput): Pro
 
   const [company, existing, customer] = await Promise.all([
     getCompany(),
-    prisma.invoice.findUnique({ where: { id: invoiceId } }),
+    prisma.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true } }),
     prisma.customer.findUnique({ where: { id: data.customerId } }),
   ]);
   if (!existing || existing.companyId !== company.id) return { error: 'Invoice not found' };
-  if (existing.status !== 'DRAFT') return { error: 'Only draft invoices can be edited' };
+  if (existing.status === 'PAID') return { error: 'This invoice is already paid in full and can no longer be edited' };
   if (!customer) return { error: 'Customer not found' };
+  // Real money already recorded (e.g. a PARTIALLY_PAID invoice) — markPaid
+  // below must only top up the remaining balance, never re-insert the full
+  // total as a second payment on top of what's already on file.
+  const alreadyPaid = existing.payments.reduce((s, p) => s + Number(p.amount), 0);
 
   const totals = computeTotals(
     data.items.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount })),
@@ -221,6 +224,17 @@ export async function updateInvoice(invoiceId: string, input: InvoiceInput): Pro
     }
   }
 
+  // Only top up the remaining balance — inserting the full total again would
+  // double-count whatever's already been recorded against this invoice
+  // (e.g. a PARTIALLY_PAID one). And the resulting status is *derived*, not
+  // just taken from which Save button was clicked: real money already on
+  // file must promote a plain "Save as draft"/"Save & mark as sent" click
+  // to at least PARTIALLY_PAID rather than silently erasing that a partial
+  // payment exists — deriveStatus (below) already encodes exactly that
+  // precedence, same as recordPayment's own status transitions.
+  const topUp = data.markPaid ? Math.max(totals.total - alreadyPaid, 0) : 0;
+  const newStatus = deriveStatus(totals.total, alreadyPaid + topUp, data.markSent || data.markPaid);
+
   const updated = await prisma.$transaction(async (tx) => {
     await tx.invoiceItem.deleteMany({ where: { invoiceId } });
     return tx.invoice.update({
@@ -229,7 +243,7 @@ export async function updateInvoice(invoiceId: string, input: InvoiceInput): Pro
         customerId: customer.id,
         date: new Date(data.date),
         due: new Date(data.due),
-        status: data.markPaid ? 'PAID' : data.markSent ? 'SENT' : 'DRAFT',
+        status: newStatus,
         overallDiscountType: data.overallDiscountType,
         overallDiscountValue: data.overallDiscountValue,
         notes: data.notes?.trim() || null,
@@ -248,7 +262,7 @@ export async function updateInvoice(invoiceId: string, input: InvoiceInput): Pro
             altQtyPerUnit: l.altQtyPerUnit,
           })),
         },
-        ...(data.markPaid ? { payments: { create: { amount: totals.total, date: new Date(data.date), mode: 'Cash' } } } : {}),
+        ...(topUp > 0.004 ? { payments: { create: { amount: topUp, date: new Date(data.date), mode: 'Cash' } } } : {}),
       },
     });
   });
@@ -291,7 +305,13 @@ export async function getInvoiceStatusCounts(search?: string) {
     where: {
       companyId: company.id,
       ...(search
-        ? { OR: [{ number: { contains: search, mode: 'insensitive' as const } }, { customer: { name: { contains: search, mode: 'insensitive' as const } } }] }
+        ? {
+            OR: [
+              { number: { contains: search, mode: 'insensitive' as const } },
+              { customer: { name: { contains: search, mode: 'insensitive' as const } } },
+              { customer: { shopName: { contains: search, mode: 'insensitive' as const } } },
+            ],
+          }
         : {}),
     },
     select: { status: true, due: true },
@@ -320,7 +340,13 @@ export async function listInvoicesPage(opts?: { status?: string; search?: string
     companyId: company.id,
     ...(opts?.status && opts.status !== 'all' ? { status: opts.status as any } : {}),
     ...(opts?.search
-      ? { OR: [{ number: { contains: opts.search, mode: 'insensitive' as const } }, { customer: { name: { contains: opts.search, mode: 'insensitive' as const } } }] }
+      ? {
+          OR: [
+            { number: { contains: opts.search, mode: 'insensitive' as const } },
+            { customer: { name: { contains: opts.search, mode: 'insensitive' as const } } },
+            { customer: { shopName: { contains: opts.search, mode: 'insensitive' as const } } },
+          ],
+        }
       : {}),
   };
 

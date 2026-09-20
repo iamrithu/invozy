@@ -59,7 +59,7 @@
     --border: var(--line);
     --input: var(--line);
     --ring: var(--brand);
-    --radius: 2px;
+    --radius: 6px;
   }
 
   .dark {
