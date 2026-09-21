@@ -52,14 +52,33 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // no separate service-account/token scheme needed.
     if (cookies.length) await context.addCookies(cookies);
     const page = await context.newPage();
+    // Set *before* navigating, not after: the invoice sheet's self-
+    // measuring pagination (see print-pagination.tsx) measures real
+    // section heights on mount, and those sections only exist in the
+    // layout at all once print media is active (the print-only copy is
+    // collapsed to zero height outside of it — see the `.invoice-print`
+    // wrapper in invoices/[id]/page.tsx). Emulating print media only
+    // after the page has already loaded and measured would have it
+    // measure everything as zero and silently fall back to "no
+    // pagination".
+    await page.emulateMedia({ media: 'print' });
     // `pdfRender=1` tells the detail page to skip InlinePdfPreview (see
     // src/app/(app)/invoices/[id]/page.tsx) — that component fetches this
     // very endpoint to render inline, so without this guard rendering the
     // page here would recursively re-trigger this same route from inside
     // itself (each nested render spawning another browser context) until
     // requests time out and the shared browser is left wedged.
-    await page.goto(`${origin}/invoices/${id}?pdfRender=1`, { waitUntil: 'networkidle' });
-    await page.emulateMedia({ media: 'print' });
+    await page.goto(`${origin}/invoices/${id}?pdfRender=1`, { waitUntil: 'networkidle', timeout: 45_000 });
+    // The invoice sheet renders once, measures its own real section
+    // heights, then re-renders with the corrected page split — this waits
+    // for that corrected layout to commit (see the `data-pdf-ready`
+    // marker in invoice-sheet.tsx / invoice-sheet-classic.tsx) rather than
+    // capturing whatever happened to be on screen right after navigation.
+    // `state: 'attached'` — the marker is deliberately `display:none` (see
+    // its render site), so the default `state: 'visible'` would never
+    // resolve; presence in the DOM is all that signals the corrected
+    // layout has committed.
+    await page.waitForSelector('[data-pdf-ready="true"]', { state: 'attached', timeout: 15_000 });
     const pdf = await page.pdf({
       format: 'A4',
       printBackground: true,
@@ -71,8 +90,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       displayHeaderFooter: true,
       headerTemplate: '<span></span>',
       footerTemplate: `
-        <div style="width: 100%; font-size: 8.5px; font-family: 'IBM Plex Sans', system-ui, sans-serif; color: #888; text-align: center; padding: 0 12mm;">
-          Page <span class="pageNumber"></span> of <span class="totalPages"></span>
+        <div style="width: 100%; display: flex; justify-content: space-between; font-size: 8.5px; font-family: 'IBM Plex Sans', system-ui, sans-serif; color: #000; padding: 0 12mm;">
+          <span>This is a computer generated invoice.</span>
+          <span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>
         </div>
       `,
       margin: { top: '14mm', bottom: '14mm', left: '12mm', right: '12mm' },
@@ -93,6 +113,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         'Content-Length': String(pdf.length),
       },
     });
+  } catch (e) {
+    console.error(`PDF generation failed for invoice ${id}`, e);
+    return NextResponse.json({ error: 'PDF generation failed' }, { status: 500 });
   } finally {
     await context.close();
   }

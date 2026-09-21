@@ -20,6 +20,12 @@ export function ResponsiveSheetScale({ children }: { children: React.ReactNode }
   const innerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const [height, setHeight] = useState<number | undefined>(undefined);
+  // Below DESIGN_WIDTH the scaled box already exactly fills the container
+  // (scale = containerWidth / DESIGN_WIDTH by construction), so this is 0
+  // there — only a wide container, where scale is capped at 1 and the
+  // un-scaled box is narrower than what's available, needs an offset to
+  // center it instead of sitting flush against the container's left edge.
+  const [offset, setOffset] = useState(0);
 
   useEffect(() => {
     const outer = outerRef.current;
@@ -31,6 +37,7 @@ export function ResponsiveSheetScale({ children }: { children: React.ReactNode }
       const nextScale = containerWidth > 0 ? Math.min(1, containerWidth / DESIGN_WIDTH) : 1;
       setScale(nextScale);
       setHeight(inner.scrollHeight * nextScale);
+      setOffset(Math.max(0, (containerWidth - DESIGN_WIDTH * nextScale) / 2));
     };
 
     const observer = new ResizeObserver(update);
@@ -42,7 +49,7 @@ export function ResponsiveSheetScale({ children }: { children: React.ReactNode }
 
   return (
     <div ref={outerRef} className="w-full overflow-hidden" style={{ height }}>
-      <div ref={innerRef} style={{ width: DESIGN_WIDTH, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+      <div ref={innerRef} style={{ width: DESIGN_WIDTH, marginLeft: offset, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
         {children}
       </div>
     </div>

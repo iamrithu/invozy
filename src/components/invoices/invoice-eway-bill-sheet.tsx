@@ -44,7 +44,7 @@ export function InvoiceEwayBillSheet({
   irn?: string | null;
   qrImageDataUrl?: string | null;
   fromCompany: { name: string; gstin?: string | null; address?: string | null; state: string; pincode?: string | null; district?: string | null };
-  toCustomer: { name: string; gstin?: string | null; address?: string | null; state: string; pincode?: string | null };
+  toCustomer: { name: string; shopName?: string | null; gstin?: string | null; address?: string | null; state: string; pincode?: string | null };
   taxableValue: number;
   cgst: number;
   sgst: number;
@@ -105,7 +105,7 @@ export function InvoiceEwayBillSheet({
             </td>
             <td className="border border-ink p-3 align-top">
               <div className="mb-1.5 font-bold">To</div>
-              <div className="font-bold text-ink">{toCustomer.name}</div>
+              <div className="font-bold text-ink">{toCustomer.shopName || toCustomer.name}</div>
               {toCustomer.gstin && <div className="font-mono font-tabular">GSTIN : {toCustomer.gstin}</div>}
               <div>{toCustomer.state}</div>
             </td>

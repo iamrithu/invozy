@@ -74,8 +74,16 @@ const config: Config = {
         // for those). `mono` now has a real monospace face — every
         // `font-mono`/`.font-tabular` use (amounts, GSTINs, invoice
         // numbers) previously just re-rendered the sans font.
-        sans: ['var(--font-plex-sans)', 'system-ui', 'sans-serif'],
-        mono: ['var(--font-plex-mono)', 'ui-monospace', 'monospace'],
+        //
+        // Every invoice prints the ₹ symbol on every line item — a wider
+        // fallback chain (not just the bare 'system-ui'/'sans-serif'
+        // generics) gives the browser more chances to find a real ₹ glyph
+        // if IBM Plex Sans's self-hosted font file ever lacks one for a
+        // given weight, particularly inside the PDF route's serverless
+        // Chromium, which ships its own minimal, self-contained font
+        // bundle rather than a full desktop font set.
+        sans: ['var(--font-plex-sans)', 'system-ui', 'Noto Sans', 'Helvetica Neue', 'Arial', 'sans-serif'],
+        mono: ['var(--font-plex-mono)', 'ui-monospace', 'Noto Sans Mono', 'Consolas', 'monospace'],
       },
       // Boxy with a standard "md" corner (Tailwind's own rounded-md value)
       // everywhere, not the earlier hard 0px / bare 2px. `rounded-full`

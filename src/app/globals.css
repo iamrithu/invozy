@@ -225,14 +225,36 @@ main:has(> .invoice-builder-root) {
   .eway-page {
     break-before: page;
   }
-  /* Screen palette (text-ink-soft/-faint, text-brand, etc.) is tuned for a
-     backlit display and prints/exports to PDF far too light to read once on
-     paper or toner — thermal/laser printers and PDF viewers don't render
-     those mid-gray tones with anywhere near their on-screen contrast. Force
-     every text node in the printed invoice to solid black regardless of its
-     screen color class; only backgrounds/borders keep their own colors. */
-  .invoice-print,
-  .invoice-print * {
-    color: #000 !important;
-  }
+}
+
+/* Screen palette (text-ink-soft/-faint, text-brand, etc.) is tuned for a
+   backlit display and prints/exports to PDF far too light to read once on
+   paper or toner — thermal/laser printers and PDF viewers don't render
+   those mid-gray tones with anywhere near their on-screen contrast. Force
+   every text node to solid black regardless of its screen color class; only
+   backgrounds/borders keep their own colors. Deliberately NOT scoped to
+   @media print: `.invoice-sheet-mono` also wraps the builder's live
+   right-column preview and the "Preview" dialog, so what shows on screen
+   already matches the PDF exactly instead of surprising the user with a
+   redder/grayer look on-screen than what actually prints — `.invoice-print`
+   itself keeps the same rule for the print-only source copy. */
+.invoice-print,
+.invoice-print *,
+.invoice-sheet-mono,
+.invoice-sheet-mono * {
+  color: #000 !important;
+}
+/* The rest of the app deliberately mixes IBM Plex Sans (prose) with IBM
+   Plex Mono (font-mono, used throughout for amounts/GSTIN/invoice numbers
+   so digits line up) — on an invoice sheet specifically (screen or print)
+   that reads as two unrelated typefaces on the same document instead of a
+   considered alignment choice. Collapse it to one family everywhere the
+   invoice itself renders; tabular alignment for numbers is kept via
+   font-variant-numeric instead of a second typeface. */
+.invoice-print,
+.invoice-print *,
+.invoice-sheet-mono,
+.invoice-sheet-mono * {
+  font-family: var(--font-plex-sans), 'IBM Plex Sans', system-ui, sans-serif !important;
+  font-variant-numeric: tabular-nums;
 }

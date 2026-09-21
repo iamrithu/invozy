@@ -33,6 +33,13 @@ model Company {
   ifsc               String?
   branch             String?
   upi                String?
+  // Two independent opt-ins for the payment block near the Authorised
+  // Signatory section on the invoice PDF — a company can show neither, just
+  // one, or both together: a scannable UPI QR generated from `upi` (see
+  // src/lib/qr.ts's upiQrDataUrl), and/or this company's own `phone` printed
+  // as a GPay-reachable number.
+  showUpiQr          Boolean         @default(false)
+  showGpayNumber     Boolean         @default(false)
   cgstRate           Decimal         @default(9)
   sgstRate           Decimal         @default(9)
   igstRate           Decimal         @default(18)
@@ -55,6 +62,13 @@ model Company {
   // most businesses don't need this granularity on the printed invoice;
   // the calculation (computeHsnSummary in src/lib/gst.ts) stays available.
   pdfShowHsnSummary  Boolean         @default(false)
+  // Fallback HSN/SAC code used whenever a line item has neither its own nor
+  // its product's own HSN set — replaces src/lib/gst.ts's old hardcoded
+  // '21050000' constant with a per-company value, since not every business
+  // on this app sells edible ice. A product's own Product.hsn (or a line's
+  // own override) always wins over this; this only fills the gap when
+  // neither is set.
+  defaultHsn         String          @default("21050000")
   createdAt          DateTime        @default(now())
   // GST-compliance seller details — needed to render/generate a CLASSIC
   // (Tally-style) invoice and to populate SellerDtls in the e-Invoice/e-Way
@@ -220,6 +234,50 @@ model Invoice {
   // repeats in the buyer block since it's what the delivery crew needs to see.
   notes                String?
   deliveryInstructions String?
+  // Informal transport/delivery reference (who's driving, what vehicle) —
+  // printed in a box before Delivery Instructions on the CLASSIC template,
+  // enabled per invoice from the builder's Settings sheet. Deliberately its
+  // own fields, not a reuse of the e-Way Bill compliance columns below
+  // (vehicleNo/transporterName/etc.): those feed an actual NIC submission
+  // and have their own dedicated entry flow, while this is just informal
+  // print/reference text a business can fill in without generating a real
+  // e-Way Bill. Shown only when showTransportDetails is on AND at least one
+  // of the three fields is actually filled in — enabling it with nothing
+  // entered prints nothing rather than an empty box.
+  showTransportDetails Boolean       @default(false)
+  transportVehicleNo   String?
+  transportDriverName  String?
+  transportDriverPhone String?
+
+  // GST config + PDF section visibility, SNAPSHOTTED at create/update time
+  // from either Company's then-current defaults or a per-invoice override
+  // entered via the builder's Settings sheet — NEVER re-read from Company
+  // after that. This is what makes an already-issued invoice's totals and
+  // printed sections immune to a later change in Company.cgstRate/
+  // cgstEnabled/pdfShowBankDetails/etc. Every invoice-facing computeTotals()
+  // call and every PDF section-visibility check should read these fields,
+  // never the live Company columns of the same name. Deliberately named
+  // without a "pdfShow" prefix (unlike Company.pdfShowBankDetails/
+  // pdfShowHsnSummary) so it's visually obvious in code which is the live
+  // company default vs. the frozen per-invoice snapshot. Pre-migration rows
+  // are backfilled from Company's values at migration time (see
+  // 20260921_add_invoice_gst_snapshot/migration.sql), which is only an
+  // approximation for any invoice whose company GST config changed since it
+  // was originally created — the true historical value was never recorded
+  // before this feature.
+  cgstRate             Decimal       @default(9)
+  sgstRate             Decimal       @default(9)
+  igstRate             Decimal       @default(18)
+  cgstEnabled          Boolean       @default(true)
+  sgstEnabled          Boolean       @default(true)
+  igstEnabled          Boolean       @default(true)
+  showBankDetails      Boolean       @default(true)
+  showHsnSummary       Boolean       @default(false)
+  // Same snapshot treatment as the fields above, for the UPI QR / GPay
+  // number shown near the Authorised Signatory block — see Company.
+  // showUpiQr/showGpayNumber for what each one renders.
+  showUpiQr            Boolean       @default(false)
+  showGpayNumber       Boolean       @default(false)
   items                InvoiceItem[]
   payments             Payment[]
   createdAt            DateTime      @default(now())

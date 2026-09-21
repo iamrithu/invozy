@@ -16,6 +16,7 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useCustomersPage, useCustomerStates, useCustomerLedger, useDeleteCustomer } from '@/hooks/use-customers';
 import { CustomerFormDialog } from '@/components/customers/customer-form-dialog';
 import { initials, hashColor } from '@/lib/avatar';
+import { customerDisplayName } from '@/lib/customer';
 import type { CustomerSort } from '@/actions/customers';
 
 const PAGE_SIZE = 10;
@@ -136,7 +137,7 @@ export function CustomersClient({ initialData }: { initialData: { items: Custome
             <TableHeader>
               <TableRow>
                 <TableHead>Customer</TableHead>
-                <TableHead>Shop / State</TableHead>
+                <TableHead>State</TableHead>
                 <TableHead>GSTIN</TableHead>
                 <TableHead>Phone</TableHead>
                 <TableHead>Terms</TableHead>
@@ -150,19 +151,20 @@ export function CustomersClient({ initialData }: { initialData: { items: Custome
                     <div className="flex items-center gap-2.5">
                       <span
                         className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-sm2 text-[11px] font-extrabold text-white"
-                        style={{ background: hashColor(c.name) }}
+                        style={{ background: hashColor(customerDisplayName(c)) }}
                       >
-                        {initials(c.name)}
+                        {initials(customerDisplayName(c))}
                       </span>
                       <span className="min-w-0">
                         <div className="truncate text-[13px] font-bold text-ink">
-                          {c.name}
+                          {customerDisplayName(c)}
                           {c.guest && <span className="ml-1.5 rounded-sm2 bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold text-ink-faint">Guest</span>}
                         </div>
+                        {c.shopName && <div className="truncate text-[10.5px] text-ink-faint">{c.name}</div>}
                       </span>
                     </div>
                   </TableCell>
-                  <TableCell className="text-ink-soft">{c.shopName ? `${c.shopName} · ${c.state}` : c.state}</TableCell>
+                  <TableCell className="text-ink-soft">{c.state}</TableCell>
                   <TableCell className="font-mono text-ink-soft">{c.gstin ?? '—'}</TableCell>
                   <TableCell className="text-ink-soft">{c.phone ?? '—'}</TableCell>
                   <TableCell className="text-ink-soft">{c.terms}</TableCell>
@@ -242,7 +244,7 @@ export function CustomersClient({ initialData }: { initialData: { items: Custome
         title="Remove customer"
         description={
           <>
-            Remove <b className="font-bold text-ink">{deleteTarget?.name}</b>? This can&apos;t be undone.
+            Remove <b className="font-bold text-ink">{deleteTarget ? customerDisplayName(deleteTarget) : ''}</b>? This can&apos;t be undone.
           </>
         }
         confirmLabel="Delete customer"
@@ -264,10 +266,10 @@ function CustomerDetail({ customer, onEdit, onDeleteClick }: { customer: Custome
         </SheetIcon>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 text-[15px] font-extrabold text-ink">
-            {customer.name}
+            {customerDisplayName(customer)}
             {customer.guest && <span className="rounded-sm2 bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold text-ink-faint">Guest</span>}
           </div>
-          <div className="truncate text-[11.5px] text-ink-faint">{customer.shopName ?? 'Customer details'}</div>
+          <div className="truncate text-[11.5px] text-ink-faint">{customer.shopName ? customer.name : 'Customer details'}</div>
         </div>
       </SheetHeader>
 
@@ -275,9 +277,9 @@ function CustomerDetail({ customer, onEdit, onDeleteClick }: { customer: Custome
         <div className="mb-4 flex items-center gap-3 border-b border-line pb-4">
           <span
             className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-sm2 text-[14px] font-extrabold text-white"
-            style={{ background: hashColor(customer.name) }}
+            style={{ background: hashColor(customerDisplayName(customer)) }}
           >
-            {initials(customer.name)}
+            {initials(customerDisplayName(customer))}
           </span>
           <div>
             <p className="text-[12px] text-ink-soft">

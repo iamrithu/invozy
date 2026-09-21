@@ -10,7 +10,7 @@ import { PAPER_STYLE } from '@/lib/paper-theme';
 import { InvoiceSheet } from '@/components/invoices/invoice-sheet';
 import { InvoiceSheetClassic } from '@/components/invoices/invoice-sheet-classic';
 import { InvoiceEwayBillSheet } from '@/components/invoices/invoice-eway-bill-sheet';
-import { qrDataUrl } from '@/lib/qr';
+import { qrDataUrl, upiQrDataUrl } from '@/lib/qr';
 import { PrintButton } from './print-button';
 import { DownloadPdfButton } from '@/components/invoices/download-pdf-button';
 import { GenerateEinvoiceButton } from './generate-einvoice-button';
@@ -60,19 +60,49 @@ export default async function InvoiceDetailPage({ params, searchParams }: { para
     altQtyPerUnit: it.altQtyPerUnit ? Number(it.altQtyPerUnit) : null,
   }));
 
+  // Plain, serializable subset of the Prisma Customer row — InvoiceSheet/
+  // InvoiceSheetClassic are Client Components (they measure real section
+  // heights for pagination, which needs a real browser), so every prop
+  // reaching them from this Server Component has to be a plain
+  // serializable value. `invoice.customer` as-is carries a Prisma
+  // `Decimal` (creditLimit) which isn't — Next.js rejects that at the
+  // server/client boundary with "Only plain objects can be passed to
+  // Client Components", so only the fields these components actually use
+  // are picked here.
+  const customer = {
+    name: invoice.customer.name,
+    shopName: invoice.customer.shopName,
+    address: invoice.customer.address,
+    state: invoice.customer.state,
+    gstin: invoice.customer.gstin,
+    fssaiNo: invoice.customer.fssaiNo,
+    pincode: invoice.customer.pincode,
+    contact: invoice.customer.contact,
+    phone: invoice.customer.phone,
+    altPhone: invoice.customer.altPhone,
+  };
+
   const isClassic = company.invoiceTemplate === 'CLASSIC';
   const qrImageDataUrl = isClassic && invoice.signedQrCode ? await qrDataUrl(invoice.signedQrCode) : null;
+  // Reads the invoice's own frozen snapshot, not the live Company toggle —
+  // see schema.prisma's comment on Invoice.showUpiQr/showGpayNumber.
+  const upiQrImageDataUrl = invoice.showUpiQr ? await upiQrDataUrl(company.upi, company.name) : null;
+  const gpayNumber = invoice.showGpayNumber ? company.phone || company.altPhone : null;
 
+  // Reads the invoice's own frozen snapshot, never live Company data — see
+  // schema.prisma's comment on Invoice.cgstRate/etc. for why: this is what
+  // keeps an already-issued invoice's totals immune to a later change in
+  // Company GST settings.
   const totals = computeTotals(
     lines.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount })),
     { type: invoice.overallDiscountType, value: Number(invoice.overallDiscountValue) },
     {
-      cgstRate: Number(company.cgstRate),
-      sgstRate: Number(company.sgstRate),
-      igstRate: Number(company.igstRate),
-      cgstEnabled: company.cgstEnabled,
-      sgstEnabled: company.sgstEnabled,
-      igstEnabled: company.igstEnabled,
+      cgstRate: Number(invoice.cgstRate),
+      sgstRate: Number(invoice.sgstRate),
+      igstRate: Number(invoice.igstRate),
+      cgstEnabled: invoice.cgstEnabled,
+      sgstEnabled: invoice.sgstEnabled,
+      igstEnabled: invoice.igstEnabled,
     },
     company.state,
     invoice.customer.state
@@ -94,7 +124,7 @@ export default async function InvoiceDetailPage({ params, searchParams }: { para
     }
     for (const [hsn, g] of groups) hsnGoods.push({ hsn, description: Array.from(g.names).join(' & '), qty: `${g.qty} ${g.unit}`, taxableValue: g.taxableValue });
   }
-  const gstRateLabel = totals.useIgst ? `${Number(company.igstRate)}%` : `${Number(company.cgstRate)}+${Number(company.sgstRate)}`;
+  const gstRateLabel = totals.useIgst ? `${Number(invoice.igstRate)}%` : `${Number(invoice.cgstRate)}+${Number(invoice.sgstRate)}`;
 
   const checklistItems = [
     { label: 'Company GSTIN', done: !!company.gstin, href: '/company' },
@@ -167,16 +197,25 @@ export default async function InvoiceDetailPage({ params, searchParams }: { para
 
       {!isPdfRender && <InlinePdfPreview invoiceId={invoice.id} />}
 
-      {/* Kept in the DOM (invisible on screen) purely so PrintButton's
-          window.print() has real content to print — see the `.invoice-print`
-          rules in globals.css, and the identical pattern in the invoice
-          builder's hidden print-only copy. */}
-      <div className="invoice-print hidden print:block mx-auto max-w-[760px]" style={PAPER_STYLE}>
-        <div className="h-[5px] rounded-t-lg2 bg-brand print:hidden" />
+      {/* Kept in the DOM purely so PrintButton's window.print() has real
+          content to print — see the `.invoice-print` rules in globals.css,
+          and the identical pattern in the invoice builder's hidden
+          print-only copy. Collapsed to zero height with clipped overflow
+          (not `display:none`) outside of print: a `display:none` ancestor
+          forces every descendant's layout to zero, which would make the
+          self-measuring pagination in InvoiceSheet/InvoiceSheetClassic
+          (see print-pagination.tsx) always read zero-height sections and
+          silently fall back to "everything fits on one page" — height-0 +
+          overflow-hidden keeps this invisible and footprint-free on the
+          normal page while still letting the browser compute real layout
+          for anything inside it. */}
+      <div className="h-0 overflow-hidden print:h-auto print:overflow-visible">
+        <div className="invoice-print mx-auto max-w-[760px]" style={PAPER_STYLE}>
+          <div className="h-[5px] rounded-t-lg2 bg-brand print:hidden" />
         {isClassic ? (
           <InvoiceSheetClassic
-            company={{ ...company, cgstRate: Number(company.cgstRate), sgstRate: Number(company.sgstRate), igstRate: Number(company.igstRate) }}
-            customer={invoice.customer}
+            company={{ ...company, cgstRate: Number(invoice.cgstRate), sgstRate: Number(invoice.sgstRate), igstRate: Number(invoice.igstRate), cgstEnabled: invoice.cgstEnabled, sgstEnabled: invoice.sgstEnabled, igstEnabled: invoice.igstEnabled, pdfShowBankDetails: invoice.showBankDetails, pdfShowHsnSummary: invoice.showHsnSummary }}
+            customer={customer}
             date={invoice.date.toISOString().slice(0, 10)}
             invoiceNumber={invoice.number}
             lines={lines}
@@ -202,12 +241,18 @@ export default async function InvoiceDetailPage({ params, searchParams }: { para
             amountPaid={amountPaid}
             notes={invoice.notes}
             deliveryInstructions={invoice.deliveryInstructions}
+            showTransportDetails={invoice.showTransportDetails}
+            transportVehicleNo={invoice.transportVehicleNo}
+            transportDriverName={invoice.transportDriverName}
+            transportDriverPhone={invoice.transportDriverPhone}
+            upiQrDataUrl={upiQrImageDataUrl}
+            gpayNumber={gpayNumber}
             editable={false}
           />
         ) : (
           <InvoiceSheet
-            company={{ ...company, cgstRate: Number(company.cgstRate), sgstRate: Number(company.sgstRate), igstRate: Number(company.igstRate) }}
-            customer={invoice.customer}
+            company={{ ...company, cgstRate: Number(invoice.cgstRate), sgstRate: Number(invoice.sgstRate), igstRate: Number(invoice.igstRate), cgstEnabled: invoice.cgstEnabled, sgstEnabled: invoice.sgstEnabled, igstEnabled: invoice.igstEnabled, pdfShowBankDetails: invoice.showBankDetails }}
+            customer={customer}
             date={invoice.date.toISOString().slice(0, 10)}
             due={invoice.due.toISOString().slice(0, 10)}
             invoiceNumber={invoice.number}
@@ -217,6 +262,8 @@ export default async function InvoiceDetailPage({ params, searchParams }: { para
             amountPaid={amountPaid}
             discountType={invoice.overallDiscountType}
             discountValue={Number(invoice.overallDiscountValue)}
+            upiQrDataUrl={upiQrImageDataUrl}
+            gpayNumber={gpayNumber}
             editable={false}
           />
         )}
@@ -239,7 +286,7 @@ export default async function InvoiceDetailPage({ params, searchParams }: { para
             irn={invoice.irn}
             qrImageDataUrl={qrImageDataUrl}
             fromCompany={{ name: company.name, gstin: company.gstin, address: company.address, state: company.state, pincode: company.pincode, district: company.district }}
-            toCustomer={{ name: invoice.customer.name, gstin: invoice.customer.gstin, address: invoice.customer.address, state: invoice.customer.state, pincode: invoice.customer.pincode }}
+            toCustomer={{ name: invoice.customer.name, shopName: invoice.customer.shopName, gstin: invoice.customer.gstin, address: invoice.customer.address, state: invoice.customer.state, pincode: invoice.customer.pincode }}
             taxableValue={totals.taxable}
             cgst={totals.cgst}
             sgst={totals.sgst}
@@ -251,6 +298,7 @@ export default async function InvoiceDetailPage({ params, searchParams }: { para
             hsnGoods={hsnGoods}
           />
         )}
+        </div>
       </div>
     </div>
   );

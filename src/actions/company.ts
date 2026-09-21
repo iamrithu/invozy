@@ -49,6 +49,12 @@ const CompanySchema = z.object({
   currency: z.string().min(1).optional(),
   pdfShowBankDetails: z.coerce.boolean().optional(),
   pdfShowHsnSummary: z.coerce.boolean().optional(),
+  // See schema.prisma's comment on Company.defaultHsn.
+  defaultHsn: z.string().trim().min(1, 'Required').optional(),
+  // See schema.prisma's comment on Company.showUpiQr/showGpayNumber —
+  // independent toggles, not mutually exclusive.
+  showUpiQr: z.coerce.boolean().optional(),
+  showGpayNumber: z.coerce.boolean().optional(),
   // NIC e-Invoice/e-Way Bill sandbox (or production) credentials — all
   // optional, a company may not have registered yet. Password/client
   // secret are handled outside this schema (see updateCompany below): an
@@ -78,6 +84,8 @@ export async function updateCompany(_prev: CompanyFormState, formData: FormData)
     nicSandbox: raw.nicSandbox === 'on' || raw.nicSandbox === 'true',
     pdfShowBankDetails: raw.pdfShowBankDetails === 'on' || raw.pdfShowBankDetails === 'true',
     pdfShowHsnSummary: raw.pdfShowHsnSummary === 'on' || raw.pdfShowHsnSummary === 'true',
+    showUpiQr: raw.showUpiQr === 'on' || raw.showUpiQr === 'true',
+    showGpayNumber: raw.showGpayNumber === 'on' || raw.showGpayNumber === 'true',
   });
   if (!parsed.success) {
     return { error: 'Check the highlighted fields.', fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string> };
@@ -130,5 +138,41 @@ export async function updateCompany(_prev: CompanyFormState, formData: FormData)
   });
   revalidatePath('/company');
   revalidatePath('/'); // GST rate changes affect every page that computes totals
+  return {};
+}
+
+const GstDefaultsSchema = z.object({
+  cgstRate: z.number().min(0).max(100),
+  sgstRate: z.number().min(0).max(100),
+  igstRate: z.number().min(0).max(100),
+  cgstEnabled: z.boolean(),
+  sgstEnabled: z.boolean(),
+  igstEnabled: z.boolean(),
+  pdfShowBankDetails: z.boolean(),
+  pdfShowHsnSummary: z.boolean(),
+  showUpiQr: z.boolean(),
+  showGpayNumber: z.boolean(),
+});
+
+/**
+ * A narrow, plain-object counterpart to updateCompany() for one caller: the
+ * invoice builder's per-invoice Settings sheet, which lets a business "Save
+ * as company default" whatever override it just applied to one invoice.
+ * Deliberately touches only these 10 fields via a partial Prisma update —
+ * NOT a thin wrapper around updateCompany()'s FormData/CompanySchema path,
+ * because that schema recomputes several other booleans (nicSandbox, etc.)
+ * from whatever raw FormData keys happen to be present, silently coercing
+ * any omitted one to false. Building a "complete enough" FormData from the
+ * builder's own (much narrower) client-side Company type would risk
+ * clobbering compliance settings the builder never even loads.
+ */
+export async function updateCompanyGstDefaults(input: z.infer<typeof GstDefaultsSchema>): Promise<{ error?: string }> {
+  const parsed = GstDefaultsSchema.safeParse(input);
+  if (!parsed.success) return { error: 'Invalid settings' };
+  const company = await getCompany();
+  await prisma.company.update({ where: { id: company.id }, data: parsed.data });
+  revalidatePath('/company');
+  revalidatePath('/invoices/new');
+  revalidatePath('/');
   return {};
 }

@@ -4,6 +4,7 @@ import { getCompany } from '@/lib/get-company';
 import { fmtInr } from '@/lib/gst';
 import { BillingTrendChart } from '@/components/charts/billing-trend-chart';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
+import { customerDisplayName } from '@/lib/customer';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,7 +85,7 @@ export default async function ReportsPage() {
               <TableBody>
                 {topCustomers.map((c, i) => (
                   <TableRow key={i}>
-                    <TableCell className="font-bold text-ink">{c.name}</TableCell>
+                    <TableCell className="font-bold text-ink">{customerDisplayName(c)}</TableCell>
                     <TableCell className="text-ink-soft">{c.state}</TableCell>
                     <TableCell className="text-ink-soft">{c.count}</TableCell>
                     <TableCell className="text-right font-mono font-bold">{fmtInr(c.total, company.currency)}</TableCell>

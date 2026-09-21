@@ -15,12 +15,12 @@ async function allInvoicesWithTotals() {
       inv.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) })),
       { type: inv.overallDiscountType, value: Number(inv.overallDiscountValue) },
       {
-        cgstRate: Number(company.cgstRate),
-        sgstRate: Number(company.sgstRate),
-        igstRate: Number(company.igstRate),
-        cgstEnabled: company.cgstEnabled,
-        sgstEnabled: company.sgstEnabled,
-        igstEnabled: company.igstEnabled,
+        cgstRate: Number(inv.cgstRate),
+        sgstRate: Number(inv.sgstRate),
+        igstRate: Number(inv.igstRate),
+        cgstEnabled: inv.cgstEnabled,
+        sgstEnabled: inv.sgstEnabled,
+        igstEnabled: inv.igstEnabled,
       },
       company.state,
       inv.customer.state
@@ -123,10 +123,10 @@ export async function getMonthOverMonth() {
 
 export async function getTopCustomers() {
   const all = await allInvoicesWithTotals();
-  const byCustomer = new Map<string, { name: string; state: string; total: number; balance: number; count: number }>();
+  const byCustomer = new Map<string, { name: string; shopName: string | null; state: string; total: number; balance: number; count: number }>();
   for (const r of all) {
     const key = r.invoice.customerId;
-    const entry = byCustomer.get(key) ?? { name: r.invoice.customer.name, state: r.invoice.customer.state, total: 0, balance: 0, count: 0 };
+    const entry = byCustomer.get(key) ?? { name: r.invoice.customer.name, shopName: r.invoice.customer.shopName, state: r.invoice.customer.state, total: 0, balance: 0, count: 0 };
     entry.total += r.totals.total;
     entry.balance += Math.max(r.balanceDue, 0);
     entry.count += 1;

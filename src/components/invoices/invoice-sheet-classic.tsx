@@ -1,7 +1,10 @@
+'use client';
+
 import { Minus, Plus, Trash2 } from 'lucide-react';
 import { computeTotals, computeHsnSummary, computeUnitSummary, fmtInr, formatInvoiceDate, formatUnit, DEFAULT_HSN } from '@/lib/gst';
 import { numberToWords, amountToWordsWithPaise } from '@/lib/number-to-words';
 import { gstStateCode } from '@/lib/gst-state-codes';
+import { computeCapacities, paginateLines, useMeasuredSections, USABLE_MM, USABLE_PX } from './print-pagination';
 
 export type ClassicCompany = {
   name: string;
@@ -34,6 +37,9 @@ export type ClassicCompany = {
   /** PDF section toggles from Company settings — undefined behaves as "off" (hidden). */
   pdfShowBankDetails?: boolean;
   pdfShowHsnSummary?: boolean;
+  /** Fallback HSN/SAC for a line item that has neither its own nor its
+   * product's own HSN set — see schema.prisma's Company.defaultHsn comment. */
+  defaultHsn?: string | null;
 };
 
 export type ClassicCustomer = {
@@ -75,146 +81,128 @@ export type ClassicEway = {
 // ---------------------------------------------------------------------------
 // Print pagination
 //
-// The old approach wrapped the whole document in one outer <table> and
-// relied on the browser repeating its <thead> on every physical page — the
-// same trick that legitimately makes a data table's column headers repeat.
-// That works right up until the header's own content (letterhead + buyer +
-// delivery instructions) crosses roughly 190-200px of height, at which point
-// Chromium's print pipeline (both Playwright's page.pdf() and the browser's
-// own interactive print preview — verified separately) silently stops
-// repeating it: it prints once on page 1 and never again, often leaving the
-// remaining content to collapse onto a near-empty subsequent page. That's
-// not a config knob to tune; it's a hard ceiling, and any company with a
-// normal address + FSSAI + a customer with a delivery note sails past it.
+// Line items are pre-split into explicit page-sized chunks in JS, with the
+// header/buyer markup rendered fresh (ordinary duplicated markup, not a
+// repeating <thead>) on every chunk — relying on the browser to repeat a
+// <thead> across pages has a real, reproducible Chromium ceiling: past
+// roughly 190-200px of header content it silently stops repeating past
+// page 1, dumping the remaining content onto a near-empty page.
 //
-// The fix is to stop asking the browser to repeat anything. Instead, once
-// there's more than one physical page's worth of line items, this component
-// pre-splits them into explicit page-sized chunks itself and renders the
-// header block fresh, as ordinary duplicated markup, at the top of every
-// chunk. Nothing here depends on <thead>/<tfoot> repeat semantics, so there
-// is no height ceiling to hit.
+// The page split itself is computed from this invoice's *actual* rendered
+// section heights (see print-pagination.tsx's useMeasuredSections), not
+// hardcoded mm guesses — a static guess only holds until some company's
+// real content (a long wrapping address, a long note, HSN summary on)
+// doesn't match it, at which point the true content overflows the assumed
+// budget and the browser's own pagination silently takes over mid-flow.
 // ---------------------------------------------------------------------------
 
-// Row/section budgets for A4 at the 14mm/12mm margins the PDF route already
-// prints with (269mm usable height per page) — measured directly
-// (getBoundingClientRect, in an actual print-emulated render) after the
-// header/buyer/closing blocks were tightened (combined GSTIN+state onto one
-// line, dropped the empty Delivery Instructions placeholder box, smaller
-// fonts, less padding throughout): header 26.4mm, buyer block 23.1mm, item
-// table header 11.0mm, each item row 6.75mm. Rounded up a little from the
-// raw measurement for headroom — a company with a longer wrapped address
-// isn't what pushes a page over. A ~6mm safety margin is additionally
-// subtracted from 269mm before dividing by row height.
-const USABLE_MM = 263;
-const HEADER_MM = 32;
-const BUYER_MM = 26;
-const ITEM_THEAD_MM = 11;
-const ITEM_ROW_MM = 7.5;
-const CONTINUED_FOOTER_MM = 9;
-const ENDBAND_MM = 5;
-
-// The closing block (totals ladder + amount-in-words + qty summary +
-// optional HSN table + optional bank/terms + optional notes + optional
-// paid/balance + declaration + signature) varies a lot by company: one
-// without bank details or notes is genuinely ~50mm shorter than one with
-// both. A single fixed "worst case" constant was tried first and works, but
-// wastes real pages for the (common) leaner case — e.g. 24 items came out
-// to 4 pages, most of them nearly empty, purely because the budget assumed
-// bank+notes that this particular company doesn't even show. Each
-// contribution below is its own isolated measurement (same technique:
-// render the same invoice with just that one section toggled, diff the
-// closing block's height), summed only for the sections THIS invoice
-// actually renders. Re-measured after the same padding/font tightening as
-// the header/buyer above — also caught two constants (discount row, paid
-// box) that were under-budgeted even before that redesign.
-const CLOSING_BASE_MM = 93; // totals ladder + words + qty summary + declaration + signature, nothing optional
-const CLOSING_BANK_MM = 28;
-const CLOSING_TERMS_MM = 13;
-const CLOSING_NOTES_MM = 13;
-const CLOSING_HSN_MM = 29; // the HSN/SAC breakup table + its own "Tax Amount (in words)" line
-const CLOSING_DISCOUNT_ROW_MM = 7; // one extra row in the totals ladder when an overall discount applies
-const CLOSING_PAID_MM = 16; // the Paid/Balance due box, when a payment is on file
-
-function estimateClosingHeightMm(p: {
-  company: ClassicCompany;
-  totals: ReturnType<typeof computeTotals>;
-  notes?: string | null;
-  amountPaid?: number;
-  showHsn: boolean;
-}) {
-  let mm = CLOSING_BASE_MM;
-  const showBank = !!(p.company.pdfShowBankDetails && p.company.bankName);
-  const showTerms = !!p.company.terms;
-  // Bank and terms share one grid row (see ClassicClosing) rather than
-  // stacking, so showing both only costs as much as the taller of the two.
-  if (showBank || showTerms) mm += Math.max(showBank ? CLOSING_BANK_MM : 0, showTerms ? CLOSING_TERMS_MM : 0);
-  if (p.notes) mm += CLOSING_NOTES_MM;
-  if (p.showHsn) mm += CLOSING_HSN_MM;
-  if (p.totals.overallDiscountAmount > 0) mm += CLOSING_DISCOUNT_ROW_MM;
-  if (p.amountPaid && p.amountPaid > 0) mm += CLOSING_PAID_MM;
-  return mm;
+/** The line-items table's header row — shared between the real table and
+ * the hidden measurement probe (see useMeasuredSections below) so the
+ * probe measures the exact same markup that actually gets printed. */
+function classicTheadRow({ editable, hasAltQty, altUnitLabel }: { editable: boolean; hasAltQty: boolean; altUnitLabel: string }) {
+  return (
+    <tr className="border-y-2 border-ink bg-surface-alt text-left font-bold">
+      <th className="w-9 border-r border-ink px-2 py-1.5">S.NO</th>
+      <th className="border-r border-ink px-2 py-1.5">Products</th>
+      <th className="w-[78px] border-r border-ink px-2 py-1.5">HSN/SAC</th>
+      <th className="w-[92px] border-r border-ink px-2 py-1.5 text-right">Quantity</th>
+      <th className="w-[76px] border-r border-ink px-2 py-1.5 text-right">Rate</th>
+      <th className="w-14 border-r border-ink px-2 py-1.5 text-right">Per (Unit)</th>
+      {editable && <th className="w-14 border-r border-ink px-2 py-1.5 text-right">Disc%</th>}
+      {hasAltQty && <th className="w-16 border-r border-ink px-2 py-1.5 text-right">In {altUnitLabel}</th>}
+      <th className="w-[100px] px-2 py-1.5 text-right">Amount</th>
+      {editable && <th className="w-6 px-1" />}
+    </tr>
+  );
 }
 
-// Capped at 20 even though the real measured budget comfortably fits more
-// (24) — a consistent, predictable page density reads as more deliberate
-// than "as many as physically fit," and 20 leaves headroom under that real
-// ceiling for a product name or two wrapping to a second line.
-const ITEMS_PER_MIDDLE_PAGE = Math.min(20, Math.floor((USABLE_MM - HEADER_MM - BUYER_MM - ITEM_THEAD_MM - CONTINUED_FOOTER_MM) / ITEM_ROW_MM));
-/** How many items fit on the true final page of a *multi-page* invoice,
- * where the buyer block is dropped (see the render logic below) — so it's
- * just header + items + closing. */
-function lastPageCapacity(closingMm: number) {
-  return Math.max(0, Math.floor((USABLE_MM - HEADER_MM - ITEM_THEAD_MM - closingMm - ENDBAND_MM) / ITEM_ROW_MM));
-}
-/** How many items a genuinely *single-page* invoice can have — header,
- * buyer, items AND the full closing block all on the one page that exists. */
-function singlePageCapacity(closingMm: number) {
-  return Math.max(0, Math.floor((USABLE_MM - HEADER_MM - BUYER_MM - ITEM_THEAD_MM - closingMm - ENDBAND_MM) / ITEM_ROW_MM));
-}
-
-/** Splits line items into physical pages. A short invoice that fits — header
- * + buyer + every item + the full closing block, all together — stays the
- * single page it always was. Otherwise every page but the last is filled to
- * its full `perPage` capacity before moving to the next — ordinary
- * front-to-back document flow — and the true last page (which drops the
- * repeating buyer block — see the render logic below, and always carries
- * the totals/HSN/signature block) gets whatever's left, capped at `lastCap`.
- *
- * The last page is never "balanced" up to some even share with the earlier
- * pages: however few items land there, it's anchored by the closing block
- * (totals, declaration, signatures), so it never reads as broken the way an
- * earlier, buyer-shown page with just one stray item would. An earlier
- * *balanced* version of this function tried to equalize item counts across
- * all pages instead, which fixed that one small-invoice case but introduced
- * the opposite problem for the common case: a 17-item invoice that only
- * needs 2 pages got artificially capped at ~8 items on page 1 (to "match"
- * page 2), leaving roughly half of page 1 blank even though it had budget
- * for far more — while page 2 (already dense with the closing block) barely
- * needed the balancing. Front-loading fixes both: every non-last page is
- * always packed to capacity, and the last page's fixed closing-block floor
- * means a light item count there was never the actual problem. */
-function paginateLines<T>(lines: T[], perPage: number, singleCap: number, lastCap: number): T[][] {
-  const total = lines.length;
-  if (total <= singleCap) return [lines];
-
-  const pages: T[][] = [];
-  let idx = 0;
-  let remaining = total;
-  // `remaining - 1` (not `remaining`) is what guarantees at least one item
-  // is always left for a genuinely separate last page — reserving the full
-  // `remaining` here would, whenever what's left already fits within
-  // `lastCap`, consume it entirely on a "non-last" page and leave the final
-  // push below with zero items, collapsing back to a single page that
-  // (wrongly, since total > singleCap) would still need the buyer block and
-  // a closing block sized on the assumption it wasn't shown.
-  while (remaining > lastCap || pages.length === 0) {
-    const take = Math.min(perPage, remaining - 1);
-    pages.push(lines.slice(idx, idx + take));
-    idx += take;
-    remaining -= take;
+/** One item row's `<td>` cells — shared between the real table and the
+ * measurement probe the same way classicTheadRow is. */
+function classicRowCells(
+  l: ClassicLine,
+  serial: number,
+  ctx: {
+    company: ClassicCompany;
+    editable: boolean;
+    hasAltQty: boolean;
+    onUpdateLine?: (lineId: string, patch: Partial<ClassicLine>) => void;
+    onIncrement?: (lineId: string) => void;
+    onDecrement?: (lineId: string) => void;
+    onRemoveLine?: (lineId: string) => void;
   }
-  pages.push(lines.slice(idx));
-  return pages;
+) {
+  const { company, editable, hasAltQty, onUpdateLine, onIncrement, onDecrement, onRemoveLine } = ctx;
+  const amount = l.qty * l.rate * (1 - l.discount / 100);
+  const altQty = l.altUnit && l.altQtyPerUnit ? l.qty * l.altQtyPerUnit : null;
+  return (
+    <>
+      <td className="border-r border-line px-2 py-1 align-top font-tabular">{serial}</td>
+      <td className="border-r border-line px-2 py-1 align-top">{l.name}</td>
+      <td className="border-r border-line px-2 py-1 align-top font-mono">
+        {editable ? (
+          <input
+            value={l.hsn ?? ''}
+            onChange={(e) => onUpdateLine?.(l.lineId, { hsn: e.target.value })}
+            placeholder={company.defaultHsn || DEFAULT_HSN}
+            className="w-16 rounded-sm2 border border-line bg-surface px-1 py-0.5 text-[10.5px] focus:border-brand focus:outline-none"
+          />
+        ) : (
+          l.hsn || company.defaultHsn || DEFAULT_HSN
+        )}
+      </td>
+      <td className="border-r border-line px-2 py-1 text-right align-top">
+        {editable ? (
+          <div className="flex items-center justify-end gap-1">
+            <button onClick={() => onDecrement?.(l.lineId)} aria-label={`Decrease ${l.name} quantity`} className="flex h-[18px] w-[18px] items-center justify-center rounded-sm2 border border-line">
+              <Minus size={9} />
+            </button>
+            <span className="min-w-[24px] text-center font-mono font-tabular">
+              {l.qty} {formatUnit(l.unit)}
+            </span>
+            <button onClick={() => onIncrement?.(l.lineId)} aria-label={`Increase ${l.name} quantity`} className="flex h-[18px] w-[18px] items-center justify-center rounded-sm2 border border-line">
+              <Plus size={9} />
+            </button>
+          </div>
+        ) : (
+          <span className="font-mono font-tabular">
+            {l.qty} {formatUnit(l.unit)}
+          </span>
+        )}
+      </td>
+      {/* Editable mode shows the raw rate (Disc% is a separate input right
+          after it); print mode has no Disc% column at all, so it shows the
+          discount already folded in — Rate × Qty then reads consistently
+          with Amount. */}
+      <td className="border-r border-line px-2 py-1 text-right align-top font-mono font-tabular">
+        {fmtInr(editable ? l.rate : l.rate * (1 - l.discount / 100), company.currency)}
+      </td>
+      <td className="border-r border-line px-2 py-1 text-right align-top">{formatUnit(l.unit)}</td>
+      {editable && (
+        <td className="border-r border-line px-2 py-1 text-right align-top">
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step="1"
+            value={l.discount}
+            onChange={(e) => onUpdateLine?.(l.lineId, { discount: parseFloat(e.target.value) || 0 })}
+            className="w-12 rounded-sm2 border border-line bg-surface px-1 py-0.5 text-right font-mono text-[10.5px] focus:border-brand focus:outline-none"
+          />
+        </td>
+      )}
+      {hasAltQty && (
+        <td className="border-r border-line px-2 py-1 text-right align-top font-mono font-tabular">{altQty !== null ? altQty.toFixed(2).replace(/\.00$/, '') : ''}</td>
+      )}
+      <td className="px-2 py-1 text-right align-top font-mono font-tabular">{fmtInr(amount, company.currency)}</td>
+      {editable && (
+        <td className="px-1 py-1 align-top">
+          <button onClick={() => onRemoveLine?.(l.lineId)} aria-label={`Remove ${l.name}`} className="flex h-[20px] w-[20px] items-center justify-center rounded-sm2 text-ink-faint hover:text-destructive">
+            <Trash2 size={11} />
+          </button>
+        </td>
+      )}
+    </>
+  );
 }
 
 /** The CLASSIC (Tally/ERP-style) GST tax invoice — a distinct layout from
@@ -249,6 +237,13 @@ export function InvoiceSheetClassic(props: {
   ackNo?: string | null;
   ackDate?: string | null;
   qrImageDataUrl?: string | null;
+  /** Company-level "Show a scannable UPI QR" setting, rendered above the
+   * Authorised Signatory block — see src/lib/qr.ts's upiQrDataUrl().
+   * Independent of gpayNumber below — either, both, or neither can be set. */
+  upiQrDataUrl?: string | null;
+  /** Company-level "Show GPay number" setting — this company's own phone
+   * number, printed as a GPay-reachable number above the signatory block. */
+  gpayNumber?: string | null;
   eway?: ClassicEway | null;
   /** Sum of Payment rows recorded against this invoice — shown as a
    * Paid/Balance line right under the total when there's a partial or full
@@ -260,6 +255,14 @@ export function InvoiceSheetClassic(props: {
   notes?: string | null;
   /** Buyer-facing delivery/dispatch note — shown in the buyer block. */
   deliveryInstructions?: string | null;
+  /** Informal transport reference (vehicle/driver), shown before Delivery
+   * Instructions in the buyer block — see schema.prisma's comment on
+   * Invoice.showTransportDetails. Off (and its fields blank) by default;
+   * distinct from the real e-Way Bill compliance data in `eway` above. */
+  showTransportDetails?: boolean;
+  transportVehicleNo?: string | null;
+  transportDriverName?: string | null;
+  transportDriverPhone?: string | null;
   editable: boolean;
   onUpdateLine?: (lineId: string, patch: Partial<ClassicLine>) => void;
   onIncrement?: (lineId: string) => void;
@@ -270,6 +273,9 @@ export function InvoiceSheetClassic(props: {
   onApplyPerItemChange?: (v: boolean) => void;
   onNotesChange?: (v: string) => void;
   onDeliveryInstructionsChange?: (v: string) => void;
+  onTransportVehicleNoChange?: (v: string) => void;
+  onTransportDriverNameChange?: (v: string) => void;
+  onTransportDriverPhoneChange?: (v: string) => void;
 }) {
   const { company, customer, lines, totals, discountType, discountValue, editable } = props;
 
@@ -286,7 +292,8 @@ export function InvoiceSheetClassic(props: {
           igstEnabled: company.igstEnabled,
         },
         company.state,
-        customer.state
+        customer.state,
+        company.defaultHsn || DEFAULT_HSN
       )
     : [];
   const hsnTotal = hsnRows.reduce(
@@ -302,8 +309,36 @@ export function InvoiceSheetClassic(props: {
   const unitSummary = computeUnitSummary(lines);
   const hasAltQty = lines.some((l) => l.altUnit && l.altQtyPerUnit);
   const altUnitLabel = lines.find((l) => l.altUnit)?.altUnit ?? '';
-  const showHsn = !!(company.pdfShowHsnSummary && hsnRows.length > 0);
-  const shared = { ...props, hsnRows, hsnTotal, unitSummary, hasAltQty, altUnitLabel, showHsn };
+  // Whether this invoice actually charges any GST — checked against the
+  // computed tax amounts (not just the enabled toggles) so a tax that's
+  // switched on but rated at 0% is treated the same as one switched off:
+  // either way there's nothing real to show, and a row/column of "0%" /
+  // ₹0.00 reads as broken rather than as "no tax applies here".
+  const gstEnabled = totals.cgst > 0 || totals.sgst > 0 || totals.igst > 0;
+  const showHsn = !!(company.pdfShowHsnSummary && gstEnabled && hsnRows.length > 0);
+  const shared = { ...props, hsnRows, hsnTotal, unitSummary, hasAltQty, altUnitLabel, showHsn, gstEnabled };
+
+  // The longest name in the invoice, not just the first line, gives the
+  // measurement probe a more conservative (safer) row-height reading —
+  // a rare unusually-long product name shouldn't be able to skew the
+  // split if it happens to land anywhere other than line 1.
+  const measureLine =
+    lines.length > 0
+      ? lines.reduce((longest, l) => (l.name.length > longest.name.length ? l : longest), lines[0])
+      : ({ lineId: '__measure__', name: 'Representative Item Name', unit: 'pcs', qty: 1, rate: 0, discount: 0 } satisfies ClassicLine);
+
+  // Called unconditionally (rules of hooks) even in editable mode, where
+  // its result is simply unused — every real call site passes a fixed,
+  // never-toggled `editable` prop, but keeping the hook call itself
+  // unconditional avoids relying on that.
+  const { heights, ready, probe } = useMeasuredSections({
+    header: <ClassicHeader {...shared} />,
+    buyer: <ClassicBuyerRow {...shared} />,
+    itemsTableHead: classicTheadRow({ editable: false, hasAltQty, altUnitLabel }),
+    itemRow: classicRowCells(measureLine, 1, { company, editable: false, hasAltQty }),
+    continuedFooter: <div className="flex justify-end border-t border-ink p-2 text-[10.5px] font-bold text-ink-soft">Continued on Page 2 of 3 →</div>,
+    closing: <ClassicClosing {...shared} />,
+  });
 
   if (editable) {
     return (
@@ -318,68 +353,71 @@ export function InvoiceSheetClassic(props: {
     );
   }
 
-  const closingMm = estimateClosingHeightMm({ company, totals, notes: props.notes, amountPaid: props.amountPaid, showHsn });
-  // Computed once, explicitly — *not* inferred from pages.length === 1 later
-  // on, which paginateLines can also produce by coincidence (whenever total
-  // <= lastCap, its own tail-reservation logic collapses to one page too,
-  // but one sized on the assumption that the buyer block is NOT shown).
-  // Conflating the two would render that page with the buyer block anyway.
-  const isTrueSinglePage = lines.length <= singlePageCapacity(closingMm);
-  const pages = paginateLines(lines, ITEMS_PER_MIDDLE_PAGE, singlePageCapacity(closingMm), lastPageCapacity(closingMm));
+  // One consistent wrapper for both the pre-measurement and final render —
+  // `relative` so the hidden measurement probe's `position: absolute`
+  // sizes itself against *this* container's width (without a positioned
+  // ancestor, an absolutely positioned descendant resolves against the
+  // page's initial containing block instead, which is wider than this
+  // content column, so text wraps less in the probe than it really will
+  // and every measured height comes back too short) — and using the exact
+  // same wrapper for the measuring pass and the final paginated render
+  // means the probe is guaranteed to measure at the same width the real
+  // content ends up laid out at.
+  const capacities = heights ? computeCapacities(heights) : null;
+  const { pages } = capacities ? paginateLines(lines, capacities.perPage, capacities.singleCap, capacities.lastCap) : { pages: [] };
   let serial = 0;
 
   return (
-    <div className="rounded-b-lg2 border border-t-0 border-line bg-white p-5 text-[11.5px] leading-normal text-ink-body shadow-card print:rounded-none print:border-none print:p-0 print:shadow-none">
+    <div className="relative rounded-b-lg2 border border-t-0 border-line bg-white p-5 text-[11.5px] leading-normal text-ink-body shadow-card print:rounded-none print:border-none print:p-0 print:shadow-none">
+      {probe}
+      {/* Tells the PDF route's Playwright navigation the corrected,
+          measured-and-paginated layout has committed — see route.ts's
+          waitForSelector call. Only set once real pages exist — see the
+          comment on the equivalent spot in invoice-sheet.tsx. */}
+      {ready && <div data-pdf-ready="true" style={{ display: 'none' }} />}
       {pages.map((pageLines, i) => {
         const startSerial = serial;
         serial += pageLines.length;
         const isLast = i === pages.length - 1;
+        // Non-last pages always repeat the buyer block (buyer info hasn't
+        // appeared yet otherwise); the true last page only shows it when
+        // this is genuinely the only page — a multi-page invoice's last
+        // page drops it to make room for the closing block instead (it
+        // already appeared on page 1).
+        const showBuyer = isLast ? pages.length === 1 : true;
+        // Explicit pixel height for the spacer below, computed from the same
+        // measured heights this page's row/column split was already
+        // computed from — rather than a `flex: 1` spacer growing into a
+        // `min-height` on its flex container. See the isLast-only rationale
+        // below for why only the last page gets one at all.
+        const lastPageSpacerPx =
+          isLast && heights
+            ? Math.max(0, USABLE_PX - (heights.header + (showBuyer ? heights.buyer : 0) + heights.thead + pageLines.length * heights.row + heights.closing))
+            : 0;
         return (
-          <div key={i} className={`invoice-page flex flex-col ${i > 0 ? 'mt-6 print:mt-0' : ''} ${!isLast ? 'print:break-after-page' : ''}`}>
-            {/* print:min-h anchors this box to (a safety-margined) full page
-                height so the print:flex-1 spacer below has real slack to
-                grow into — pushing the closing block down to sit flush
-                against the bottom of the page instead of floating right
-                under the items table with a big blank gap under it. Safe to
-                do now in a way it wasn't earlier in this file's history (see
-                the pagination comment above): back then the page budgets
-                themselves were miscalibrated, so a min-height sized on a
-                wrong guess turned any underestimate into an entire extra
-                blank page. Now that every page's item count is chosen
-                specifically so header + items + closing already fit inside
-                USABLE_MM with margin to spare, stretching a spacer up to
-                that same, already-proven safe height doesn't change what
-                fits — it just redistributes slack that was always going to
-                be there from the bottom of the closing block to right above
-                it instead.
+          <div key={i} className={`invoice-page flex flex-col ${i > 0 ? 'mt-6 print:mt-0' : ''} ${!isLast ? 'print:break-after-page ' : ''}`}>
 
-                Deliberately ONLY on the last page: a continuation page has
-                no closing block to anchor, just a one-line "Continued on
-                Page N" strip — stretching *that* page to full height too
-                dragged the strip down and left a large, clearly-visible
-                empty gap inside the bordered box above it (reported as
-                "too much space on page 1"). Left unstretched, the box just
-                ends where its content ends, like a normal short page. */}
-            <div className={`invoice-page-inner flex flex-1 flex-col border border-ink ${isLast ? 'print:min-h-[263mm]' : ''}`}>
+            {/* print:min-h anchors this box to (a safety-margined) full page
+                height so the fixed-height spacer below always sums with the
+                rest of this page's content to that same height — pushing
+                the closing block down to sit flush against the bottom of
+                the page instead of floating right under the items table
+                with a big blank gap under it. Deliberately ONLY on the last
+                page: a continuation page has no closing block to anchor,
+                just a one-line "Continued on Page N" strip — stretching
+                that page to full height too would drag the strip down and
+                leave a large, clearly-visible empty gap inside the bordered
+                box above it. */}
+            <div
+              className="invoice-page-inner flex flex-1 flex-col border border-ink"
+              style={isLast ? { minHeight: `${USABLE_MM}mm` } : undefined}
+            >
               <ClassicHeader {...shared} />
-              {/* The closing block (totals + amount-in-words + qty summary
-                  + optional HSN table + bank/terms + notes + declaration +
-                  signature) is tall enough on its own that repeating the
-                  buyer block too, on a genuinely multi-page invoice's final
-                  page, was tested empirically to overflow — buyer info
-                  already appeared on every earlier page that had items, so
-                  it's dropped here (not the letterhead, which still
-                  identifies the invoice) to make room. A true single-page
-                  invoice always keeps it — there's nothing to have shown it
-                  earlier in that case. */}
-              {(!isLast || isTrueSinglePage) && <ClassicBuyerRow {...shared} />}
+              {showBuyer && <ClassicBuyerRow {...shared} />}
               {pageLines.length > 0 && <ClassicItemsTable {...shared} lines={pageLines} startSerial={startSerial} />}
-              {isLast && <div className="print:flex-1" />}
+              {isLast && lastPageSpacerPx > 0 && <div className="flex-none" style={{ height: `${lastPageSpacerPx}px` }} />}
               {isLast ? (
-                <>
-                  <ClassicClosing {...shared} />
-                  <div className="pt-1 text-center text-[9.5px] text-ink-faint">This is a Computer Generated Invoice — End of Invoice</div>
-                </>
+                <ClassicClosing {...shared} />
               ) : (
                 <div className="flex justify-end border-t border-ink p-2 text-[10.5px] font-bold text-ink-soft">
                   Continued on Page {i + 2} of {pages.length} →
@@ -405,6 +443,7 @@ function buildSharedPropsType() {
     hasAltQty: boolean;
     altUnitLabel: string;
     showHsn: boolean;
+    gstEnabled: boolean;
   };
 }
 
@@ -415,7 +454,7 @@ function buildSharedPropsType() {
 function ClassicHeader({ company, invoiceNumber, date }: SharedProps) {
   return (
     <div className="flex-none">
-      <div className="border-b border-ink bg-surface-alt py-1 text-center text-[12px] font-extrabold uppercase tracking-wide text-ink">Tax Invoice</div>
+      <div className="border-b border-ink bg-surface-alt py-1.5 text-center text-[13px] font-extrabold uppercase tracking-wide text-ink">Tax Invoice</div>
       <table className="w-full border-b border-ink">
         <tbody>
           <tr>
@@ -423,16 +462,23 @@ function ClassicHeader({ company, invoiceNumber, date }: SharedProps) {
                 as a hint under auto table-layout) so the address/GSTIN text
                 reliably wraps inside its own column instead of running past
                 it toward the invoice-number cell for a longer address. */}
-            <td className="w-[65%] p-1.5 align-top">
-              <div className="flex items-start gap-2">
+            <td className="w-[65%] p-2 align-top">
+              <div className="flex items-start gap-2.5">
                 {company.logoUrl && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={company.logoUrl} alt="" className="h-10 w-10 flex-none rounded-sm2 border border-line object-contain" />
+                  <img
+                    src={company.logoUrl}
+                    alt=""
+                    className="h-11 w-11 flex-none rounded-sm2 border border-line object-contain"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
                 )}
                 <div className="min-w-0 leading-snug">
-                  <div className="text-[13px] font-extrabold tracking-tight text-ink">{company.name}</div>
-                  {company.address && <div className="whitespace-pre-line text-[10px] leading-tight">{company.address}</div>}
-                  <div className="mt-0.5 text-[10px]">
+                  <div className="text-[14.5px] font-extrabold tracking-tight text-ink">{company.name}</div>
+                  {company.address && <div className="whitespace-pre-line text-[10.5px] leading-tight">{company.address}</div>}
+                  <div className="mt-1 text-[10.5px]">
                     <span className="font-mono font-tabular">GSTIN: {company.gstin || '—'}</span>
                     <span className="text-ink-faint"> · </span>
                     State {company.state} (<span className="font-mono font-tabular">{gstStateCode(company.state)}</span>)
@@ -443,7 +489,7 @@ function ClassicHeader({ company, invoiceNumber, date }: SharedProps) {
                     )}
                   </div>
                   {(company.phone || company.email) && (
-                    <div className="text-[10px]">
+                    <div className="text-[10.5px]">
                       {company.phone && (
                         <span className="font-mono font-tabular">
                           {company.phone}
@@ -459,14 +505,14 @@ function ClassicHeader({ company, invoiceNumber, date }: SharedProps) {
             </td>
             {/* Invoice No./Date belong top-right, next to the seller block —
                 the standard placement on a printed GST tax invoice. */}
-            <td className="w-[35%] p-1.5 text-right align-top">
-              <div className="text-[9px] font-bold uppercase tracking-wide text-ink-faint">Invoice No.</div>
+            <td className="w-[35%] p-2 text-right align-top">
+              <div className="text-[9.5px] font-bold uppercase tracking-wide text-ink-faint">Invoice No.</div>
               {/* No number exists yet in the builder's live preview — the
                   real one is only claimed from the sequential counter on
                   Save (see createInvoice), so this never shows a
                   workflow-status word like "Draft" on a customer-facing PDF. */}
-              <div className="font-mono font-tabular text-[15px] font-extrabold text-ink">{invoiceNumber ?? '—'}</div>
-              <div className="text-[10px] text-ink-soft">
+              <div className="font-mono font-tabular text-[17px] font-extrabold text-ink">{invoiceNumber ?? '—'}</div>
+              <div className="mt-0.5 text-[10.5px] text-ink-soft">
                 Dated <span className="font-mono font-tabular font-semibold text-ink-body">{formatInvoiceDate(date)}</span>
               </div>
             </td>
@@ -479,7 +525,25 @@ function ClassicHeader({ company, invoiceNumber, date }: SharedProps) {
 
 /** Buyer details + delivery instructions (left) and e-Invoice QR/e-Way Bill
  * refs (right) — same repeat-per-page treatment as the letterhead above. */
-function ClassicBuyerRow({ customer, deliveryInstructions, editable, onDeliveryInstructionsChange, irn, ackNo, ackDate, qrImageDataUrl, eway }: SharedProps) {
+function ClassicBuyerRow({
+  customer,
+  deliveryInstructions,
+  editable,
+  onDeliveryInstructionsChange,
+  irn,
+  ackNo,
+  ackDate,
+  qrImageDataUrl,
+  eway,
+  showTransportDetails,
+  transportVehicleNo,
+  transportDriverName,
+  transportDriverPhone,
+  onTransportVehicleNoChange,
+  onTransportDriverNameChange,
+  onTransportDriverPhoneChange,
+}: SharedProps) {
+  const hasTransportDetails = !!(transportVehicleNo?.trim() || transportDriverName?.trim() || transportDriverPhone?.trim());
   return (
     <table className="w-full flex-none border-b border-ink">
       <tbody>
@@ -492,8 +556,12 @@ function ClassicBuyerRow({ customer, deliveryInstructions, editable, onDeliveryI
                 {customer.shopName && customer.name && <div className="text-[10px] font-semibold text-ink-body">{customer.name}</div>}
                 {customer.address && <div className="whitespace-pre-line text-[10px] leading-tight">{customer.address}</div>}
                 <div className="mt-0.5 text-[10px]">
-                  <span className="font-mono font-tabular">GSTIN: {customer.gstin || '—'}</span>
-                  <span className="text-ink-faint"> · </span>
+                  {customer.gstin && (
+                    <>
+                      <span className="font-mono font-tabular">GSTIN: {customer.gstin}</span>
+                      <span className="text-ink-faint"> · </span>
+                    </>
+                  )}
                   State {customer.state} (<span className="font-mono font-tabular">{gstStateCode(customer.state)}</span>)
                   {customer.fssaiNo && (
                     <>
@@ -517,29 +585,77 @@ function ClassicBuyerRow({ customer, deliveryInstructions, editable, onDeliveryI
             ) : (
               <div className="italic text-ink-faint">Select a customer to fill this in</div>
             )}
-            {/* Print mode only renders this section when there's something to
-                show — an empty dashed placeholder box burned ~10mm on every
-                invoice that doesn't use delivery instructions, the same
-                waste pattern as the pagination fix above (see Notes below,
-                which already followed this rule). */}
-            {(editable || deliveryInstructions) && (
-              <div className="mt-1 border-t border-dashed border-line pt-0.5">
-                <div className="text-[9px] font-bold uppercase tracking-wide text-ink-faint">Delivery Instructions</div>
+          </td>
+          <td className="p-1.5 text-right align-top">
+            {/* Opt-in, unlike the Delivery Instructions box below it — only
+                appears once "Show on invoice PDF" is turned on for this
+                invoice (see the builder's Settings sheet), and even then
+                only prints once at least one of the three fields actually
+                has something in it, so turning the setting on with nothing
+                entered yet doesn't leave an empty box on the PDF. */}
+            {showTransportDetails && (editable || hasTransportDetails) && (
+              <div className="mb-1.5 rounded-sm2 border border-dashed border-line p-1.5 text-left">
+                <div className="text-[9px] font-bold uppercase tracking-wide text-ink-faint">Transport Details</div>
                 {editable ? (
-                  <textarea
-                    value={deliveryInstructions ?? ''}
-                    onChange={(e) => onDeliveryInstructionsChange?.(e.target.value)}
-                    placeholder="e.g. Deliver before 10 AM via rear gate, call security on arrival"
-                    rows={2}
-                    className="mt-0.5 w-full resize-none rounded-sm2 border border-line bg-surface px-1.5 py-1 text-[10.5px] focus:border-brand focus:outline-none"
-                  />
+                  <div className="mt-0.5 space-y-1">
+                    <input
+                      value={transportVehicleNo ?? ''}
+                      onChange={(e) => onTransportVehicleNoChange?.(e.target.value)}
+                      placeholder="Vehicle number"
+                      className="w-full rounded-sm2 border border-line bg-surface px-1.5 py-1 text-[10.5px] focus:border-brand focus:outline-none"
+                    />
+                    <input
+                      value={transportDriverName ?? ''}
+                      onChange={(e) => onTransportDriverNameChange?.(e.target.value)}
+                      placeholder="Driver name"
+                      className="w-full rounded-sm2 border border-line bg-surface px-1.5 py-1 text-[10.5px] focus:border-brand focus:outline-none"
+                    />
+                    <input
+                      value={transportDriverPhone ?? ''}
+                      onChange={(e) => onTransportDriverPhoneChange?.(e.target.value)}
+                      placeholder="Driver contact number"
+                      className="w-full rounded-sm2 border border-line bg-surface px-1.5 py-1 text-[10.5px] focus:border-brand focus:outline-none"
+                    />
+                  </div>
                 ) : (
-                  <div className="mt-0.5 whitespace-pre-line text-[10px]">{deliveryInstructions}</div>
+                  <div className="mt-0.5 space-y-0.5 text-[10px]">
+                    {transportVehicleNo?.trim() && (
+                      <div>
+                        Vehicle No. : <span className="font-mono font-tabular">{transportVehicleNo}</span>
+                      </div>
+                    )}
+                    {transportDriverName?.trim() && <div>Driver : {transportDriverName}</div>}
+                    {transportDriverPhone?.trim() && (
+                      <div>
+                        Driver Contact : <span className="font-mono font-tabular">{transportDriverPhone}</span>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )}
-          </td>
-          <td className="p-1.5 text-right align-top">
+            {/* Fixed, always-visible box (not gated on having content) so
+                its position is predictable invoice to invoice — a delivery
+                crew (or the person filling this in) always finds it in the
+                same place, right of the buyer details, rather than only
+                when non-empty. This does cost real space on every invoice
+                that doesn't use it (see the pagination note in
+                InvoiceSheetClassic above), a deliberate tradeoff for that
+                predictability. */}
+            <div className="mb-1.5 rounded-sm2 border border-dashed border-line p-1.5 text-left">
+              <div className="text-[9px] font-bold uppercase tracking-wide text-ink-faint">Delivery Instructions</div>
+              {editable ? (
+                <textarea
+                  value={deliveryInstructions ?? ''}
+                  onChange={(e) => onDeliveryInstructionsChange?.(e.target.value)}
+                  placeholder="e.g. Deliver before 10 AM via rear gate, call security on arrival"
+                  rows={2}
+                  className="mt-0.5 w-full resize-none rounded-sm2 border border-line bg-surface px-1.5 py-1 text-[10.5px] focus:border-brand focus:outline-none"
+                />
+              ) : (
+                <div className="mt-0.5 min-h-[10px] whitespace-pre-line text-[10px]">{deliveryInstructions || '—'}</div>
+              )}
+            </div>
             {irn ? (
               <>
                 {qrImageDataUrl && (
@@ -575,20 +691,7 @@ function ClassicItemsTable({ company, lines, editable, hasAltQty, altUnitLabel, 
   return (
     <div className="flex-none overflow-x-auto print:overflow-visible">
       <table className={`w-full border-collapse text-[11px] print:min-w-0 ${editable ? 'min-w-[720px]' : 'min-w-[640px]'}`}>
-        <thead>
-          <tr className="border-b border-ink bg-surface-alt text-left font-bold">
-            <th className="w-9 border-r border-line px-2 py-1">Sl</th>
-            <th className="border-r border-line px-2 py-1">Description of Goods</th>
-            <th className="w-[78px] border-r border-line px-2 py-1">HSN/SAC</th>
-            <th className="w-[92px] border-r border-line px-2 py-1 text-right">Quantity</th>
-            <th className="w-[76px] border-r border-line px-2 py-1 text-right">Rate</th>
-            <th className="w-14 border-r border-line px-2 py-1 text-right">Per (Unit)</th>
-            {editable && <th className="w-14 border-r border-line px-2 py-1 text-right">Disc%</th>}
-            {hasAltQty && <th className="w-16 border-r border-line px-2 py-1 text-right">In {altUnitLabel}</th>}
-            <th className="w-[100px] px-2 py-1 text-right">Amount</th>
-            {editable && <th className="w-6 px-1" />}
-          </tr>
-        </thead>
+        <thead>{classicTheadRow({ editable, hasAltQty, altUnitLabel })}</thead>
         <tbody>
           {lines.length === 0 ? (
             <tr>
@@ -597,79 +700,11 @@ function ClassicItemsTable({ company, lines, editable, hasAltQty, altUnitLabel, 
               </td>
             </tr>
           ) : (
-            lines.map((l, i) => {
-              const amount = l.qty * l.rate * (1 - l.discount / 100);
-              const altQty = l.altUnit && l.altQtyPerUnit ? l.qty * l.altQtyPerUnit : null;
-              return (
-                <tr key={l.lineId} className="border-b border-line">
-                  <td className="border-r border-line px-2 py-1 align-top font-tabular">{base + i + 1}</td>
-                  <td className="border-r border-line px-2 py-1 align-top">{l.name}</td>
-                  <td className="border-r border-line px-2 py-1 align-top font-mono">
-                    {editable ? (
-                      <input
-                        value={l.hsn ?? ''}
-                        onChange={(e) => onUpdateLine?.(l.lineId, { hsn: e.target.value })}
-                        placeholder={DEFAULT_HSN}
-                        className="w-16 rounded-sm2 border border-line bg-surface px-1 py-0.5 text-[10.5px] focus:border-brand focus:outline-none"
-                      />
-                    ) : (
-                      l.hsn || DEFAULT_HSN
-                    )}
-                  </td>
-                  <td className="border-r border-line px-2 py-1 text-right align-top">
-                    {editable ? (
-                      <div className="flex items-center justify-end gap-1">
-                        <button onClick={() => onDecrement?.(l.lineId)} aria-label={`Decrease ${l.name} quantity`} className="flex h-[18px] w-[18px] items-center justify-center rounded-sm2 border border-line">
-                          <Minus size={9} />
-                        </button>
-                        <span className="min-w-[24px] text-center font-mono font-tabular">
-                          {l.qty} {formatUnit(l.unit)}
-                        </span>
-                        <button onClick={() => onIncrement?.(l.lineId)} aria-label={`Increase ${l.name} quantity`} className="flex h-[18px] w-[18px] items-center justify-center rounded-sm2 border border-line">
-                          <Plus size={9} />
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="font-mono font-tabular">
-                        {l.qty} {formatUnit(l.unit)}
-                      </span>
-                    )}
-                  </td>
-                  {/* Editable mode shows the raw rate (Disc% is a separate
-                      input right after it); print mode has no Disc% column
-                      at all, so it shows the discount already folded in —
-                      Rate × Qty then reads consistently with Amount. */}
-                  <td className="border-r border-line px-2 py-1 text-right align-top font-mono font-tabular">
-                    {fmtInr(editable ? l.rate : l.rate * (1 - l.discount / 100), company.currency)}
-                  </td>
-                  <td className="border-r border-line px-2 py-1 text-right align-top">{formatUnit(l.unit)}</td>
-                  {editable && (
-                    <td className="border-r border-line px-2 py-1 text-right align-top">
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        step="1"
-                        value={l.discount}
-                        onChange={(e) => onUpdateLine?.(l.lineId, { discount: parseFloat(e.target.value) || 0 })}
-                        className="w-12 rounded-sm2 border border-line bg-surface px-1 py-0.5 text-right font-mono text-[10.5px] focus:border-brand focus:outline-none"
-                      />
-                    </td>
-                  )}
-                  {hasAltQty && (
-                    <td className="border-r border-line px-2 py-1 text-right align-top font-mono font-tabular">{altQty !== null ? altQty.toFixed(2).replace(/\.00$/, '') : ''}</td>
-                  )}
-                  <td className="px-2 py-1 text-right align-top font-mono font-tabular">{fmtInr(amount, company.currency)}</td>
-                  {editable && (
-                    <td className="px-1 py-1 align-top">
-                      <button onClick={() => onRemoveLine?.(l.lineId)} aria-label={`Remove ${l.name}`} className="flex h-[20px] w-[20px] items-center justify-center rounded-sm2 text-ink-faint hover:text-destructive">
-                        <Trash2 size={11} />
-                      </button>
-                    </td>
-                  )}
-                </tr>
-              );
-            })
+            lines.map((l, i) => (
+              <tr key={l.lineId} className="border-b border-line">
+                {classicRowCells(l, base + i + 1, { company, editable, hasAltQty, onUpdateLine, onIncrement, onDecrement, onRemoveLine })}
+              </tr>
+            ))
           )}
         </tbody>
       </table>
@@ -702,6 +737,7 @@ function ClassicClosing(props: SharedProps) {
     hsnTotal,
     notes,
     onNotesChange,
+    gstEnabled,
   } = props;
   const footTdColSpan = (editable ? 7 : 6) + (props.hasAltQty ? 1 : 0);
 
@@ -725,29 +761,31 @@ function ClassicClosing(props: SharedProps) {
               {editable && <td />}
             </tr>
           )}
-          <tr>
-            <td colSpan={footTdColSpan} className="px-2.5 py-1 text-right font-bold">
-              {totals.useIgst ? (
-                'Outward IGST'
-              ) : (
-                <div className="flex flex-col gap-0.5">
-                  <span>Outward CGST</span>
-                  <span>Outward SGST</span>
-                </div>
-              )}
-            </td>
-            <td className="px-2.5 py-1 text-right font-mono font-tabular">
-              {totals.useIgst ? (
-                fmtInr(totals.igst, company.currency)
-              ) : (
-                <div className="flex flex-col gap-0.5">
-                  <span>{fmtInr(totals.cgst, company.currency)}</span>
-                  <span>{fmtInr(totals.sgst, company.currency)}</span>
-                </div>
-              )}
-            </td>
-            {editable && <td />}
-          </tr>
+          {gstEnabled && (
+            <tr>
+              <td colSpan={footTdColSpan} className="px-2.5 py-1 text-right font-bold">
+                {totals.useIgst ? (
+                  'Outward IGST'
+                ) : (
+                  <div className="flex flex-col gap-0.5">
+                    <span>Outward CGST</span>
+                    <span>Outward SGST</span>
+                  </div>
+                )}
+              </td>
+              <td className="px-2.5 py-1 text-right font-mono font-tabular">
+                {totals.useIgst ? (
+                  fmtInr(totals.igst, company.currency)
+                ) : (
+                  <div className="flex flex-col gap-0.5">
+                    <span>{fmtInr(totals.cgst, company.currency)}</span>
+                    <span>{fmtInr(totals.sgst, company.currency)}</span>
+                  </div>
+                )}
+              </td>
+              {editable && <td />}
+            </tr>
+          )}
           <tr>
             <td colSpan={footTdColSpan} className="px-2.5 py-1 text-right font-bold">
               Rounding Off
@@ -977,6 +1015,24 @@ function ClassicClosing(props: SharedProps) {
         warranted to be of the nature and quality purported to be.
       </div>
 
+      {(props.upiQrDataUrl || props.gpayNumber) && (
+        <div className="flex justify-end gap-4 border-t border-line p-1.5 pb-3 text-center text-[9.5px] break-inside-avoid">
+          {props.upiQrDataUrl && (
+            <div className="flex flex-col items-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={props.upiQrDataUrl} alt="Scan to pay via UPI" className="h-[70px] w-[70px]" />
+              <div className="mt-0.5 font-bold uppercase tracking-wide text-ink-faint">Scan to pay via UPI</div>
+            </div>
+          )}
+          {props.gpayNumber && (
+            <div className="flex flex-col items-center justify-center">
+              <div className="font-bold uppercase tracking-wide text-ink-faint">Pay via GPay</div>
+              <div className="font-mono text-[13px] font-extrabold text-ink">{props.gpayNumber}</div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="border-t border-line p-1.5 break-inside-avoid">
         <div className="mt-1 grid grid-cols-2 gap-8 text-center text-[10.5px]">
           <div className="flex flex-col">
@@ -987,7 +1043,14 @@ function ClassicClosing(props: SharedProps) {
             <div className="flex h-9 items-end justify-center pb-1">
               {company.signatureUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={company.signatureUrl} alt="Authorised signature" className="h-8 object-contain" />
+                <img
+                  src={company.signatureUrl}
+                  alt="Authorised signature"
+                  className="h-8 object-contain"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                  }}
+                />
               ) : (
                 <span className="text-[11.5px] font-semibold text-ink">{company.signatoryName || ''}</span>
               )}

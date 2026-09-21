@@ -53,13 +53,18 @@ export async function generateEinvoice(invoiceId: string): Promise<GstCompliance
   const missingHsn = invoice.items.find((it) => !it.hsn);
   if (missingHsn) return { error: `"${missingHsn.name}" has no HSN/SAC code — add one to the product (or the line item) first.` };
 
+  // Snapshotted on the invoice at creation/last-save time — never the live
+  // Company rates, so a filed e-Invoice always reflects the GST config that
+  // was actually in effect for this invoice, not whatever Company happens
+  // to have right now (which has real legal/compliance consequences since
+  // this submits to the NIC government API).
   const rates = {
-    cgstRate: Number(company.cgstRate),
-    sgstRate: Number(company.sgstRate),
-    igstRate: Number(company.igstRate),
-    cgstEnabled: company.cgstEnabled,
-    sgstEnabled: company.sgstEnabled,
-    igstEnabled: company.igstEnabled,
+    cgstRate: Number(invoice.cgstRate),
+    sgstRate: Number(invoice.sgstRate),
+    igstRate: Number(invoice.igstRate),
+    cgstEnabled: invoice.cgstEnabled,
+    sgstEnabled: invoice.sgstEnabled,
+    igstEnabled: invoice.igstEnabled,
   };
   const lineInputs = invoice.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) }));
   const totals = computeTotals(lineInputs, { type: invoice.overallDiscountType, value: Number(invoice.overallDiscountValue) }, rates, company.state, invoice.customer.state);
@@ -168,13 +173,15 @@ export async function generateEwaybillAction(invoiceId: string, transportDetails
     data: { ...parsedTransport.data, transporterDocDate: parsedTransport.data.transporterDocDate ? new Date(parsedTransport.data.transporterDocDate) : null },
   });
 
+  // See generateEinvoice above for why this reads the invoice's own
+  // snapshot, not live Company rates.
   const rates = {
-    cgstRate: Number(company.cgstRate),
-    sgstRate: Number(company.sgstRate),
-    igstRate: Number(company.igstRate),
-    cgstEnabled: company.cgstEnabled,
-    sgstEnabled: company.sgstEnabled,
-    igstEnabled: company.igstEnabled,
+    cgstRate: Number(invoice.cgstRate),
+    sgstRate: Number(invoice.sgstRate),
+    igstRate: Number(invoice.igstRate),
+    cgstEnabled: invoice.cgstEnabled,
+    sgstEnabled: invoice.sgstEnabled,
+    igstEnabled: invoice.igstEnabled,
   };
   const lineInputs = invoice.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) }));
   const totals = computeTotals(lineInputs, { type: invoice.overallDiscountType, value: Number(invoice.overallDiscountValue) }, rates, company.state, invoice.customer.state);

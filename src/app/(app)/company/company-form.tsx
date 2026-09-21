@@ -269,6 +269,11 @@ export function CompanyForm({ company }: { company: Company }) {
                   <Flag size={12} className="mt-0.5 flex-shrink-0" /> Toggle off any tax you don&apos;t charge. With IGST off, every invoice uses CGST + SGST regardless of the customer&apos;s
                   state.
                 </p>
+                <Field label="Default HSN/SAC code" name="defaultHsn" icon={Hash} mono defaultValue={company.defaultHsn} error={state.fieldErrors?.defaultHsn} />
+                <p className="mt-1 flex items-start gap-1.5 text-[11px] text-ink-faint">
+                  <Flag size={12} className="mt-0.5 flex-shrink-0" /> Used on any line item that doesn&apos;t have its own HSN/SAC — set one on a product, or type one directly on an invoice line,
+                  to override this per item.
+                </p>
               </div>
 
               <div className={tab === 'banking' ? 'grid grid-cols-2 gap-3' : 'hidden'}>
@@ -277,6 +282,25 @@ export function CompanyForm({ company }: { company: Company }) {
                 <Field label="IFSC" name="ifsc" icon={Landmark} defaultValue={company.ifsc ?? ''} mono error={state.fieldErrors?.ifsc} />
                 <Field label="Bank & branch" name="branch" icon={Home} defaultValue={company.branch ?? ''} error={state.fieldErrors?.branch} />
                 <Field label="UPI ID" name="upi" icon={IdCard} defaultValue={company.upi ?? ''} mono />
+                <div className="col-span-2 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  <div className="rounded-lg2 border border-line bg-bg p-3.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[12.5px] font-bold text-ink-soft">Show a scannable UPI QR</span>
+                      <Switch name="showUpiQr" defaultChecked={company.showUpiQr} />
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-ink-faint">Generated from the UPI ID above — turn this on once you&apos;ve confirmed the ID is correct.</p>
+                  </div>
+                  <div className="rounded-lg2 border border-line bg-bg p-3.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[12.5px] font-bold text-ink-soft">Show GPay number</span>
+                      <Switch name="showGpayNumber" defaultChecked={company.showGpayNumber} />
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-ink-faint">Prints the Phone number from the Identity tab as a GPay-reachable number.</p>
+                  </div>
+                  <p className="col-span-full flex items-start gap-1.5 text-[11px] text-ink-faint">
+                    <Flag size={12} className="mt-0.5 flex-shrink-0" /> Both show together near the Authorised Signatory section when turned on — use one, both, or neither.
+                  </p>
+                </div>
               </div>
 
               <div className={tab === 'numbering' ? 'grid grid-cols-3 gap-3' : 'hidden'}>

@@ -12,8 +12,7 @@ import { fmtInr, formatUnit } from '@/lib/gst';
 import { useCreateProduct, useUpdateProduct, useDeleteProduct, useToggleProductActive } from '@/hooks/use-products';
 import { CategoryCombobox } from '@/components/products/category-combobox';
 import { ProductImagesField, type PendingImages } from '@/components/products/product-images-field';
-
-const UNITS = ['box', 'Piece', 'kg', 'bag', 'block', 'slab'];
+import { UNITS } from '@/lib/units';
 
 type PriceTier = { id?: string; unit: string; price: string | number; approxQty: string | number | null };
 

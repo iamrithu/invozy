@@ -194,14 +194,21 @@ export type HsnSummaryRow = {
  * any one HSN, so it's allocated across groups proportionally to each
  * group's share of the pre-discount subtotal — the resulting rows sum back
  * exactly to computeTotals()'s taxable/cgst/sgst/igst for the same lines. */
-export function computeHsnSummary(lines: (LineInput & { hsn?: string | null })[], overallDiscount: OverallDiscount, rates: GstRates, companyState: string, customerState: string): HsnSummaryRow[] {
+export function computeHsnSummary(
+  lines: (LineInput & { hsn?: string | null })[],
+  overallDiscount: OverallDiscount,
+  rates: GstRates,
+  companyState: string,
+  customerState: string,
+  defaultHsn: string = DEFAULT_HSN
+): HsnSummaryRow[] {
   const subtotal = lines.reduce((sum, l) => sum + l.qty * l.rate * (1 - (l.discount || 0) / 100), 0);
   const overallDiscountAmount = overallDiscount.type === 'PERCENT' ? subtotal * ((overallDiscount.value || 0) / 100) : Math.min(overallDiscount.value || 0, subtotal);
   const useIgst = decidesIgst(companyState, customerState, rates.igstEnabled);
 
   const groups = new Map<string, number>();
   for (const l of lines) {
-    const hsn = l.hsn?.trim() || DEFAULT_HSN;
+    const hsn = l.hsn?.trim() || defaultHsn;
     const lineTaxable = l.qty * l.rate * (1 - (l.discount || 0) / 100);
     groups.set(hsn, (groups.get(hsn) ?? 0) + lineTaxable);
   }

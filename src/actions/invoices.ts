@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
 import { getCompany } from '@/lib/get-company';
 import { computeTotals, formatInvoiceNumber, isOverCreditLimit, deriveStatus, DEFAULT_HSN } from '@/lib/gst';
+import { istDayRangeUtc } from '@/lib/dates';
 
 const LineSchema = z.object({
   // Nullable — an ad-hoc/custom line item isn't backed by a catalog Product.
@@ -31,11 +32,32 @@ const InvoiceInputSchema = z.object({
   overallDiscountValue: z.coerce.number().min(0).default(0),
   notes: z.string().optional().nullable(),
   deliveryInstructions: z.string().optional().nullable(),
+  // Informal transport reference — see schema.prisma's comment on these
+  // same fields. Independent of the GST/e-Way Bill machinery entirely.
+  showTransportDetails: z.coerce.boolean().default(false),
+  transportVehicleNo: z.string().optional().nullable(),
+  transportDriverName: z.string().optional().nullable(),
+  transportDriverPhone: z.string().optional().nullable(),
   markSent: z.boolean().default(false),
   // Records a full-amount Payment alongside the invoice so it's created
   // already PAID — for walk-in/cash-on-delivery sales where there's no real
   // "unpaid" period to track, this skips the separate record-payment step.
   markPaid: z.boolean().default(false),
+  // GST config + PDF section visibility, snapshotted onto the Invoice row —
+  // see the schema.prisma comment on these same fields for why. The client
+  // always sends a complete set (pre-filled from Company defaults, or from
+  // the invoice's own existing snapshot when editing), so these Zod
+  // defaults are only a safety net, not the primary UX path.
+  cgstRate: z.coerce.number().min(0).max(100).default(9),
+  sgstRate: z.coerce.number().min(0).max(100).default(9),
+  igstRate: z.coerce.number().min(0).max(100).default(18),
+  cgstEnabled: z.coerce.boolean().default(true),
+  sgstEnabled: z.coerce.boolean().default(true),
+  igstEnabled: z.coerce.boolean().default(true),
+  showBankDetails: z.coerce.boolean().default(true),
+  showHsnSummary: z.coerce.boolean().default(false),
+  showUpiQr: z.coerce.boolean().default(false),
+  showGpayNumber: z.coerce.boolean().default(false),
 });
 
 export type InvoiceInput = z.infer<typeof InvoiceInputSchema>;
@@ -66,12 +88,12 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
     data.items.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount })),
     { type: data.overallDiscountType, value: data.overallDiscountValue },
     {
-      cgstRate: Number(company.cgstRate),
-      sgstRate: Number(company.sgstRate),
-      igstRate: Number(company.igstRate),
-      cgstEnabled: company.cgstEnabled,
-      sgstEnabled: company.sgstEnabled,
-      igstEnabled: company.igstEnabled,
+      cgstRate: data.cgstRate,
+      sgstRate: data.sgstRate,
+      igstRate: data.igstRate,
+      cgstEnabled: data.cgstEnabled,
+      sgstEnabled: data.sgstEnabled,
+      igstEnabled: data.igstEnabled,
     },
     company.state,
     customer.state
@@ -89,12 +111,12 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
         inv.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) })),
         { type: inv.overallDiscountType, value: Number(inv.overallDiscountValue) },
         {
-          cgstRate: Number(company.cgstRate),
-          sgstRate: Number(company.sgstRate),
-          igstRate: Number(company.igstRate),
-          cgstEnabled: company.cgstEnabled,
-          sgstEnabled: company.sgstEnabled,
-          igstEnabled: company.igstEnabled,
+          cgstRate: Number(inv.cgstRate),
+          sgstRate: Number(inv.sgstRate),
+          igstRate: Number(inv.igstRate),
+          cgstEnabled: inv.cgstEnabled,
+          sgstEnabled: inv.sgstEnabled,
+          igstEnabled: inv.igstEnabled,
         },
         company.state,
         customer.state
@@ -126,6 +148,21 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
         overallDiscountValue: data.overallDiscountValue,
         notes: data.notes?.trim() || null,
         deliveryInstructions: data.deliveryInstructions?.trim() || null,
+        showTransportDetails: data.showTransportDetails,
+        transportVehicleNo: data.transportVehicleNo?.trim() || null,
+        transportDriverName: data.transportDriverName?.trim() || null,
+        transportDriverPhone: data.transportDriverPhone?.trim() || null,
+        // Snapshotted, not re-read from Company later — see schema.prisma.
+        cgstRate: data.cgstRate,
+        sgstRate: data.sgstRate,
+        igstRate: data.igstRate,
+        cgstEnabled: data.cgstEnabled,
+        sgstEnabled: data.sgstEnabled,
+        igstEnabled: data.igstEnabled,
+        showBankDetails: data.showBankDetails,
+        showHsnSummary: data.showHsnSummary,
+        showUpiQr: data.showUpiQr,
+        showGpayNumber: data.showGpayNumber,
         items: {
           create: data.items.map((l) => ({
             productId: l.productId,
@@ -137,7 +174,7 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
             // Persisted (not just a display-time fallback — see invoice-sheet-classic.tsx)
             // so the completeness checklist and any real e-Invoice/e-Way Bill
             // submission see a real code instead of a missing one.
-            hsn: l.hsn?.trim() || DEFAULT_HSN,
+            hsn: l.hsn?.trim() || company.defaultHsn || DEFAULT_HSN,
             batch: l.batch,
             altUnit: l.altUnit,
             altQtyPerUnit: l.altQtyPerUnit,
@@ -181,16 +218,49 @@ export async function updateInvoice(invoiceId: string, input: InvoiceInput): Pro
   // total as a second payment on top of what's already on file.
   const alreadyPaid = existing.payments.reduce((s, p) => s + Number(p.amount), 0);
 
+  // Once an e-Invoice IRN has been filed with NIC, its tax amounts are
+  // locked with the government (there's no amend API, only cancel-within-
+  // 24h) — a GST-config edit here would desync the locally displayed/
+  // stored totals from what was actually filed. Ignore whatever the client
+  // submitted for these 8 fields in that case and keep the invoice's
+  // existing snapshot, regardless of what the (should-be-disabled) client
+  // UI sent — this is a server-side guard, not just a UI affordance.
+  const gst = existing.irn
+    ? {
+        cgstRate: Number(existing.cgstRate),
+        sgstRate: Number(existing.sgstRate),
+        igstRate: Number(existing.igstRate),
+        cgstEnabled: existing.cgstEnabled,
+        sgstEnabled: existing.sgstEnabled,
+        igstEnabled: existing.igstEnabled,
+        showBankDetails: existing.showBankDetails,
+        showHsnSummary: existing.showHsnSummary,
+        showUpiQr: existing.showUpiQr,
+        showGpayNumber: existing.showGpayNumber,
+      }
+    : {
+        cgstRate: data.cgstRate,
+        sgstRate: data.sgstRate,
+        igstRate: data.igstRate,
+        cgstEnabled: data.cgstEnabled,
+        sgstEnabled: data.sgstEnabled,
+        igstEnabled: data.igstEnabled,
+        showBankDetails: data.showBankDetails,
+        showHsnSummary: data.showHsnSummary,
+        showUpiQr: data.showUpiQr,
+        showGpayNumber: data.showGpayNumber,
+      };
+
   const totals = computeTotals(
     data.items.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount })),
     { type: data.overallDiscountType, value: data.overallDiscountValue },
     {
-      cgstRate: Number(company.cgstRate),
-      sgstRate: Number(company.sgstRate),
-      igstRate: Number(company.igstRate),
-      cgstEnabled: company.cgstEnabled,
-      sgstEnabled: company.sgstEnabled,
-      igstEnabled: company.igstEnabled,
+      cgstRate: gst.cgstRate,
+      sgstRate: gst.sgstRate,
+      igstRate: gst.igstRate,
+      cgstEnabled: gst.cgstEnabled,
+      sgstEnabled: gst.sgstEnabled,
+      igstEnabled: gst.igstEnabled,
     },
     company.state,
     customer.state
@@ -209,12 +279,12 @@ export async function updateInvoice(invoiceId: string, input: InvoiceInput): Pro
         inv.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) })),
         { type: inv.overallDiscountType, value: Number(inv.overallDiscountValue) },
         {
-          cgstRate: Number(company.cgstRate),
-          sgstRate: Number(company.sgstRate),
-          igstRate: Number(company.igstRate),
-          cgstEnabled: company.cgstEnabled,
-          sgstEnabled: company.sgstEnabled,
-          igstEnabled: company.igstEnabled,
+          cgstRate: Number(inv.cgstRate),
+          sgstRate: Number(inv.sgstRate),
+          igstRate: Number(inv.igstRate),
+          cgstEnabled: inv.cgstEnabled,
+          sgstEnabled: inv.sgstEnabled,
+          igstEnabled: inv.igstEnabled,
         },
         company.state,
         customer.state
@@ -251,6 +321,22 @@ export async function updateInvoice(invoiceId: string, input: InvoiceInput): Pro
         overallDiscountValue: data.overallDiscountValue,
         notes: data.notes?.trim() || null,
         deliveryInstructions: data.deliveryInstructions?.trim() || null,
+        showTransportDetails: data.showTransportDetails,
+        transportVehicleNo: data.transportVehicleNo?.trim() || null,
+        transportDriverName: data.transportDriverName?.trim() || null,
+        transportDriverPhone: data.transportDriverPhone?.trim() || null,
+        // `gst` above already resolves to the invoice's existing (locked)
+        // snapshot when an IRN exists, or the submitted override otherwise.
+        cgstRate: gst.cgstRate,
+        sgstRate: gst.sgstRate,
+        igstRate: gst.igstRate,
+        cgstEnabled: gst.cgstEnabled,
+        sgstEnabled: gst.sgstEnabled,
+        igstEnabled: gst.igstEnabled,
+        showBankDetails: gst.showBankDetails,
+        showHsnSummary: gst.showHsnSummary,
+        showUpiQr: gst.showUpiQr,
+        showGpayNumber: gst.showGpayNumber,
         items: {
           create: data.items.map((l) => ({
             productId: l.productId,
@@ -259,7 +345,7 @@ export async function updateInvoice(invoiceId: string, input: InvoiceInput): Pro
             qty: l.qty,
             rate: l.rate,
             discount: l.discount,
-            hsn: l.hsn?.trim() || DEFAULT_HSN,
+            hsn: l.hsn?.trim() || company.defaultHsn || DEFAULT_HSN,
             batch: l.batch,
             altUnit: l.altUnit,
             altQtyPerUnit: l.altQtyPerUnit,
@@ -276,20 +362,33 @@ export async function updateInvoice(invoiceId: string, input: InvoiceInput): Pro
   return { invoiceId: updated.id, warning };
 }
 
-function withComputedTotals<T extends { items: any[]; overallDiscountType: any; overallDiscountValue: any; payments: any[]; status: string; due: Date; customer: { state: string } }>(
-  inv: T,
-  company: { cgstRate: any; sgstRate: any; igstRate: any; cgstEnabled: boolean; sgstEnabled: boolean; igstEnabled: boolean; state: string }
-) {
+function withComputedTotals<
+  T extends {
+    items: any[];
+    overallDiscountType: any;
+    overallDiscountValue: any;
+    payments: any[];
+    status: string;
+    due: Date;
+    customer: { state: string };
+    cgstRate: any;
+    sgstRate: any;
+    igstRate: any;
+    cgstEnabled: boolean;
+    sgstEnabled: boolean;
+    igstEnabled: boolean;
+  },
+>(inv: T, company: { state: string }) {
   const totals = computeTotals(
     inv.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) })),
     { type: inv.overallDiscountType, value: Number(inv.overallDiscountValue) },
     {
-      cgstRate: Number(company.cgstRate),
-      sgstRate: Number(company.sgstRate),
-      igstRate: Number(company.igstRate),
-      cgstEnabled: company.cgstEnabled,
-      sgstEnabled: company.sgstEnabled,
-      igstEnabled: company.igstEnabled,
+      cgstRate: Number(inv.cgstRate),
+      sgstRate: Number(inv.sgstRate),
+      igstRate: Number(inv.igstRate),
+      cgstEnabled: inv.cgstEnabled,
+      sgstEnabled: inv.sgstEnabled,
+      igstEnabled: inv.igstEnabled,
     },
     company.state,
     inv.customer.state
@@ -300,9 +399,10 @@ function withComputedTotals<T extends { items: any[]; overallDiscountType: any; 
 
 /** Cheap aggregate (status + due date only, no items/payments/customer join)
  * for the invoice list's "Overdue · N" / "Draft · N" group labels — these
- * must reflect the full search-filtered set, not just the current page, so
- * this runs separately from the paginated row fetch below. */
-export async function getInvoiceStatusCounts(search?: string) {
+ * must reflect the full search-*and-date*-filtered set, not just the
+ * current page, so this runs separately from the paginated row fetch below
+ * and takes the same `dateFrom`/`dateTo` it does. */
+export async function getInvoiceStatusCounts(search?: string, dateFrom?: string, dateTo?: string) {
   const company = await getCompany();
   const rows = await prisma.invoice.findMany({
     where: {
@@ -315,6 +415,9 @@ export async function getInvoiceStatusCounts(search?: string) {
               { customer: { shopName: { contains: search, mode: 'insensitive' as const } } },
             ],
           }
+        : {}),
+      ...(dateFrom || dateTo
+        ? { date: { ...(dateFrom ? istDayRangeUtc(dateFrom) : {}), ...(dateTo ? { lt: istDayRangeUtc(dateTo).lt } : {}) } }
         : {}),
     },
     select: { status: true, due: true },
@@ -335,7 +438,7 @@ export type InvoiceSort = 'newest' | 'oldest' | 'amount-desc' | 'amount-asc';
  * a stored column) — so those two sort modes load every matching invoice,
  * compute totals in JS, sort, then slice for the requested page; date-based
  * sorts (the common case) get a real skip/take query. */
-export async function listInvoicesPage(opts?: { status?: string; search?: string; sort?: InvoiceSort; page?: number; pageSize?: number }) {
+export async function listInvoicesPage(opts?: { status?: string; search?: string; sort?: InvoiceSort; page?: number; pageSize?: number; dateFrom?: string; dateTo?: string }) {
   const company = await getCompany();
   const page = Math.max(opts?.page ?? 1, 1);
   const pageSize = opts?.pageSize ?? 20;
@@ -350,6 +453,12 @@ export async function listInvoicesPage(opts?: { status?: string; search?: string
             { customer: { shopName: { contains: opts.search, mode: 'insensitive' as const } } },
           ],
         }
+      : {}),
+    // `dateFrom`/`dateTo` are IST calendar dates (YYYY-MM-DD), not UTC —
+    // see src/lib/dates.ts for why that distinction matters for an
+    // India-only app running on a UTC server.
+    ...(opts?.dateFrom || opts?.dateTo
+      ? { date: { ...(opts.dateFrom ? istDayRangeUtc(opts.dateFrom) : {}), ...(opts.dateTo ? { lt: istDayRangeUtc(opts.dateTo).lt } : {}) } }
       : {}),
   };
 
@@ -394,12 +503,12 @@ export async function recordPayment(invoiceId: string, amount: number, date: str
     invoice.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) })),
     { type: invoice.overallDiscountType, value: Number(invoice.overallDiscountValue) },
     {
-      cgstRate: Number(company.cgstRate),
-      sgstRate: Number(company.sgstRate),
-      igstRate: Number(company.igstRate),
-      cgstEnabled: company.cgstEnabled,
-      sgstEnabled: company.sgstEnabled,
-      igstEnabled: company.igstEnabled,
+      cgstRate: Number(invoice.cgstRate),
+      sgstRate: Number(invoice.sgstRate),
+      igstRate: Number(invoice.igstRate),
+      cgstEnabled: invoice.cgstEnabled,
+      sgstEnabled: invoice.sgstEnabled,
+      igstEnabled: invoice.igstEnabled,
     },
     company.state,
     invoice.customer.state
@@ -445,6 +554,24 @@ export async function duplicateInvoice(id: string) {
         overallDiscountValue: src.overallDiscountValue,
         notes: src.notes,
         deliveryInstructions: src.deliveryInstructions,
+        showTransportDetails: src.showTransportDetails,
+        transportVehicleNo: src.transportVehicleNo,
+        transportDriverName: src.transportDriverName,
+        transportDriverPhone: src.transportDriverPhone,
+        // A duplicate clones the source's GST config exactly — not
+        // re-derived from (possibly since-changed) current Company
+        // settings — same "duplicate this exact invoice" semantics as
+        // everything else copied here.
+        cgstRate: src.cgstRate,
+        sgstRate: src.sgstRate,
+        igstRate: src.igstRate,
+        cgstEnabled: src.cgstEnabled,
+        sgstEnabled: src.sgstEnabled,
+        igstEnabled: src.igstEnabled,
+        showBankDetails: src.showBankDetails,
+        showHsnSummary: src.showHsnSummary,
+        showUpiQr: src.showUpiQr,
+        showGpayNumber: src.showGpayNumber,
         items: {
           create: src.items.map((it) => ({
             productId: it.productId,

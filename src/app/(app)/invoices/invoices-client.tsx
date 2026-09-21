@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Sheet, SheetBody, SheetContent, SheetFooter, SheetHeader, SheetIcon, SheetTitle } from '@/components/ui/sheet';
 import { fmtInr } from '@/lib/gst';
+import { customerDisplayName } from '@/lib/customer';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useInvoicesPage, useInvoiceStatusCounts, useDeleteInvoice, useDuplicateInvoice, useRecordPayment } from '@/hooks/use-invoices';
 import type { InvoiceSort } from '@/actions/invoices';
@@ -24,7 +25,7 @@ type Invoice = {
   date: string;
   due: string;
   status: 'DRAFT' | 'SENT' | 'PARTIALLY_PAID' | 'PAID';
-  customer: { name: string; state: string };
+  customer: { name: string; shopName?: string | null; state: string };
   computedTotal: number;
   amountPaid: number;
   balanceDue: number;
@@ -50,7 +51,9 @@ function groupKey(inv: Invoice) {
   return inv.isOverdue ? 'Overdue' : inv.status;
 }
 
-export function InvoicesClient({ initialData, initialStatus }: { initialData: { items: Invoice[]; total: number }; initialStatus: string }) {
+type DateFilterMode = 'today' | 'all' | 'custom';
+
+export function InvoicesClient({ initialData, initialStatus, initialDate }: { initialData: { items: Invoice[]; total: number }; initialStatus: string; initialDate: string }) {
   const [filter, setFilter] = useState(initialStatus);
   const [searchInput, setSearchInput] = useState('');
   const search = useDebouncedValue(searchInput, 300);
@@ -61,15 +64,24 @@ export function InvoicesClient({ initialData, initialStatus }: { initialData: { 
   const deleteInvoice = useDeleteInvoice();
   const duplicateInvoice = useDuplicateInvoice();
 
-  useEffect(() => setPage(1), [search, filter, sort]);
+  // Defaults to today (matching the server's SSR-seeded fetch — see
+  // invoices/page.tsx) so the list opens scoped to today's invoices rather
+  // than the full history; "All time" or a custom range are one click away.
+  const [dateMode, setDateMode] = useState<DateFilterMode>('today');
+  const [customFrom, setCustomFrom] = useState(initialDate);
+  const [customTo, setCustomTo] = useState(initialDate);
+  const dateFrom = dateMode === 'today' ? initialDate : dateMode === 'custom' ? customFrom : undefined;
+  const dateTo = dateMode === 'today' ? initialDate : dateMode === 'custom' ? customTo : undefined;
 
-  const isDefaultParams = filter === initialStatus && search === '' && sort === 'newest' && page === 1;
-  const { data, isFetching, isLoading } = useInvoicesPage({ status: filter, search, sort, page, pageSize: PAGE_SIZE }, isDefaultParams ? initialData : undefined);
+  useEffect(() => setPage(1), [search, filter, sort, dateMode, customFrom, customTo]);
+
+  const isDefaultParams = filter === initialStatus && search === '' && sort === 'newest' && page === 1 && dateMode === 'today';
+  const { data, isFetching, isLoading } = useInvoicesPage({ status: filter, search, sort, page, pageSize: PAGE_SIZE, dateFrom, dateTo }, isDefaultParams ? initialData : undefined);
   const pageItems = (data?.items ?? []) as Invoice[];
   const total = data?.total ?? 0;
 
   // Full-set counts (not just this page) for the "Overdue · N" group labels.
-  const { data: statusCounts } = useInvoiceStatusCounts(search);
+  const { data: statusCounts } = useInvoiceStatusCounts(search, dateFrom, dateTo);
 
   const groups = useMemo(() => {
     if (filter !== 'all') return [{ key: filter, items: pageItems, count: total }];
@@ -136,6 +148,35 @@ export function InvoicesClient({ initialData, initialStatus }: { initialData: { 
             </Button>
           ))}
         </div>
+        <div className="flex flex-shrink-0 items-center gap-1.5">
+          <Select value={dateMode} onValueChange={(v) => setDateMode(v as DateFilterMode)}>
+            <SelectTrigger className="h-8 w-[120px] flex-shrink-0 text-[11.5px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="today">Today</SelectItem>
+              <SelectItem value="all">All time</SelectItem>
+              <SelectItem value="custom">Custom range</SelectItem>
+            </SelectContent>
+          </Select>
+          {dateMode === 'custom' && (
+            <div className="flex items-center gap-1 rounded-sm2 border border-line bg-bg px-2 py-1">
+              <input
+                type="date"
+                value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                className="border-none bg-transparent font-mono text-[11px] text-ink-body outline-none"
+              />
+              <span className="text-ink-faint">–</span>
+              <input
+                type="date"
+                value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+                className="border-none bg-transparent font-mono text-[11px] text-ink-body outline-none"
+              />
+            </div>
+          )}
+        </div>
         <Select value={sort} onValueChange={(v) => setSort(v as InvoiceSort)}>
           <SelectTrigger className="h-8 w-[180px] flex-shrink-0 text-[11.5px]">
             <SelectValue />
@@ -187,7 +228,7 @@ export function InvoicesClient({ initialData, initialStatus }: { initialData: { 
                       className={`cursor-pointer ${selectedId === inv.id ? 'bg-brand-light' : ''}`}
                     >
                       <TableCell className="font-mono font-bold text-ink">{inv.number}</TableCell>
-                      <TableCell className="text-ink-body">{inv.customer.name}</TableCell>
+                      <TableCell className="text-ink-body">{customerDisplayName(inv.customer)}</TableCell>
                       <TableCell className="text-ink-faint">{new Date(inv.date).toLocaleDateString('en-IN')}</TableCell>
                       <TableCell className="text-ink-faint">{new Date(inv.due).toLocaleDateString('en-IN')}</TableCell>
                       <TableCell>
@@ -317,7 +358,7 @@ function InvoiceDetail({
         <div className="min-w-0 flex-1">
           <SheetTitle className="font-mono">{invoice.number}</SheetTitle>
           <p className="truncate text-[12px] text-ink-soft">
-            {invoice.customer.name} · {new Date(invoice.date).toLocaleDateString('en-IN')}
+            {customerDisplayName(invoice.customer)} · {new Date(invoice.date).toLocaleDateString('en-IN')}
           </p>
         </div>
         <StatusBadge status={invoice.status} overdue={invoice.isOverdue} />
@@ -333,7 +374,7 @@ function InvoiceDetail({
 
         <div className="space-y-1.5 text-[12.5px]">
           <Row k="Due" v={new Date(invoice.due).toLocaleDateString('en-IN')} />
-          <Row k="Bill to" v={`${invoice.customer.name} · ${invoice.customer.state}`} />
+          <Row k="Bill to" v={`${customerDisplayName(invoice.customer)} · ${invoice.customer.state}`} />
         </div>
 
         {invoice.payments.length > 0 && (

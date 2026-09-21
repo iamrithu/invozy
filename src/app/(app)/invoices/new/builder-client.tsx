@@ -31,20 +31,33 @@ import {
   X,
   IndianRupee,
   Info,
+  Settings,
+  Lock,
+  Percent,
+  QrCode,
+  Building2,
+  RotateCcw,
+  Check,
+  Truck,
+  type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { searchCustomersForBilling, getCustomerLedger } from '@/actions/customers';
 import { createInvoice, updateInvoice } from '@/actions/invoices';
+import { updateCompanyGstDefaults } from '@/actions/company';
 import { frequentProductIdsForCustomer } from '@/actions/products';
 import { useCreateCustomer } from '@/hooks/use-customers';
 import { useCreateProduct } from '@/hooks/use-products';
 import { computeTotals, fmtInr, formatUnit, type LineInput } from '@/lib/gst';
+import { upiQrDataUrl } from '@/lib/qr';
 import { numberToWords } from '@/lib/number-to-words';
 import { CustomerFormDialog } from '@/components/customers/customer-form-dialog';
 import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetIcon, SheetBody, SheetFooter, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { Switch } from '@/components/ui/switch';
 import { StateSelect } from '@/components/ui/location-field';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Pagination } from '@/components/ui/pagination';
@@ -53,6 +66,8 @@ import { InvoiceSheetClassic } from '@/components/invoices/invoice-sheet-classic
 import { InvoiceCompletenessChecklist } from '@/components/invoices/invoice-completeness-checklist';
 import { ResponsiveSheetScale } from '@/components/invoices/responsive-sheet-scale';
 import { hashColor, initials } from '@/lib/avatar';
+import { customerDisplayName } from '@/lib/customer';
+import { UNITS } from '@/lib/units';
 import { PAPER_STYLE } from '@/lib/paper-theme';
 import { StatusBadge } from '@/components/ui/status-badge';
 
@@ -89,6 +104,8 @@ type Company = {
   ifsc: string;
   branch: string;
   upi: string | null;
+  showUpiQr: boolean;
+  showGpayNumber: boolean;
   terms: string | null;
   cgstRate: string | number;
   sgstRate: string | number;
@@ -96,6 +113,9 @@ type Company = {
   cgstEnabled: boolean;
   sgstEnabled: boolean;
   igstEnabled: boolean;
+  pdfShowBankDetails: boolean;
+  pdfShowHsnSummary: boolean;
+  defaultHsn: string;
   invoiceTemplate: 'MODERN' | 'CLASSIC';
   fssaiNo?: string | null;
   pincode?: string | null;
@@ -175,7 +195,27 @@ type EditInvoice = {
   overallDiscountValue: number;
   notes: string;
   deliveryInstructions: string;
+  showTransportDetails: boolean;
+  transportVehicleNo: string;
+  transportDriverName: string;
+  transportDriverPhone: string;
   lines: Line[];
+  // The invoice's own frozen NIC e-Invoice IRN, if one has been filed — once
+  // set, GST settings are locked (see the Settings sheet below) since NIC
+  // has no amend API for a filed e-Invoice's tax amounts.
+  irn?: string | null;
+  // The invoice's own frozen GST snapshot — see schema.prisma's
+  // Invoice.cgstRate comment for why this is never re-derived from Company.
+  cgstRate: number;
+  sgstRate: number;
+  igstRate: number;
+  cgstEnabled: boolean;
+  sgstEnabled: boolean;
+  igstEnabled: boolean;
+  showBankDetails: boolean;
+  showHsnSummary: boolean;
+  showUpiQr: boolean;
+  showGpayNumber: boolean;
 };
 
 function categoryTile(cat: string) {
@@ -207,6 +247,10 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
   const [applyDiscountPerItem, setApplyDiscountPerItem] = useState(false);
   const [notes, setNotes] = useState(editInvoice?.notes ?? '');
   const [deliveryInstructions, setDeliveryInstructions] = useState(editInvoice?.deliveryInstructions ?? '');
+  const [showTransportDetails, setShowTransportDetails] = useState(editInvoice?.showTransportDetails ?? false);
+  const [transportVehicleNo, setTransportVehicleNo] = useState(editInvoice?.transportVehicleNo ?? '');
+  const [transportDriverName, setTransportDriverName] = useState(editInvoice?.transportDriverName ?? '');
+  const [transportDriverPhone, setTransportDriverPhone] = useState(editInvoice?.transportDriverPhone ?? '');
   const [date, setDate] = useState(() => editInvoice?.date ?? new Date().toISOString().slice(0, 10));
   const [due, setDue] = useState(() => editInvoice?.due ?? new Date().toISOString().slice(0, 10));
   const [saving, startSaving] = useTransition();
@@ -224,7 +268,80 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
   const [previewOpen, setPreviewOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [editCustomerOpen, setEditCustomerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Per-invoice GST/section-visibility override — pre-filled from the
+  // invoice's own already-stored snapshot when editing (never silently
+  // reset to Company's current live values just because something else is
+  // being edited), or from Company's current defaults when creating new.
+  // See schema.prisma's Invoice.cgstRate comment for the bug this fixes.
+  const [gstSettings, setGstSettings] = useState(() => ({
+    cgstRate: editInvoice ? editInvoice.cgstRate : Number(company.cgstRate),
+    sgstRate: editInvoice ? editInvoice.sgstRate : Number(company.sgstRate),
+    igstRate: editInvoice ? editInvoice.igstRate : Number(company.igstRate),
+    cgstEnabled: editInvoice ? editInvoice.cgstEnabled : company.cgstEnabled,
+    sgstEnabled: editInvoice ? editInvoice.sgstEnabled : company.sgstEnabled,
+    igstEnabled: editInvoice ? editInvoice.igstEnabled : company.igstEnabled,
+    showBankDetails: editInvoice ? editInvoice.showBankDetails : company.pdfShowBankDetails,
+    showHsnSummary: editInvoice ? editInvoice.showHsnSummary : company.pdfShowHsnSummary,
+    showUpiQr: editInvoice ? editInvoice.showUpiQr : company.showUpiQr,
+    showGpayNumber: editInvoice ? editInvoice.showGpayNumber : company.showGpayNumber,
+  }));
+  // Once an e-Invoice IRN is filed, its tax amounts are locked with NIC (no
+  // amend API, only cancel-within-24h) — the settings sheet goes read-only
+  // so a later edit here can't desync from what was actually filed. The
+  // server enforces this independently too (updateInvoice ignores GST-field
+  // changes once existing.irn is set), this is just the matching UI state.
+  const gstLocked = !!editInvoice?.irn;
+  // The Settings sheet edits this draft, not `gstSettings` itself — nothing
+  // takes effect (the live preview, the save payload) until "Apply" commits
+  // it. Re-synced from `gstSettings` every time the sheet opens, so it
+  // always starts from whatever's currently applied, not last time's
+  // abandoned edits.
+  const [draftSettings, setDraftSettings] = useState(gstSettings);
+  useEffect(() => {
+    if (settingsOpen) setDraftSettings(gstSettings);
+  }, [settingsOpen, gstSettings]);
+  // What "Reset to company defaults" resets the draft to — starts as
+  // Company's own current values, and is kept in sync locally after a
+  // successful "Save as company default" (see below) so Reset immediately
+  // reflects it without needing a full page reload.
+  const [companyDefaults, setCompanyDefaults] = useState({
+    cgstRate: Number(company.cgstRate),
+    sgstRate: Number(company.sgstRate),
+    igstRate: Number(company.igstRate),
+    cgstEnabled: company.cgstEnabled,
+    sgstEnabled: company.sgstEnabled,
+    igstEnabled: company.igstEnabled,
+    showBankDetails: company.pdfShowBankDetails,
+    showHsnSummary: company.pdfShowHsnSummary,
+    showUpiQr: company.showUpiQr,
+    showGpayNumber: company.showGpayNumber,
+  });
+  const [savingToCompany, startSavingToCompany] = useTransition();
   const hydratedDraftRef = useRef(false);
+
+  // Live-preview-only UPI QR — the `qrcode` package's toDataURL runs fine in
+  // the browser too, so the preview can show the real thing instead of a
+  // placeholder. The saved/PDF path generates its own copy server-side
+  // (src/app/(app)/invoices/[id]/page.tsx) rather than trusting this value.
+  const [upiQrPreview, setUpiQrPreview] = useState<string | null>(null);
+  useEffect(() => {
+    if (!gstSettings.showUpiQr || !company.upi) {
+      setUpiQrPreview(null);
+      return;
+    }
+    let cancelled = false;
+    upiQrDataUrl(company.upi, company.name).then((url) => {
+      if (!cancelled) setUpiQrPreview(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [gstSettings.showUpiQr, company.upi, company.name]);
+
+  // Live-preview-only GPay number, mirroring the QR preview above — plain
+  // string, no async encoding needed.
+  const gpayNumberPreview = gstSettings.showGpayNumber ? company.phone || company.altPhone || null : null;
 
   // Restore an unsaved draft left over from a refresh/accidental close, once
   // — never when editing an existing DRAFT invoice, since that's already
@@ -337,17 +454,37 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
       // double-discount, so the "overall" side is forced to zero instead.
       applyDiscountPerItem ? { type: 'PERCENT', value: 0 } : { type: discountType, value: discountValue },
       {
-        cgstRate: Number(company.cgstRate),
-        sgstRate: Number(company.sgstRate),
-        igstRate: Number(company.igstRate),
-        cgstEnabled: company.cgstEnabled,
-        sgstEnabled: company.sgstEnabled,
-        igstEnabled: company.igstEnabled,
+        cgstRate: gstSettings.cgstRate,
+        sgstRate: gstSettings.sgstRate,
+        igstRate: gstSettings.igstRate,
+        cgstEnabled: gstSettings.cgstEnabled,
+        sgstEnabled: gstSettings.sgstEnabled,
+        igstEnabled: gstSettings.igstEnabled,
       },
       company.state,
       customer?.state ?? company.state
     );
-  }, [lines, discountType, discountValue, applyDiscountPerItem, company, customer]);
+  }, [lines, discountType, discountValue, applyDiscountPerItem, company.state, customer, gstSettings]);
+
+  // Everywhere the live preview reads GST config or section-visibility, it
+  // reads this (the current override) instead of raw `company` — a single
+  // derived object so every InvoiceSheet/InvoiceSheetClassic render call
+  // site stays in sync with the Settings sheet without threading 8 separate
+  // props through each one.
+  const previewCompany = useMemo(
+    () => ({
+      ...company,
+      cgstRate: gstSettings.cgstRate,
+      sgstRate: gstSettings.sgstRate,
+      igstRate: gstSettings.igstRate,
+      cgstEnabled: gstSettings.cgstEnabled,
+      sgstEnabled: gstSettings.sgstEnabled,
+      igstEnabled: gstSettings.igstEnabled,
+      pdfShowBankDetails: gstSettings.showBankDetails,
+      pdfShowHsnSummary: gstSettings.showHsnSummary,
+    }),
+    [company, gstSettings]
+  );
 
   const lineDiscountTotal = lines.reduce((s, l) => s + l.qty * l.rate * (l.discount / 100), 0);
   const totalSavings = lineDiscountTotal + totals.overallDiscountAmount;
@@ -379,7 +516,7 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
           rate,
           discount: 0,
           packQty: isPrimary ? p.packQty : null,
-          hsn: p.hsn,
+          hsn: p.hsn || company.defaultHsn,
           altUnit: isPrimary ? p.altUnit : null,
           altQtyPerUnit: isPrimary && p.altQtyPerUnit ? Number(p.altQtyPerUnit) : null,
         },
@@ -397,7 +534,17 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
   function addCustomLine(data: { name: string; unit: string; qty: number; rate: number; productId?: string; packQty?: number | null }) {
     setLines((prev) => [
       ...prev,
-      { lineId: crypto.randomUUID(), productId: data.productId ?? null, name: data.name, unit: data.unit, qty: data.qty, rate: data.rate, discount: 0, packQty: data.packQty ?? null },
+      {
+        lineId: crypto.randomUUID(),
+        productId: data.productId ?? null,
+        name: data.name,
+        unit: data.unit,
+        qty: data.qty,
+        rate: data.rate,
+        discount: 0,
+        packQty: data.packQty ?? null,
+        hsn: company.defaultHsn,
+      },
     ]);
     toast.success(`${data.name} added`);
   }
@@ -464,8 +611,13 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
         overallDiscountValue: applyDiscountPerItem ? 0 : discountValue,
         notes,
         deliveryInstructions,
+        showTransportDetails,
+        transportVehicleNo,
+        transportDriverName,
+        transportDriverPhone,
         markSent: mode !== 'draft',
         markPaid: mode === 'paid',
+        ...gstSettings,
       };
       const result = editInvoice ? await updateInvoice(editInvoice.id, payload) : await createInvoice(payload);
       if (result.error) {
@@ -532,8 +684,13 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
         overallDiscountValue: applyDiscountPerItem ? 0 : discountValue,
         notes,
         deliveryInstructions,
+        showTransportDetails,
+        transportVehicleNo,
+        transportDriverName,
+        transportDriverPhone,
         markSent: false,
         markPaid: false,
+        ...gstSettings,
       };
       const result = draftInvoiceId ? await updateInvoice(draftInvoiceId, payload) : await createInvoice(payload);
       if (result.error) {
@@ -566,8 +723,8 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
     { label: 'Authorised signatory (name or e-signature)', done: !!(company.signatoryName || company.signatureUrl), href: '/company' },
     ...(customer
       ? [
-          { label: `${customer.name}'s GSTIN`, done: !!customer.gstin, href: '/customers' },
-          { label: `${customer.name}'s contact / phone`, done: !!(customer.contact || customer.phone), href: '/customers' },
+          { label: `${customerDisplayName(customer)}'s GSTIN`, done: !!customer.gstin, href: '/customers' },
+          { label: `${customerDisplayName(customer)}'s contact / phone`, done: !!(customer.contact || customer.phone), href: '/customers' },
         ]
       : []),
     ...(lines.length > 0 ? [{ label: 'HSN/SAC code on every line item', done: lines.every((l) => !!l.hsn) }] : []),
@@ -575,7 +732,9 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
 
   const sheet = isClassic ? (
     <InvoiceSheetClassic
-      company={company}
+      company={previewCompany}
+      upiQrDataUrl={upiQrPreview}
+      gpayNumber={gpayNumberPreview}
       customer={customer}
       date={date}
       lines={lines}
@@ -585,6 +744,10 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
       applyPerItem={applyDiscountPerItem}
       notes={notes}
       deliveryInstructions={deliveryInstructions}
+      showTransportDetails={showTransportDetails}
+      transportVehicleNo={transportVehicleNo}
+      transportDriverName={transportDriverName}
+      transportDriverPhone={transportDriverPhone}
       editable
       onDiscountTypeChange={setDiscountType}
       onDiscountValueChange={changeDiscountValue}
@@ -595,10 +758,15 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
       onRemoveLine={removeLine}
       onNotesChange={setNotes}
       onDeliveryInstructionsChange={setDeliveryInstructions}
+      onTransportVehicleNoChange={setTransportVehicleNo}
+      onTransportDriverNameChange={setTransportDriverName}
+      onTransportDriverPhoneChange={setTransportDriverPhone}
     />
   ) : (
     <InvoiceSheet
-      company={company}
+      company={previewCompany}
+      upiQrDataUrl={upiQrPreview}
+      gpayNumber={gpayNumberPreview}
       customer={customer}
       date={date}
       due={due}
@@ -648,9 +816,6 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
             <Clock size={12} /> Due
             <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="border-none bg-transparent font-mono text-[11.5px] text-ink-body outline-none" />
           </div>
-          <Button data-tour="preview-btn" variant="secondary" size="sm" onClick={() => setPreviewOpen(true)}>
-            <Eye size={13} /> Preview
-          </Button>
         </div>
       </div>
 
@@ -667,16 +832,16 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
             </div>
             {customer ? (
               <div className="flex items-center gap-2 rounded-lg2 border border-line bg-bg px-2.5 py-2">
-                <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-sm2 text-[11px] font-extrabold text-white" style={{ background: hashColor(customer.name) }}>
-                  {initials(customer.name)}
+                <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-sm2 text-[11px] font-extrabold text-white" style={{ background: hashColor(customerDisplayName(customer)) }}>
+                  {initials(customerDisplayName(customer))}
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[12px] font-bold text-ink">
-                    {customer.name}
+                    {customerDisplayName(customer)}
                     {customer.guest && <span className="ml-1.5 rounded-sm2 bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold text-ink-faint">Guest</span>}
                   </div>
                   <div className="truncate text-[10.5px] text-ink-faint">
-                    {customer.shopName ? customer.shopName + ' · ' : ''}
+                    {customer.shopName ? customer.name + ' · ' : ''}
                     {customer.phone ? customer.phone + ' · ' : ''}
                     {customer.state}
                   </div>
@@ -726,8 +891,8 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
                         onClick={() => setCustomer(c)}
                         className="flex w-full items-center gap-2 border-b border-line px-2.5 py-1.5 text-left last:border-0 hover:bg-brand-light"
                       >
-                        <span className="flex h-[26px] w-[26px] flex-shrink-0 items-center justify-center rounded-sm2 text-[10.5px] font-extrabold text-white" style={{ background: hashColor(c.name) }}>
-                          {initials(c.shopName || c.name)}
+                        <span className="flex h-[26px] w-[26px] flex-shrink-0 items-center justify-center rounded-sm2 text-[10.5px] font-extrabold text-white" style={{ background: hashColor(customerDisplayName(c)) }}>
+                          {initials(customerDisplayName(c))}
                         </span>
                         <span className="min-w-0 flex-1">
                           <div className="truncate text-[12px] font-bold text-ink">{c.shopName || c.name}</div>
@@ -749,9 +914,13 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
                 <div>
                   {customer.state} {customer.gstin ? `· GSTIN ${customer.gstin}` : '· unregistered'}
                 </div>
-                <div className="mt-0.5 flex items-center gap-1.5 font-bold text-ink">
-                  {totals.useIgst ? `IGST ${company.igstRate}%` : `CGST ${company.cgstRate}% + SGST ${company.sgstRate}%`}
-                </div>
+                {(totals.useIgst ? gstSettings.igstEnabled : gstSettings.cgstEnabled || gstSettings.sgstEnabled) && (
+                  <div className="mt-0.5 flex items-center gap-1.5 font-bold text-ink">
+                    {totals.useIgst
+                      ? `IGST ${gstSettings.igstRate}%`
+                      : [gstSettings.cgstEnabled && `CGST ${gstSettings.cgstRate}%`, gstSettings.sgstEnabled && `SGST ${gstSettings.sgstRate}%`].filter(Boolean).join(' + ')}
+                  </div>
+                )}
                 {overLimit ? (
                   <div className="mt-1 flex items-start gap-1.5 border-t border-dashed border-line pt-1 font-bold text-red">
                     <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" /> Puts them at {fmtInr(projectedBalance)} — over their {fmtInr(creditLimit)} credit limit
@@ -851,49 +1020,57 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
         </div>
       </div>
 
-      {hasItems && (
-        <div className="sticky bottom-[136px] z-20 mt-3.5 flex flex-wrap items-center gap-2.5 rounded-sm2 bg-chrome px-2.5 py-2.5 pl-4 text-white shadow-elevated md:bottom-[72px]">
-          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-sm2 bg-brand">
-            <ShoppingCart size={13} />
-          </span>
-          <span className="flex-1 text-[12px] font-semibold leading-tight">
-            <b className="font-mono">{lines.length}</b> product{lines.length !== 1 ? 's' : ''} · <b className="font-mono">{Math.round(totalUnits * 100) / 100}</b> unit
-            {totalUnits !== 1 ? 's' : ''} &nbsp;·&nbsp; <b className="font-mono">{fmtInr(totals.total)}</b>
-          </span>
-          <button onClick={() => setPreviewOpen(true)} className="flex flex-shrink-0 items-center gap-1.5 rounded-sm2 bg-brand px-3.5 py-2 text-[11.5px] font-extrabold text-white">
-            <ArrowRight size={12} /> View
-          </button>
-        </div>
-      )}
-
-      {/* Full-width save bar, pinned to the bottom of the viewport (above
-          the mobile BottomNav, flush with it on desktop where that's
-          hidden) — breaks out of main's own side padding (see
+      {/* One consolidated footer bar, pinned to the bottom of the viewport
+          (above the mobile BottomNav, flush with it on desktop where
+          that's hidden) — breaks out of main's own side padding (see
           (app)/layout.tsx) via matching negative margins so it spans the
           whole content width edge-to-edge, regardless of which column the
-          click that triggered it came from. */}
+          click that triggered it came from. Replaces two previously
+          separate stacked bars (a cart-summary strip and a save-actions
+          bar) with a single row: running total on the left, every action
+          (Preview, Download, the three Save variants) on the right. */}
       <div
         data-tour="save-buttons"
-        className="sticky bottom-[60px] z-20 -mx-4 mt-3.5 flex flex-wrap items-center justify-end gap-2.5 border-t border-line bg-surface px-4 py-3 shadow-elevated md:bottom-0 md:-mx-6 md:px-6"
+        className="sticky bottom-0 z-20 -mx-4 mt-3.5 flex flex-wrap items-center gap-2.5 border-t border-line bg-surface px-4 py-3 shadow-elevated md:-mx-6 md:px-6"
       >
-        {error ? (
-          <p className="mr-auto flex items-center gap-1.5 text-[12px] font-bold text-destructive">
-            <AlertTriangle size={12} className="flex-shrink-0" /> {error}
-          </p>
-        ) : (
-          <p className="mr-auto hidden items-center gap-1.5 text-[10.5px] text-ink-faint sm:flex">
-            <Info size={11} className="flex-shrink-0" /> The invoice number is assigned the moment you save.
-          </p>
-        )}
-        <Button variant="outline" onClick={() => save('draft')} disabled={saving}>
-          <FileText size={13} /> Save as draft
-        </Button>
-        <Button variant="secondary" onClick={() => save('paid')} disabled={saving}>
-          <IndianRupee size={13} /> {saving ? 'Saving…' : 'Save & mark as paid'}
-        </Button>
-        <Button onClick={() => save('sent')} disabled={saving}>
-          <CheckCircle2 size={13} /> {saving ? 'Saving…' : 'Save & mark as sent'}
-        </Button>
+        <div className="mr-auto flex min-w-0 flex-1 items-center">
+          {error ? (
+            <p className="flex items-center gap-1.5 text-[12px] font-bold text-destructive">
+              <AlertTriangle size={12} className="flex-shrink-0" /> {error}
+            </p>
+          ) : hasItems ? (
+            <div className="flex items-center gap-2 text-[12px] font-semibold leading-tight text-ink-soft">
+              <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-sm2 bg-brand-light text-brand-dark">
+                <ShoppingCart size={13} />
+              </span>
+              <span>
+                <b className="font-mono text-ink">{lines.length}</b> product{lines.length !== 1 ? 's' : ''} · <b className="font-mono text-ink">{Math.round(totalUnits * 100) / 100}</b> unit
+                {totalUnits !== 1 ? 's' : ''} &nbsp;·&nbsp; <b className="font-mono text-ink">{fmtInr(totals.total)}</b>
+              </span>
+            </div>
+          ) : (
+            <p className="hidden items-center gap-1.5 text-[10.5px] text-ink-faint sm:flex">
+              <Info size={11} className="flex-shrink-0" /> The invoice number is assigned the moment you save.
+            </p>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button data-tour="preview-btn" variant="secondary" size="sm" onClick={() => setPreviewOpen(true)}>
+            <Eye size={13} /> Preview
+          </Button>
+          <Button variant="outline" size="sm" onClick={downloadPdf} disabled={downloadingPdf}>
+            <Printer size={13} /> {downloadingPdf ? 'Generating…' : 'Download PDF'}
+          </Button>
+          <Button variant="outline" onClick={() => save('draft')} disabled={saving}>
+            <FileText size={13} /> Save as draft
+          </Button>
+          <Button variant="secondary" onClick={() => save('paid')} disabled={saving}>
+            <IndianRupee size={13} /> {saving ? 'Saving…' : 'Save & mark as paid'}
+          </Button>
+          <Button onClick={() => save('sent')} disabled={saving}>
+            <CheckCircle2 size={13} /> {saving ? 'Saving…' : 'Save & mark as sent'}
+          </Button>
+        </div>
       </div>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
@@ -903,11 +1080,13 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
               <Eye size={16} className="text-brand" /> Invoice preview
             </DialogTitle>
           </DialogHeader>
-          <div className="max-h-[70vh] overflow-y-auto" style={PAPER_STYLE}>
+          <div className="max-h-[70vh] overflow-y-auto invoice-sheet-mono" style={PAPER_STYLE}>
             <ResponsiveSheetScale>
               {isClassic ? (
                 <InvoiceSheetClassic
-                  company={company}
+                  company={previewCompany}
+      upiQrDataUrl={upiQrPreview}
+      gpayNumber={gpayNumberPreview}
                   customer={customer}
                   date={date}
                   lines={lines}
@@ -916,11 +1095,17 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
                   discountValue={discountValue}
                   notes={notes}
                   deliveryInstructions={deliveryInstructions}
+                  showTransportDetails={showTransportDetails}
+                  transportVehicleNo={transportVehicleNo}
+                  transportDriverName={transportDriverName}
+                  transportDriverPhone={transportDriverPhone}
                   editable={false}
                 />
               ) : (
                 <InvoiceSheet
-                  company={company}
+                  company={previewCompany}
+      upiQrDataUrl={upiQrPreview}
+      gpayNumber={gpayNumberPreview}
                   customer={customer}
                   date={date}
                   due={due}
@@ -958,6 +1143,177 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
           amountDue={totals.total}
         />
       )}
+
+      {/* Fixed above both sticky bottom bars (the cart summary and the save
+          bar) so it never gets covered on mobile, where the two of them
+          stack up to ~190px tall together. */}
+      <button
+        type="button"
+        onClick={() => setSettingsOpen(true)}
+        aria-label="Invoice settings"
+        className="fixed bottom-56 right-4 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-chrome text-white shadow-elevated transition-transform hover:scale-105 md:bottom-28 md:right-6"
+      >
+        {gstLocked ? <Lock size={18} /> : <Settings size={18} />}
+      </button>
+
+      <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <SheetContent>
+          <SheetHeader>
+            <SheetIcon>
+              <Settings size={16} />
+            </SheetIcon>
+            <div>
+              <SheetTitle>Invoice settings</SheetTitle>
+              <SheetDescription>Override company defaults just for this invoice — nothing here takes effect until you hit Apply.</SheetDescription>
+            </div>
+          </SheetHeader>
+          <SheetBody className="space-y-4">
+            {gstLocked && (
+              <div className="flex items-start gap-2 rounded-lg2 border border-line bg-bg p-3 text-[11.5px] font-semibold text-ink-soft">
+                <Lock size={13} className="mt-0.5 flex-shrink-0 text-ink-faint" />
+                GST settings are locked — this invoice has a filed e-Invoice (IRN). Cancel the e-Invoice first if these need to change.
+              </div>
+            )}
+
+            <SettingsSection icon={Percent} title="GST">
+              <SettingsRateRow
+                label="CGST"
+                rate={draftSettings.cgstRate}
+                enabled={draftSettings.cgstEnabled}
+                disabled={gstLocked}
+                onRateChange={(v) => setDraftSettings((s) => ({ ...s, cgstRate: v }))}
+                onEnabledChange={(v) => setDraftSettings((s) => ({ ...s, cgstEnabled: v }))}
+              />
+              <SettingsRateRow
+                label="SGST"
+                rate={draftSettings.sgstRate}
+                enabled={draftSettings.sgstEnabled}
+                disabled={gstLocked}
+                onRateChange={(v) => setDraftSettings((s) => ({ ...s, sgstRate: v }))}
+                onEnabledChange={(v) => setDraftSettings((s) => ({ ...s, sgstEnabled: v }))}
+              />
+              <SettingsRateRow
+                label="IGST"
+                rate={draftSettings.igstRate}
+                enabled={draftSettings.igstEnabled}
+                disabled={gstLocked}
+                onRateChange={(v) => setDraftSettings((s) => ({ ...s, igstRate: v }))}
+                onEnabledChange={(v) => setDraftSettings((s) => ({ ...s, igstEnabled: v }))}
+              />
+            </SettingsSection>
+
+            <SettingsSection icon={FileText} title="PDF sections">
+              <SettingsToggleRow
+                label="Bank details"
+                checked={draftSettings.showBankDetails}
+                disabled={gstLocked}
+                onChange={(v) => setDraftSettings((s) => ({ ...s, showBankDetails: v }))}
+              />
+              {isClassic && (
+                <SettingsToggleRow
+                  label="HSN-wise tax summary"
+                  checked={draftSettings.showHsnSummary}
+                  disabled={gstLocked}
+                  onChange={(v) => setDraftSettings((s) => ({ ...s, showHsnSummary: v }))}
+                />
+              )}
+            </SettingsSection>
+
+            <SettingsSection icon={QrCode} title="Payment info">
+              <SettingsToggleRow label="UPI QR" checked={draftSettings.showUpiQr} disabled={gstLocked} onChange={(v) => setDraftSettings((s) => ({ ...s, showUpiQr: v }))} />
+              <SettingsToggleRow
+                label="GPay number"
+                checked={draftSettings.showGpayNumber}
+                disabled={gstLocked}
+                onChange={(v) => setDraftSettings((s) => ({ ...s, showGpayNumber: v }))}
+              />
+              {!company.upi && !company.phone && (
+                <p className="flex items-start gap-1.5 pt-1 text-[11px] text-ink-faint">
+                  <Info size={11} className="mt-0.5 flex-shrink-0" /> Add a UPI ID or phone number in Company settings first — there&apos;s nothing to show yet.
+                </p>
+              )}
+            </SettingsSection>
+
+            {isClassic && (
+              <SettingsSection icon={Truck} title="Transport details">
+                <SettingsToggleRow label="Show on invoice PDF" checked={showTransportDetails} onChange={setShowTransportDetails} />
+                {showTransportDetails && (
+                  <div className="space-y-2 bg-surface px-3 py-2.5">
+                    <input
+                      value={transportVehicleNo}
+                      onChange={(e) => setTransportVehicleNo(e.target.value)}
+                      placeholder="Vehicle number"
+                      className="w-full rounded-sm2 border border-line bg-bg px-2.5 py-1.5 text-[12px] focus:border-brand focus:outline-none"
+                    />
+                    <input
+                      value={transportDriverName}
+                      onChange={(e) => setTransportDriverName(e.target.value)}
+                      placeholder="Driver name"
+                      className="w-full rounded-sm2 border border-line bg-bg px-2.5 py-1.5 text-[12px] focus:border-brand focus:outline-none"
+                    />
+                    <input
+                      value={transportDriverPhone}
+                      onChange={(e) => setTransportDriverPhone(e.target.value)}
+                      placeholder="Driver contact number"
+                      className="w-full rounded-sm2 border border-line bg-bg px-2.5 py-1.5 text-[12px] focus:border-brand focus:outline-none"
+                    />
+                    <p className="flex items-start gap-1.5 text-[11px] text-ink-faint">
+                      <Info size={11} className="mt-0.5 flex-shrink-0" /> Prints in a box before Delivery Instructions — left blank fields just don&apos;t show, and leaving all three empty hides the
+                      whole box even with this switched on.
+                    </p>
+                  </div>
+                )}
+              </SettingsSection>
+            )}
+          </SheetBody>
+          <SheetFooter>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="ghost" size="sm" disabled={gstLocked} onClick={() => setDraftSettings(companyDefaults)}>
+                <RotateCcw size={12} /> Reset to company defaults
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={gstLocked || savingToCompany}
+                onClick={() =>
+                  startSavingToCompany(async () => {
+                    const { cgstRate, sgstRate, igstRate, cgstEnabled, sgstEnabled, igstEnabled, showBankDetails, showHsnSummary, showUpiQr, showGpayNumber } = draftSettings;
+                    const result = await updateCompanyGstDefaults({
+                      cgstRate,
+                      sgstRate,
+                      igstRate,
+                      cgstEnabled,
+                      sgstEnabled,
+                      igstEnabled,
+                      pdfShowBankDetails: showBankDetails,
+                      pdfShowHsnSummary: showHsnSummary,
+                      showUpiQr,
+                      showGpayNumber,
+                    });
+                    if (result.error) {
+                      toast.error(result.error);
+                      return;
+                    }
+                    setCompanyDefaults({ cgstRate, sgstRate, igstRate, cgstEnabled, sgstEnabled, igstEnabled, showBankDetails, showHsnSummary, showUpiQr, showGpayNumber });
+                    toast.success('Saved as the company default for new invoices');
+                  })
+                }
+              >
+                <Building2 size={12} /> {savingToCompany ? 'Saving…' : 'Save as company default'}
+              </Button>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => {
+                setGstSettings(draftSettings);
+                setSettingsOpen(false);
+              }}
+            >
+              <Check size={13} /> Apply
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
       </div>
 
       {/* Print/PDF source of truth — invisible on screen, shown only by the
@@ -965,40 +1321,131 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
           wrapper above (not inside the Dialog, which is `position: fixed`
           and breaks print pagination — fixed-position elements are
           repositioned per-page by the browser's print engine, which was
-          producing garbled multi-page output; nor inside the print:hidden
-          div itself, whose display:none would hide this too). Always
-          reflects live state, so "Download / print" from the dialog just
-          calls window.print(). */}
-      <div className="invoice-print hidden print:block" style={PAPER_STYLE}>
-        {isClassic ? (
-          <InvoiceSheetClassic
-            company={company}
-            customer={customer}
-            date={date}
-            lines={lines}
-            totals={totals}
-            discountType={discountType}
-            discountValue={discountValue}
-            notes={notes}
-            deliveryInstructions={deliveryInstructions}
-            editable={false}
-          />
-        ) : (
-          <InvoiceSheet
-            company={company}
-            customer={customer}
-            date={date}
-            due={due}
-            lines={lines}
-            totals={totals}
-            totalSavings={totalSavings}
-            discountType={discountType}
-            discountValue={discountValue}
-            editable={false}
-          />
-        )}
+          producing garbled multi-page output). Always reflects live state,
+          so "Download / print" from the dialog just calls window.print().
+          Collapsed to zero height with clipped overflow (not
+          `display:none`): a `display:none` ancestor forces every
+          descendant's layout to zero, which would make the self-measuring
+          pagination in InvoiceSheet/InvoiceSheetClassic (see
+          print-pagination.tsx) always read zero-height sections and
+          silently fall back to "everything fits on one page" — height-0 +
+          overflow-hidden keeps this invisible and footprint-free while
+          still letting the browser compute real layout for anything
+          inside it. */}
+      <div className="h-0 overflow-hidden print:h-auto print:overflow-visible">
+        <div className="invoice-print" style={PAPER_STYLE}>
+          {isClassic ? (
+            <InvoiceSheetClassic
+              company={previewCompany}
+      upiQrDataUrl={upiQrPreview}
+      gpayNumber={gpayNumberPreview}
+              customer={customer}
+              date={date}
+              lines={lines}
+              totals={totals}
+              discountType={discountType}
+              discountValue={discountValue}
+              notes={notes}
+              deliveryInstructions={deliveryInstructions}
+              showTransportDetails={showTransportDetails}
+              transportVehicleNo={transportVehicleNo}
+              transportDriverName={transportDriverName}
+              transportDriverPhone={transportDriverPhone}
+              editable={false}
+            />
+          ) : (
+            <InvoiceSheet
+              company={previewCompany}
+      upiQrDataUrl={upiQrPreview}
+      gpayNumber={gpayNumberPreview}
+              customer={customer}
+              date={date}
+              due={due}
+              lines={lines}
+              totals={totals}
+              totalSavings={totalSavings}
+              discountType={discountType}
+              discountValue={discountValue}
+              editable={false}
+            />
+          )}
+        </div>
       </div>
     </>
+  );
+}
+
+/** Controlled variant of company-form.tsx's RateRow — that one is built for
+ * an uncontrolled `<form>` + FormData submission (defaultValue/
+ * defaultChecked), which doesn't fit this page's fully-controlled
+ * useState-per-field pattern, so this is a small parallel component rather
+ * than a shared one. Visually mirrors it. */
+/** A labeled group of settings rows — one bordered card per topic (GST,
+ * PDF sections, payment info) instead of the flat unbroken stack of rows
+ * this sheet used to be, so each topic reads as its own unit at a glance. */
+function SettingsSection({ icon: Icon, title, children }: { icon: LucideIcon; title: string; children: React.ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-lg2 border border-line">
+      <div className="flex items-center gap-1.5 border-b border-line bg-bg px-3 py-2 text-[10.5px] font-extrabold uppercase tracking-wide text-ink-faint">
+        <Icon size={12} className="text-brand" /> {title}
+      </div>
+      <div className="divide-y divide-line">{children}</div>
+    </div>
+  );
+}
+
+/** One GST tax row — the rate only shows once its own switch is on, so a
+ * business that never charges IGST isn't stuck looking at an empty/greyed
+ * rate box for it forever; flipping the switch back on reveals the rate
+ * again at whatever it was last set to (never reset to 0). */
+function SettingsRateRow({
+  label,
+  rate,
+  enabled,
+  disabled,
+  onRateChange,
+  onEnabledChange,
+}: {
+  label: string;
+  rate: number;
+  enabled: boolean;
+  disabled?: boolean;
+  onRateChange: (v: number) => void;
+  onEnabledChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 bg-surface px-3 py-2.5">
+      <span className="text-[12.5px] font-bold text-ink-soft">{label}</span>
+      <div className="flex items-center gap-2.5">
+        {enabled && (
+          <label className="flex items-center gap-1 rounded-sm2 border border-line bg-bg px-2 py-1">
+            <input
+              type="number"
+              step="0.01"
+              min={0}
+              max={100}
+              value={rate}
+              disabled={disabled}
+              onChange={(e) => onRateChange(parseFloat(e.target.value) || 0)}
+              className="w-10 bg-transparent text-right font-mono text-[13px] font-extrabold text-ink outline-none disabled:opacity-50"
+            />
+            <span className="text-[11px] font-bold text-ink-faint">%</span>
+          </label>
+        )}
+        <Switch checked={enabled} disabled={disabled} onChange={(e) => onEnabledChange(e.target.checked)} />
+      </div>
+    </div>
+  );
+}
+
+/** One on/off PDF-section or payment-info row — the plain counterpart to
+ * SettingsRateRow for settings with no accompanying rate value. */
+function SettingsToggleRow({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 bg-surface px-3 py-2.5">
+      <span className="text-[12.5px] font-bold text-ink-soft">{label}</span>
+      <Switch checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+    </div>
   );
 }
 
@@ -1144,7 +1591,7 @@ function AddCustomItemForm({
   onCancel: () => void;
 }) {
   const [name, setName] = useState('');
-  const [unit, setUnit] = useState('pc');
+  const [unit, setUnit] = useState('Piece');
   const [qty, setQty] = useState('1');
   const [rate, setRate] = useState('');
   // Optional — only meaningful if this gets saved as a catalog product
@@ -1195,7 +1642,7 @@ function AddCustomItemForm({
 
     onAdd({ name: name.trim(), unit: unit.trim() || 'pc', qty: qtyNum, rate: rateNum, productId, packQty: packQtyNum > 0 ? packQtyNum : undefined });
     setName('');
-    setUnit('pc');
+    setUnit('Piece');
     setQty('1');
     setRate('');
     setPackQty('');
@@ -1206,7 +1653,14 @@ function AddCustomItemForm({
     <form onSubmit={submit} className="mt-2 space-y-2 rounded-lg2 border border-line bg-bg p-3">
       <div className="grid grid-cols-2 gap-2">
         <Field label="Name" name="name" value={name} onChange={(e) => setName(e.target.value)} />
-        <Field label="Unit" name="unit" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="pc, kg, box…" />
+        <Field
+          label="Unit"
+          name="unit"
+          as="select"
+          value={unit}
+          onChange={(e) => setUnit(e.target.value)}
+          options={(UNITS.includes(unit) ? UNITS : [unit, ...UNITS]).map((u) => ({ value: u, label: formatUnit(u) }))}
+        />
       </div>
       <div className="grid grid-cols-2 gap-2">
         <Field label="Qty" name="qty" type="number" value={qty} onChange={(e) => setQty(e.target.value)} mono />
@@ -1216,7 +1670,7 @@ function AddCustomItemForm({
         <input type="checkbox" checked={saveAsProduct} onChange={(e) => setSaveAsProduct(e.target.checked)} className="h-3.5 w-3.5 rounded-sm2 border-line accent-brand" />
         Save this as a product for next time
       </label>
-      {saveAsProduct && unit.trim().toLowerCase() !== 'pc' && (
+      {saveAsProduct && unit.trim().toLowerCase() !== 'piece' && (
         <Field label="Pieces per unit (optional — lets you also bill this product loose, by the piece, later)" name="packQty" type="number" value={packQty} onChange={(e) => setPackQty(e.target.value)} mono />
       )}
       {error && <p className="text-[11.5px] font-bold text-destructive">{error}</p>}
@@ -1306,7 +1760,7 @@ function ShareDialog({
   due: string;
   amountDue: number;
 }) {
-  const message = `Invoice from ${company.name}\nBill to: ${customer.name}\nAmount due: ${fmtInr(amountDue)}\nDue date: ${due}\n\nThank you for your business!`;
+  const message = `Invoice from ${company.name}\nBill to: ${customerDisplayName(customer)}\nAmount due: ${fmtInr(amountDue)}\nDue date: ${due}\n\nThank you for your business!`;
   const waDigits = (customer.phone || '').replace(/[^0-9]/g, '');
   const waUrl = `https://wa.me/${waDigits}?text=${encodeURIComponent(message)}`;
   const mailUrl = `mailto:${customer.email || ''}?subject=${encodeURIComponent('Invoice from ' + company.name)}&body=${encodeURIComponent(message)}`;

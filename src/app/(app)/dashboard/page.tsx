@@ -8,6 +8,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Sparkline } from '@/components/ui/sparkline';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { hashColor, initials } from '@/lib/avatar';
+import { customerDisplayName } from '@/lib/customer';
 
 export const dynamic = 'force-dynamic';
 
@@ -151,11 +152,11 @@ export default async function DashboardPage() {
               >
                 <div
                   className="mb-2.5 flex h-[38px] w-[38px] items-center justify-center rounded-sm2 text-[13px] font-extrabold text-white"
-                  style={{ background: hashColor(c.name) }}
+                  style={{ background: hashColor(customerDisplayName(c)) }}
                 >
-                  {initials(c.name)}
+                  {initials(customerDisplayName(c))}
                 </div>
-                <div className="truncate text-[12.5px] font-bold text-ink">{c.name}</div>
+                <div className="truncate text-[12.5px] font-bold text-ink">{customerDisplayName(c)}</div>
                 <div className="mt-0.5 text-[11px] text-ink-faint">
                   {c.count} invoice{c.count !== 1 ? 's' : ''}
                 </div>
@@ -189,16 +190,16 @@ export default async function DashboardPage() {
                       <div className="flex items-center gap-2.5">
                         <span
                           className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-sm2 text-[11px] font-extrabold text-white"
-                          style={{ background: hashColor(r.invoice.customer.name) }}
+                          style={{ background: hashColor(customerDisplayName(r.invoice.customer)) }}
                         >
-                          {initials(r.invoice.customer.name)}
+                          {initials(customerDisplayName(r.invoice.customer))}
                         </span>
                         <div>
                           <Link href={`/invoices/${r.invoice.id}`} className="font-mono font-bold text-ink hover:text-brand">
                             {r.invoice.number}
                           </Link>
                           <div className="text-[11px] text-ink-faint">
-                            {r.invoice.customer.name} · {new Date(r.invoice.date).toLocaleDateString('en-IN')}
+                            {customerDisplayName(r.invoice.customer)} · {new Date(r.invoice.date).toLocaleDateString('en-IN')}
                           </div>
                         </div>
                       </div>

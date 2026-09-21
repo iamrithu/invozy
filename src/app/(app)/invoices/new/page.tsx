@@ -37,6 +37,24 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: P
       overallDiscountValue: Number(invoice.overallDiscountValue),
       notes: invoice.notes ?? '',
       deliveryInstructions: invoice.deliveryInstructions ?? '',
+      showTransportDetails: invoice.showTransportDetails,
+      transportVehicleNo: invoice.transportVehicleNo ?? '',
+      transportDriverName: invoice.transportDriverName ?? '',
+      transportDriverPhone: invoice.transportDriverPhone ?? '',
+      irn: invoice.irn,
+      // The invoice's own frozen GST snapshot — pre-fills the builder's
+      // Settings sheet so editing never silently resets to Company's
+      // current live values (see schema.prisma's Invoice.cgstRate comment).
+      cgstRate: Number(invoice.cgstRate),
+      sgstRate: Number(invoice.sgstRate),
+      igstRate: Number(invoice.igstRate),
+      cgstEnabled: invoice.cgstEnabled,
+      sgstEnabled: invoice.sgstEnabled,
+      igstEnabled: invoice.igstEnabled,
+      showBankDetails: invoice.showBankDetails,
+      showHsnSummary: invoice.showHsnSummary,
+      showUpiQr: invoice.showUpiQr,
+      showGpayNumber: invoice.showGpayNumber,
       lines: invoice.items.map((it) => ({
         lineId: it.id,
         productId: it.productId,

@@ -64,12 +64,12 @@ export async function getCompanyForAdmin(id: string) {
       inv.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) })),
       { type: inv.overallDiscountType, value: Number(inv.overallDiscountValue) },
       {
-        cgstRate: Number(company.cgstRate),
-        sgstRate: Number(company.sgstRate),
-        igstRate: Number(company.igstRate),
-        cgstEnabled: company.cgstEnabled,
-        sgstEnabled: company.sgstEnabled,
-        igstEnabled: company.igstEnabled,
+        cgstRate: Number(inv.cgstRate),
+        sgstRate: Number(inv.sgstRate),
+        igstRate: Number(inv.igstRate),
+        cgstEnabled: inv.cgstEnabled,
+        sgstEnabled: inv.sgstEnabled,
+        igstEnabled: inv.igstEnabled,
       },
       company.state,
       inv.customer.state
