@@ -225,4 +225,14 @@ main:has(> .invoice-builder-root) {
   .eway-page {
     break-before: page;
   }
+  /* Screen palette (text-ink-soft/-faint, text-brand, etc.) is tuned for a
+     backlit display and prints/exports to PDF far too light to read once on
+     paper or toner — thermal/laser printers and PDF viewers don't render
+     those mid-gray tones with anywhere near their on-screen contrast. Force
+     every text node in the printed invoice to solid black regardless of its
+     screen color class; only backgrounds/borders keep their own colors. */
+  .invoice-print,
+  .invoice-print * {
+    color: #000 !important;
+  }
 }
