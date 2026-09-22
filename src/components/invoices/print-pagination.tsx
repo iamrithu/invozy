@@ -59,10 +59,10 @@ export type PaginationResult<T> = {
 
 /** Splits line items into physical pages. A short invoice that fits —
  * header + buyer + every item + the full closing block, all together —
- * stays a single page. Otherwise every page but the last is filled to its
- * full `perPage` capacity before moving to the next, and the true last page
- * (which drops the buyer block to make room for the closing block instead)
- * gets whatever's left, capped at `lastCap`.
+ * stays a single page. Otherwise, items are spread as evenly as possible
+ * across however many pages are actually needed, each non-last page never
+ * exceeding `perPage` and the last page (which drops the buyer block to
+ * make room for the closing block instead) never exceeding `lastCap`.
  *
  * The buyer block (customer name/address/GSTIN, delivery instructions)
  * always shows somewhere — either on the single page, when everything fits
@@ -71,27 +71,54 @@ export type PaginationResult<T> = {
  * entirely to squeeze in a few more items without spilling onto a second
  * page; that traded away information the buyer/delivery crew actually
  * needs off of every invoice, which isn't a trade this app makes anymore —
- * a slightly-over-capacity invoice now genuinely paginates instead. */
+ * a slightly-over-capacity invoice now genuinely paginates instead.
+ *
+ * Earlier this greedily maxed out every page before the last and dumped
+ * whatever was left (as few as a single item) onto the final page — e.g. a
+ * 25-item invoice with room for 22 per page came out [22, 3]: page 1 packed
+ * tight, page 2 a handful of items floating above the closing block. Since
+ * only the truly last page is stretched to fill the physical page height
+ * (see the `lastPageSpacerPx` logic at the call site), an under-filled
+ * *non-last* page also leaves genuine blank paper below its content before
+ * the forced page break. Spreading the total evenly — here, [13, 12] —
+ * keeps every page reasonably full instead of one page dense and the next
+ * nearly empty. */
 export function paginateLines<T>(lines: T[], perPage: number, singleCap: number, lastCap: number): PaginationResult<T> {
   const total = lines.length;
   if (total <= singleCap) return { pages: [lines] };
 
-  const pages: T[][] = [];
-  let idx = 0;
+  // Fewest pages that can hold everything: every page but the last can hold
+  // up to `perPage` items (it only has to make room for the small
+  // "Continued on page N" footer below it), the last page up to `lastCap`
+  // (it carries the full closing block instead).
+  let pageCount = 2;
+  while ((pageCount - 1) * perPage + lastCap < total) pageCount++;
+
+  const caps = Array.from({ length: pageCount }, (_, i) => (i === pageCount - 1 ? lastCap : perPage));
+  const counts = new Array(pageCount).fill(0);
   let remaining = total;
-  // `remaining - 1` (not `remaining`) guarantees at least one item is
-  // always left for a genuinely separate last page — see
-  // invoice-sheet-classic.tsx's git history for the fuller rationale
-  // (reserving the full `remaining` here would, whenever what's left
-  // already fits within `lastCap`, consume it entirely on a "non-last"
-  // page and leave the final push with zero items).
-  while (remaining > lastCap || pages.length === 0) {
-    const take = Math.min(perPage, remaining - 1);
-    pages.push(lines.slice(idx, idx + take));
-    idx += take;
+  for (let i = 0; i < pageCount; i++) {
+    const pagesLeft = pageCount - i;
+    const take = Math.min(caps[i], Math.ceil(remaining / pagesLeft));
+    counts[i] = take;
     remaining -= take;
   }
-  pages.push(lines.slice(idx));
+  // Rounding up at each step can starve the last page (its cap is usually
+  // the smallest, since it alone carries the closing block) — hand any
+  // shortfall back to the earliest pages that still have spare room under
+  // their own cap.
+  for (let i = 0; remaining > 0 && i < pageCount; i++) {
+    const add = Math.min(caps[i] - counts[i], remaining);
+    counts[i] += add;
+    remaining -= add;
+  }
+
+  const pages: T[][] = [];
+  let idx = 0;
+  for (const c of counts) {
+    pages.push(lines.slice(idx, idx + c));
+    idx += c;
+  }
   return { pages };
 }
 

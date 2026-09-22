@@ -101,15 +101,15 @@ export type ClassicEway = {
  * probe measures the exact same markup that actually gets printed. */
 function classicTheadRow({ editable, hasAltQty, altUnitLabel }: { editable: boolean; hasAltQty: boolean; altUnitLabel: string }) {
   return (
-    <tr className="border-y-2 border-ink bg-surface-alt text-left font-bold">
-      <th className="w-9 border-r border-ink px-2 py-1.5">S.NO</th>
-      <th className="border-r border-ink px-2 py-1.5">Products</th>
-      <th className="w-[78px] border-r border-ink px-2 py-1.5">HSN/SAC</th>
-      <th className="w-[92px] border-r border-ink px-2 py-1.5 text-right">Quantity</th>
-      <th className="w-[76px] border-r border-ink px-2 py-1.5 text-right">Rate</th>
-      <th className="w-14 border-r border-ink px-2 py-1.5 text-right">Per (Unit)</th>
-      {editable && <th className="w-14 border-r border-ink px-2 py-1.5 text-right">Disc%</th>}
-      {hasAltQty && <th className="w-16 border-r border-ink px-2 py-1.5 text-right">In {altUnitLabel}</th>}
+    <tr className="border-y border-ink bg-surface-alt text-left font-semibold">
+      <th className="w-9 border-r border-line px-2 py-1.5">S.NO</th>
+      <th className="border-r border-line px-2 py-1.5">Products</th>
+      <th className="w-[78px] border-r border-line px-2 py-1.5">HSN/SAC</th>
+      <th className="w-[92px] border-r border-line px-2 py-1.5 text-right">Quantity</th>
+      <th className="w-[76px] border-r border-line px-2 py-1.5 text-right">Rate</th>
+      <th className="w-14 border-r border-line px-2 py-1.5 text-right">Per (Unit)</th>
+      {editable && <th className="w-14 border-r border-line px-2 py-1.5 text-right">Disc%</th>}
+      {hasAltQty && <th className="w-16 border-r border-line px-2 py-1.5 text-right">In {altUnitLabel}</th>}
       <th className="w-[100px] px-2 py-1.5 text-right">Amount</th>
       {editable && <th className="w-6 px-1" />}
     </tr>
@@ -949,44 +949,63 @@ function ClassicClosing(props: SharedProps) {
         </>
       )}
 
-      {((company.pdfShowBankDetails && company.bankName) || company.terms) && (
-        <div className="grid grid-cols-2 gap-4 border-t border-line p-1.5 text-[10.5px] break-inside-avoid">
-          {company.pdfShowBankDetails && company.bankName && (
-            <div>
-              <div className="mb-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-faint">Bank Details</div>
-              <div className="font-mono font-tabular leading-snug text-ink-body">
-                {company.bankName}
-                {company.bankAcc && (
-                  <>
-                    <br />
-                    A/C {company.bankAcc}
-                  </>
-                )}
-                {company.ifsc && (
-                  <>
-                    <br />
-                    IFSC {company.ifsc}
-                  </>
-                )}
-                {company.branch && (
-                  <>
-                    <br />
-                    {company.branch}
-                  </>
-                )}
-                {company.upi && (
-                  <>
-                    <br />
-                    UPI {company.upi}
-                  </>
-                )}
+      {((company.pdfShowBankDetails && company.bankName) || company.terms || props.upiQrDataUrl || props.gpayNumber) && (
+        <div className="flex flex-wrap items-start justify-between gap-4 border-t border-line p-1.5 text-[10.5px] break-inside-avoid">
+          <div className="flex flex-1 flex-wrap gap-4">
+            {company.pdfShowBankDetails && company.bankName && (
+              <div>
+                <div className="mb-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-faint">Bank Details</div>
+                <div className="font-mono font-tabular leading-snug text-ink-body">
+                  {company.bankName}
+                  {company.bankAcc && (
+                    <>
+                      <br />
+                      A/C {company.bankAcc}
+                    </>
+                  )}
+                  {company.ifsc && (
+                    <>
+                      <br />
+                      IFSC {company.ifsc}
+                    </>
+                  )}
+                  {company.branch && (
+                    <>
+                      <br />
+                      {company.branch}
+                    </>
+                  )}
+                  {company.upi && (
+                    <>
+                      <br />
+                      UPI {company.upi}
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
-          {company.terms && (
-            <div>
-              <div className="mb-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-faint">Terms</div>
-              <p className="leading-snug text-ink-soft">{company.terms}</p>
+            )}
+            {company.terms && (
+              <div>
+                <div className="mb-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-faint">Terms</div>
+                <p className="leading-snug text-ink-soft">{company.terms}</p>
+              </div>
+            )}
+          </div>
+          {(props.upiQrDataUrl || props.gpayNumber) && (
+            <div className="flex flex-none gap-4 text-center text-[9.5px]">
+              {props.upiQrDataUrl && (
+                <div className="flex flex-col items-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={props.upiQrDataUrl} alt="Scan to pay via UPI" className="h-[70px] w-[70px]" />
+                  <div className="mt-0.5 font-bold uppercase tracking-wide text-ink-faint">Scan to pay via UPI</div>
+                </div>
+              )}
+              {props.gpayNumber && (
+                <div className="flex flex-col items-center justify-center">
+                  <div className="font-bold uppercase tracking-wide text-ink-faint">Pay via GPay</div>
+                  <div className="font-mono text-[13px] font-extrabold text-ink">{props.gpayNumber}</div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1014,24 +1033,6 @@ function ClassicClosing(props: SharedProps) {
         We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct. We hereby certify that the goods mentioned in this invoice are
         warranted to be of the nature and quality purported to be.
       </div>
-
-      {(props.upiQrDataUrl || props.gpayNumber) && (
-        <div className="flex justify-end gap-4 border-t border-line p-1.5 pb-3 text-center text-[9.5px] break-inside-avoid">
-          {props.upiQrDataUrl && (
-            <div className="flex flex-col items-center">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={props.upiQrDataUrl} alt="Scan to pay via UPI" className="h-[70px] w-[70px]" />
-              <div className="mt-0.5 font-bold uppercase tracking-wide text-ink-faint">Scan to pay via UPI</div>
-            </div>
-          )}
-          {props.gpayNumber && (
-            <div className="flex flex-col items-center justify-center">
-              <div className="font-bold uppercase tracking-wide text-ink-faint">Pay via GPay</div>
-              <div className="font-mono text-[13px] font-extrabold text-ink">{props.gpayNumber}</div>
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="border-t border-line p-1.5 break-inside-avoid">
         <div className="mt-1 grid grid-cols-2 gap-8 text-center text-[10.5px]">

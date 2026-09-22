@@ -64,10 +64,10 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
   const deleteInvoice = useDeleteInvoice();
   const duplicateInvoice = useDuplicateInvoice();
 
-  // Defaults to today (matching the server's SSR-seeded fetch — see
-  // invoices/page.tsx) so the list opens scoped to today's invoices rather
-  // than the full history; "All time" or a custom range are one click away.
-  const [dateMode, setDateMode] = useState<DateFilterMode>('today');
+  // Defaults to all-time (matching the server's SSR-seeded fetch — see
+  // invoices/page.tsx) so the list opens showing full history; "Today" or a
+  // custom range are one click away.
+  const [dateMode, setDateMode] = useState<DateFilterMode>('all');
   const [customFrom, setCustomFrom] = useState(initialDate);
   const [customTo, setCustomTo] = useState(initialDate);
   const dateFrom = dateMode === 'today' ? initialDate : dateMode === 'custom' ? customFrom : undefined;
@@ -75,7 +75,7 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
 
   useEffect(() => setPage(1), [search, filter, sort, dateMode, customFrom, customTo]);
 
-  const isDefaultParams = filter === initialStatus && search === '' && sort === 'newest' && page === 1 && dateMode === 'today';
+  const isDefaultParams = filter === initialStatus && search === '' && sort === 'newest' && page === 1 && dateMode === 'all';
   const { data, isFetching, isLoading } = useInvoicesPage({ status: filter, search, sort, page, pageSize: PAGE_SIZE, dateFrom, dateTo }, isDefaultParams ? initialData : undefined);
   const pageItems = (data?.items ?? []) as Invoice[];
   const total = data?.total ?? 0;
