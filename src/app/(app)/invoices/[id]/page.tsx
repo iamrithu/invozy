@@ -195,7 +195,7 @@ export default async function InvoiceDetailPage({ params, searchParams }: { para
 
       {isClassic && <InvoiceCompletenessChecklist items={checklistItems} />}
 
-      {!isPdfRender && <InlinePdfPreview invoiceId={invoice.id} />}
+      {!isPdfRender && <InlinePdfPreview invoiceId={invoice.id} invoiceNumber={invoice.number} />}
 
       {/* Kept in the DOM purely so PrintButton's window.print() has real
           content to print — see the `.invoice-print` rules in globals.css,

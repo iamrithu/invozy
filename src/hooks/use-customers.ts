@@ -4,6 +4,7 @@ import {
   deleteCustomer,
   getCustomerLedger,
   listCustomerStates,
+  listCustomersForFilter,
   listCustomersPage,
   updateCustomer,
   type CustomerFormState,
@@ -15,7 +16,22 @@ export const customerKeys = {
   page: (params: { search: string; state: string; sort: CustomerSort; page: number; pageSize: number }) => [...customerKeys.all, 'page', params] as const,
   states: () => [...customerKeys.all, 'states'] as const,
   ledger: (id: string) => [...customerKeys.all, 'ledger', id] as const,
+  filterOptions: () => [...customerKeys.all, 'filter-options'] as const,
 };
+
+/** The full customer directory (id + display name), for the "Customer"
+ * filter dropdown on the Invoices and Reports list screens — see
+ * listCustomersForFilter's doc comment for why this is distinct from the
+ * capped/search-gated lookups above. Rarely changes within a session, so
+ * this is cached generously rather than refetched on every filter-bar
+ * mount. */
+export function useCustomersForFilter() {
+  return useQuery({
+    queryKey: customerKeys.filterOptions(),
+    queryFn: () => listCustomersForFilter(),
+    staleTime: 60_000,
+  });
+}
 
 export function useCustomersPage(
   params: { search: string; state: string; sort: CustomerSort; page: number; pageSize: number },

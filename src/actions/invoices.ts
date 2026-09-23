@@ -394,36 +394,68 @@ function withComputedTotals<
     inv.customer.state
   );
   const amountPaid = inv.payments.reduce((s: number, p: any) => s + Number(p.amount), 0);
-  return { ...inv, computedTotal: totals.total, amountPaid, balanceDue: totals.total - amountPaid, isOverdue: inv.status !== 'PAID' && inv.due < new Date() };
+  return {
+    ...inv,
+    computedTotal: totals.total,
+    amountPaid,
+    balanceDue: totals.total - amountPaid,
+    isOverdue: inv.status !== 'PAID' && inv.due < new Date(),
+    // Inter-state (IGST) vs intra-state (CGST+SGST) — for the GST type
+    // filter on the Invoices list (see listInvoicesPage's `gstType` opt).
+    useIgst: totals.useIgst,
+  };
 }
 
 /** Cheap aggregate (status + due date only, no items/payments/customer join)
  * for the invoice list's "Overdue · N" / "Draft · N" group labels — these
- * must reflect the full search-*and-date*-filtered set, not just the
- * current page, so this runs separately from the paginated row fetch below
- * and takes the same `dateFrom`/`dateTo` it does. */
-export async function getInvoiceStatusCounts(search?: string, dateFrom?: string, dateTo?: string) {
+ * must reflect the full filtered set, not just the current page, so this
+ * runs separately from the paginated row fetch below and takes the same
+ * filters it does (everything except sort/page, which don't affect counts).
+ * Amount range and GST type aren't DB-expressible (see listInvoicesPage's
+ * doc comment), so those two still need the items/customer join here too
+ * when present. */
+export async function getInvoiceStatusCounts(
+  search?: string,
+  dateFrom?: string,
+  dateTo?: string,
+  opts?: { customerId?: string; amountMin?: number; amountMax?: number; gstType?: 'all' | 'intra' | 'inter' }
+) {
   const company = await getCompany();
-  const rows = await prisma.invoice.findMany({
-    where: {
-      companyId: company.id,
-      ...(search
-        ? {
-            OR: [
-              { number: { contains: search, mode: 'insensitive' as const } },
-              { customer: { name: { contains: search, mode: 'insensitive' as const } } },
-              { customer: { shopName: { contains: search, mode: 'insensitive' as const } } },
-            ],
-          }
-        : {}),
-      ...(dateFrom || dateTo
-        ? { date: { ...(dateFrom ? istDayRangeUtc(dateFrom) : {}), ...(dateTo ? { lt: istDayRangeUtc(dateTo).lt } : {}) } }
-        : {}),
-    },
-    select: { status: true, due: true },
-  });
+  const where = {
+    companyId: company.id,
+    ...(opts?.customerId ? { customerId: opts.customerId } : {}),
+    ...(search
+      ? {
+          OR: [
+            { number: { contains: search, mode: 'insensitive' as const } },
+            { customer: { name: { contains: search, mode: 'insensitive' as const } } },
+            { customer: { shopName: { contains: search, mode: 'insensitive' as const } } },
+          ],
+        }
+      : {}),
+    ...(dateFrom || dateTo
+      ? { date: { ...(dateFrom ? istDayRangeUtc(dateFrom) : {}), ...(dateTo ? { lt: istDayRangeUtc(dateTo).lt } : {}) } }
+      : {}),
+  };
+  const needsAmountsForCounts = (opts?.amountMin != null || opts?.amountMax != null || (opts?.gstType && opts.gstType !== 'all')) ?? false;
   const now = new Date();
   const counts: Record<string, number> = {};
+
+  if (needsAmountsForCounts) {
+    const rows = await prisma.invoice.findMany({ where, include: { customer: true, items: true, payments: true } });
+    for (const inv of rows) {
+      const r = withComputedTotals(inv, company);
+      if (opts?.amountMin != null && r.computedTotal < opts.amountMin) continue;
+      if (opts?.amountMax != null && r.computedTotal > opts.amountMax) continue;
+      if (opts?.gstType === 'intra' && r.useIgst) continue;
+      if (opts?.gstType === 'inter' && !r.useIgst) continue;
+      const key = r.status !== 'PAID' && r.due < now ? 'Overdue' : r.status;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  const rows = await prisma.invoice.findMany({ where, select: { status: true, due: true } });
   for (const inv of rows) {
     const key = inv.status !== 'PAID' && inv.due < now ? 'Overdue' : inv.status;
     counts[key] = (counts[key] ?? 0) + 1;
@@ -433,18 +465,37 @@ export async function getInvoiceStatusCounts(search?: string, dateFrom?: string,
 
 export type InvoiceSort = 'newest' | 'oldest' | 'amount-desc' | 'amount-asc';
 
-/** DB-level search/filter/pagination for the Invoices list page. "Amount"
- * sort can't be a plain SQL ORDER BY — the total is computed (GST math, not
- * a stored column) — so those two sort modes load every matching invoice,
- * compute totals in JS, sort, then slice for the requested page; date-based
- * sorts (the common case) get a real skip/take query. */
-export async function listInvoicesPage(opts?: { status?: string; search?: string; sort?: InvoiceSort; page?: number; pageSize?: number; dateFrom?: string; dateTo?: string }) {
+export type InvoiceListFilters = {
+  status?: string;
+  search?: string;
+  sort?: InvoiceSort;
+  page?: number;
+  pageSize?: number;
+  dateFrom?: string;
+  dateTo?: string;
+  customerId?: string;
+  amountMin?: number;
+  amountMax?: number;
+  /** Inter-state (IGST) vs intra-state (CGST+SGST) — derived from computed
+   * totals (see withComputedTotals' `useIgst`), not a stored column. */
+  gstType?: 'all' | 'intra' | 'inter';
+};
+
+/** DB-level search/filter/pagination for the Invoices list page. Amount
+ * sort, amount range, and GST type can't be a plain SQL WHERE/ORDER BY —
+ * they depend on the computed total (GST math, not a stored column) — so
+ * whenever any of those three is active this loads every matching invoice,
+ * computes totals in JS, filters/sorts there, then slices for the requested
+ * page. The common case (no amount/GST filter, date-based sort) still gets
+ * a real skip/take query. */
+export async function listInvoicesPage(opts?: InvoiceListFilters) {
   const company = await getCompany();
   const page = Math.max(opts?.page ?? 1, 1);
   const pageSize = opts?.pageSize ?? 20;
   const where = {
     companyId: company.id,
     ...(opts?.status && opts.status !== 'all' ? { status: opts.status as any } : {}),
+    ...(opts?.customerId ? { customerId: opts.customerId } : {}),
     ...(opts?.search
       ? {
           OR: [
@@ -462,10 +513,21 @@ export async function listInvoicesPage(opts?: { status?: string; search?: string
       : {}),
   };
 
-  if (opts?.sort === 'amount-desc' || opts?.sort === 'amount-asc') {
+  const needsJsFallback =
+    opts?.sort === 'amount-desc' || opts?.sort === 'amount-asc' || opts?.amountMin != null || opts?.amountMax != null || (opts?.gstType && opts.gstType !== 'all');
+
+  if (needsJsFallback) {
     const all = await prisma.invoice.findMany({ where, include: { customer: true, items: true, payments: true } });
-    const withTotals = all.map((inv) => withComputedTotals(inv, company));
-    withTotals.sort((a, b) => (opts.sort === 'amount-asc' ? a.computedTotal - b.computedTotal : b.computedTotal - a.computedTotal));
+    let withTotals = all.map((inv) => withComputedTotals(inv, company));
+    if (opts?.amountMin != null) withTotals = withTotals.filter((r) => r.computedTotal >= opts.amountMin!);
+    if (opts?.amountMax != null) withTotals = withTotals.filter((r) => r.computedTotal <= opts.amountMax!);
+    if (opts?.gstType === 'intra') withTotals = withTotals.filter((r) => !r.useIgst);
+    if (opts?.gstType === 'inter') withTotals = withTotals.filter((r) => r.useIgst);
+    withTotals.sort((a, b) => {
+      if (opts?.sort === 'amount-asc') return a.computedTotal - b.computedTotal;
+      if (opts?.sort === 'amount-desc') return b.computedTotal - a.computedTotal;
+      return opts?.sort === 'oldest' ? a.date.getTime() - b.date.getTime() : b.date.getTime() - a.date.getTime();
+    });
     const items = withTotals.slice((page - 1) * pageSize, page * pageSize);
     return { items: JSON.parse(JSON.stringify(items)), total: withTotals.length };
   }

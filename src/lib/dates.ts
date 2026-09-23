@@ -22,3 +22,34 @@ export function istDayRangeUtc(dateStr: string): { gte: Date; lt: Date } {
   const start = new Date(`${dateStr}T00:00:00.000+05:30`);
   return { gte: start, lt: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
 }
+
+/** Shared date-range filter modes — used by both the Invoices list and the
+ * Reports page (see src/components/filters/date-range-filter.tsx) so the
+ * two screens offer the exact same date vocabulary. */
+export type DateFilterMode = 'today' | 'week' | 'month' | 'year' | 'all' | 'custom';
+
+/** Resolves a DateFilterMode to concrete IST calendar-date bounds
+ * (`YYYY-MM-DD`, inclusive on both ends) ready to hand to `istDayRangeUtc`.
+ * `'all'` returns `{}` (no bound, matching every historical row); `'custom'`
+ * just passes the caller's own from/to through unchanged (empty string
+ * becomes `undefined`, i.e. an open-ended bound on that side). */
+export function resolveDateRange(mode: DateFilterMode, customFrom?: string, customTo?: string): { from?: string; to?: string } {
+  if (mode === 'all') return {};
+  if (mode === 'custom') return { from: customFrom || undefined, to: customTo || undefined };
+
+  const today = todayIst();
+  if (mode === 'today') return { from: today, to: today };
+
+  const [y, m, d] = today.split('-').map(Number);
+  if (mode === 'week') {
+    // Monday-start week, matching Indian business-week convention.
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    const dayOfWeek = dt.getUTCDay(); // 0 = Sunday .. 6 = Saturday
+    const daysSinceMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    dt.setUTCDate(dt.getUTCDate() - daysSinceMonday);
+    return { from: dt.toISOString().slice(0, 10), to: today };
+  }
+  if (mode === 'month') return { from: `${y}-${String(m).padStart(2, '0')}-01`, to: today };
+  if (mode === 'year') return { from: `${y}-01-01`, to: today };
+  return {};
+}

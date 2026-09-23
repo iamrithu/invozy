@@ -82,6 +82,21 @@ export async function listCustomerStates() {
   return rows.map((r) => r.state).sort();
 }
 
+/** The full non-guest customer directory (id + display name only), for a
+ * "Customer" filter dropdown on the Invoices and Reports list screens —
+ * unlike searchCustomersForBilling below, this isn't capped at 8 or gated
+ * behind a search term, since a filter dropdown needs every option up
+ * front, not just the first few matches. */
+export async function listCustomersForFilter() {
+  const company = await getCompany();
+  const customers = await prisma.customer.findMany({
+    where: { companyId: company.id, guest: false },
+    select: { id: true, name: true, shopName: true },
+    orderBy: { name: 'asc' },
+  });
+  return customers;
+}
+
 /** Used by the invoice builder's Bill-To search — deliberately includes guests,
  * since a repeat walk-in should still be findable by name or phone. */
 export async function searchCustomersForBilling(term: string) {

@@ -22,7 +22,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <TopBar company={{ name: company.name, logoUrl: company.logoUrl }} />
       <div className="flex flex-1">
         <Sidebar />
-        <main className="mx-auto w-full max-w-[1220px] flex-1 px-4 py-5 pb-24 md:px-6 md:pb-5">{children}</main>
+        {/* print:max-w-none/p-0 — Sidebar/TopBar/BottomNav already hide
+            themselves on print (each has its own print:hidden), so a
+            printed page (e.g. the Reports page's Print button) just needs
+            this content column freed from its on-screen width cap/padding
+            to use the full printed page. */}
+        <main className="mx-auto w-full max-w-[1220px] flex-1 px-4 py-5 pb-24 md:px-6 md:pb-5 print:max-w-none print:p-0">{children}</main>
       </div>
       <BottomNav />
     </div>

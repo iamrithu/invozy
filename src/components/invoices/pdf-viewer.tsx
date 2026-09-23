@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
 // the worker and the main-thread library.
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
-const MAX_PAGE_WIDTH = 900;
+const DEFAULT_MAX_PAGE_WIDTH = 900;
 
 /**
  * Canvas-rendered PDF viewer (via pdf.js) — unlike an <iframe src="...pdf">,
@@ -30,9 +30,23 @@ const MAX_PAGE_WIDTH = 900;
  * ResizeObserver) rather than a fixed CSS scale — a real A4 page rendered
  * at its native size is wider than most phone screens, which just meant
  * side-scrolling to read anything. `scale` is a multiplier on top of that
- * fitted width (1 = fits exactly), driven by the zoom controls.
+ * fitted width (1 = fits exactly), driven by the zoom controls. `maxWidth`
+ * caps how wide a page is allowed to render even inside a much wider
+ * container (e.g. the full-screen viewer dialog) — defaults to a compact
+ * card-sized width, callers with more room to give (like a full-viewport
+ * dialog) pass a larger one.
  */
-export function PdfViewer({ src, scale = 1, onNumPages }: { src: string; scale?: number; onNumPages?: (n: number) => void }) {
+export function PdfViewer({
+  src,
+  scale = 1,
+  maxWidth = DEFAULT_MAX_PAGE_WIDTH,
+  onNumPages,
+}: {
+  src: string;
+  scale?: number;
+  maxWidth?: number;
+  onNumPages?: (n: number) => void;
+}) {
   const [numPages, setNumPages] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [containerWidth, setContainerWidth] = useState<number | null>(null);
@@ -49,10 +63,10 @@ export function PdfViewer({ src, scale = 1, onNumPages }: { src: string; scale?:
     return () => observer.disconnect();
   }, []);
 
-  const pageWidth = containerWidth ? Math.min(containerWidth, MAX_PAGE_WIDTH) * scale : undefined;
+  const pageWidth = containerWidth ? Math.min(containerWidth, maxWidth) * scale : undefined;
 
   return (
-    <div ref={containerRef} className="mx-auto w-full max-w-[900px]">
+    <div ref={containerRef} className="mx-auto w-full" style={{ maxWidth }}>
       <Document
         file={src}
         onLoadSuccess={({ numPages }) => {

@@ -16,7 +16,7 @@ export default async function DashboardPage() {
   const [company, stats, invoicedTrend, collectedTrend, mom, topCustomers, frequentCustomItems] = await Promise.all([
     getCompany(),
     getDashboardStats(),
-    getBillingTrend(6),
+    getBillingTrend(),
     getCollectedTrend(6),
     getMonthOverMonth(),
     getTopCustomers(),
@@ -99,7 +99,7 @@ export default async function DashboardPage() {
       )}
 
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
-        <StatCard icon={<TrendingUp size={14} />} label="Total invoiced" value={fmtInr(stats.totalInvoiced, company.currency)} spark={invoicedTrend.map((t) => t.total)} />
+        <StatCard icon={<TrendingUp size={14} />} label="Total invoiced" value={fmtInr(stats.totalInvoiced, company.currency)} spark={invoicedTrend.map((t) => t.billed)} />
         <StatCard icon={<Wallet size={14} />} label="Outstanding" value={fmtInr(stats.outstanding, company.currency)} />
         <StatCard icon={<CheckCircle2 size={14} />} label="Collected" value={fmtInr(stats.collected, company.currency)} spark={collectedTrend.map((t) => t.total)} color="hsl(var(--green))" />
         <StatCard icon={<Package size={14} />} label="Active products" value={String(stats.activeProducts)} />

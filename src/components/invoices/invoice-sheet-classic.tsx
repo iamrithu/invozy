@@ -100,17 +100,22 @@ export type ClassicEway = {
  * the hidden measurement probe (see useMeasuredSections below) so the
  * probe measures the exact same markup that actually gets printed. */
 function classicTheadRow({ editable, hasAltQty, altUnitLabel }: { editable: boolean; hasAltQty: boolean; altUnitLabel: string }) {
+  // Print mode uses a solid-ink grid (matches every body cell below it —
+  // see classicRowCells) rather than the pale `border-line` used inside the
+  // live builder, so the printed/exported table reads as a proper ruled
+  // grid instead of faint dividers that wash out once printed or exported.
+  const colCls = editable ? 'border-r border-line px-2 py-1.5' : 'border-r border-ink px-2 py-1.5';
   return (
-    <tr className="border-y border-ink bg-surface-alt text-left font-semibold">
-      <th className="w-9 border-r border-line px-2 py-1.5">S.NO</th>
-      <th className="border-r border-line px-2 py-1.5">Products</th>
-      <th className="w-[78px] border-r border-line px-2 py-1.5">HSN/SAC</th>
-      <th className="w-[92px] border-r border-line px-2 py-1.5 text-right">Quantity</th>
-      <th className="w-[76px] border-r border-line px-2 py-1.5 text-right">Rate</th>
-      <th className="w-14 border-r border-line px-2 py-1.5 text-right">Per (Unit)</th>
-      {editable && <th className="w-14 border-r border-line px-2 py-1.5 text-right">Disc%</th>}
-      {hasAltQty && <th className="w-16 border-r border-line px-2 py-1.5 text-right">In {altUnitLabel}</th>}
-      <th className="w-[100px] px-2 py-1.5 text-right">Amount</th>
+    <tr className={`border-y-2 text-left uppercase tracking-wide ${editable ? 'border-ink font-semibold' : 'border-ink bg-surface-alt text-[11px] font-extrabold'}`}>
+      <th className={`w-9 ${colCls}`}>S.NO</th>
+      <th className={colCls}>Products</th>
+      <th className={`w-[78px] ${colCls}`}>HSN/SAC</th>
+      <th className={`w-[92px] ${colCls} text-right`}>Quantity</th>
+      <th className={`w-[76px] ${colCls} text-right`}>Rate</th>
+      <th className={`w-14 ${colCls} text-right`}>Per (Unit)</th>
+      {editable && <th className={`w-14 ${colCls} text-right`}>Disc%</th>}
+      {hasAltQty && <th className={`w-16 ${colCls} text-right`}>In {altUnitLabel}</th>}
+      <th className={`w-[100px] px-2 py-1.5 text-right ${editable ? '' : 'border-ink'}`}>Amount</th>
       {editable && <th className="w-6 px-1" />}
     </tr>
   );
@@ -134,11 +139,13 @@ function classicRowCells(
   const { company, editable, hasAltQty, onUpdateLine, onIncrement, onDecrement, onRemoveLine } = ctx;
   const amount = l.qty * l.rate * (1 - l.discount / 100);
   const altQty = l.altUnit && l.altQtyPerUnit ? l.qty * l.altQtyPerUnit : null;
+  // Solid-ink vertical rules in print mode, same rationale as classicTheadRow.
+  const colCls = editable ? 'border-r border-line px-2 py-1 align-top' : 'border-r border-ink px-2 py-1 align-top';
   return (
     <>
-      <td className="border-r border-line px-2 py-1 align-top font-tabular">{serial}</td>
-      <td className="border-r border-line px-2 py-1 align-top">{l.name}</td>
-      <td className="border-r border-line px-2 py-1 align-top font-mono">
+      <td className={`${colCls} font-tabular`}>{serial}</td>
+      <td className={colCls}>{l.name}</td>
+      <td className={`${colCls} font-mono`}>
         {editable ? (
           <input
             value={l.hsn ?? ''}
@@ -150,7 +157,7 @@ function classicRowCells(
           l.hsn || company.defaultHsn || DEFAULT_HSN
         )}
       </td>
-      <td className="border-r border-line px-2 py-1 text-right align-top">
+      <td className={`${colCls} text-right`}>
         {editable ? (
           <div className="flex items-center justify-end gap-1">
             <button onClick={() => onDecrement?.(l.lineId)} aria-label={`Decrease ${l.name} quantity`} className="flex h-[18px] w-[18px] items-center justify-center rounded-sm2 border border-line">
@@ -173,12 +180,12 @@ function classicRowCells(
           after it); print mode has no Disc% column at all, so it shows the
           discount already folded in — Rate × Qty then reads consistently
           with Amount. */}
-      <td className="border-r border-line px-2 py-1 text-right align-top font-mono font-tabular">
+      <td className={`${colCls} text-right font-mono font-tabular`}>
         {fmtInr(editable ? l.rate : l.rate * (1 - l.discount / 100), company.currency)}
       </td>
-      <td className="border-r border-line px-2 py-1 text-right align-top">{formatUnit(l.unit)}</td>
+      <td className={`${colCls} text-right`}>{formatUnit(l.unit)}</td>
       {editable && (
-        <td className="border-r border-line px-2 py-1 text-right align-top">
+        <td className={`${colCls} text-right`}>
           <input
             type="number"
             min={0}
@@ -191,7 +198,7 @@ function classicRowCells(
         </td>
       )}
       {hasAltQty && (
-        <td className="border-r border-line px-2 py-1 text-right align-top font-mono font-tabular">{altQty !== null ? altQty.toFixed(2).replace(/\.00$/, '') : ''}</td>
+        <td className={`${colCls} text-right font-mono font-tabular`}>{altQty !== null ? altQty.toFixed(2).replace(/\.00$/, '') : ''}</td>
       )}
       <td className="px-2 py-1 text-right align-top font-mono font-tabular">{fmtInr(amount, company.currency)}</td>
       {editable && (
@@ -201,6 +208,22 @@ function classicRowCells(
           </button>
         </td>
       )}
+    </>
+  );
+}
+
+/** A ledger-style "Balance Brought Forward" / "Total Carried Forward" row's
+ * `<td>` cells — same measurement-probe sharing pattern as classicRowCells
+ * above. Print-only (the editable builder view is never paginated, so it
+ * never needs a running per-page total). */
+function classicCarryRow(label: string, amount: number, ctx: { currency?: string; hasAltQty: boolean }) {
+  const { currency, hasAltQty } = ctx;
+  return (
+    <>
+      <td colSpan={6 + (hasAltQty ? 1 : 0)} className="border-r border-ink px-2 py-1.5 text-right uppercase tracking-wide text-[10.5px]">
+        {label}
+      </td>
+      <td className="px-2 py-1.5 text-right font-mono font-tabular">{fmtInr(amount, currency)}</td>
     </>
   );
 }
@@ -237,12 +260,13 @@ export function InvoiceSheetClassic(props: {
   ackNo?: string | null;
   ackDate?: string | null;
   qrImageDataUrl?: string | null;
-  /** Company-level "Show a scannable UPI QR" setting, rendered above the
-   * Authorised Signatory block — see src/lib/qr.ts's upiQrDataUrl().
-   * Independent of gpayNumber below — either, both, or neither can be set. */
+  /** Company-level "Show a scannable UPI QR" setting, rendered in the third
+   * column of the buyer/info row (see ClassicBuyerRow) — see src/lib/qr.ts's
+   * upiQrDataUrl(). Independent of gpayNumber below — either, both, or
+   * neither can be set. */
   upiQrDataUrl?: string | null;
   /** Company-level "Show GPay number" setting — this company's own phone
-   * number, printed as a GPay-reachable number above the signatory block. */
+   * number, printed as a GPay-reachable number alongside the UPI QR. */
   gpayNumber?: string | null;
   eway?: ClassicEway | null;
   /** Sum of Payment rows recorded against this invoice — shown as a
@@ -338,6 +362,7 @@ export function InvoiceSheetClassic(props: {
     itemRow: classicRowCells(measureLine, 1, { company, editable: false, hasAltQty }),
     continuedFooter: <div className="flex justify-end border-t border-ink p-2 text-[10.5px] font-bold text-ink-soft">Continued on Page 2 of 3 →</div>,
     closing: <ClassicClosing {...shared} />,
+    carryRow: classicCarryRow('Balance Brought Forward', 0, { currency: company.currency, hasAltQty }),
   });
 
   if (editable) {
@@ -366,6 +391,15 @@ export function InvoiceSheetClassic(props: {
   const capacities = heights ? computeCapacities(heights) : null;
   const { pages } = capacities ? paginateLines(lines, capacities.perPage, capacities.singleCap, capacities.lastCap) : { pages: [] };
   let serial = 0;
+  // Running total carried across pages — a ledger convention: each
+  // non-last page ends with "Total Carried Forward" (the cumulative total
+  // through that page); each page but the first opens with "Balance
+  // Brought Forward" (that same figure from the page before it). Purely a
+  // display convention — the actual Subtotal/Total in ClassicClosing is
+  // computed once from every line regardless of how they're split across
+  // pages, so it's unaffected by (and always agrees with) these running
+  // figures.
+  let cumulative = 0;
 
   return (
     <div className="relative rounded-b-lg2 border border-t-0 border-line bg-white p-5 text-[11.5px] leading-normal text-ink-body shadow-card print:rounded-none print:border-none print:p-0 print:shadow-none">
@@ -385,14 +419,31 @@ export function InvoiceSheetClassic(props: {
         // page drops it to make room for the closing block instead (it
         // already appeared on page 1).
         const showBuyer = isLast ? pages.length === 1 : true;
+        const pageAmount = pageLines.reduce((sum, l) => sum + l.qty * l.rate * (1 - l.discount / 100), 0);
+        const broughtForward = i > 0 ? cumulative : null;
+        cumulative += pageAmount;
+        const carriedForward = !isLast ? cumulative : null;
         // Explicit pixel height for the spacer below, computed from the same
         // measured heights this page's row/column split was already
         // computed from — rather than a `flex: 1` spacer growing into a
         // `min-height` on its flex container. See the isLast-only rationale
-        // below for why only the last page gets one at all.
+        // below for why only the last page gets one at all. Also accounts
+        // for the "Balance Brought Forward" row when this last page is
+        // itself a continuation page (i > 0) — it adds real height above
+        // the items that the spacer needs to make room for, same as every
+        // other fixed section here.
         const lastPageSpacerPx =
           isLast && heights
-            ? Math.max(0, USABLE_PX - (heights.header + (showBuyer ? heights.buyer : 0) + heights.thead + pageLines.length * heights.row + heights.closing))
+            ? Math.max(
+                0,
+                USABLE_PX -
+                  (heights.header +
+                    (showBuyer ? heights.buyer : 0) +
+                    heights.thead +
+                    (broughtForward !== null ? heights.carryRow : 0) +
+                    pageLines.length * heights.row +
+                    heights.closing)
+              )
             : 0;
         return (
           <div key={i} className={`invoice-page flex flex-col ${i > 0 ? 'mt-6 print:mt-0' : ''} ${!isLast ? 'print:break-after-page ' : ''}`}>
@@ -414,7 +465,15 @@ export function InvoiceSheetClassic(props: {
             >
               <ClassicHeader {...shared} />
               {showBuyer && <ClassicBuyerRow {...shared} />}
-              {pageLines.length > 0 && <ClassicItemsTable {...shared} lines={pageLines} startSerial={startSerial} />}
+              {/* Rendered even with zero items on this page when there's a
+                  "Balance Brought Forward" figure to show (e.g. every item
+                  fit on earlier pages and this page exists purely to give
+                  the closing block room) — otherwise that running total
+                  would just silently vanish rather than carrying through
+                  to the final page's Subtotal. */}
+              {(pageLines.length > 0 || broughtForward !== null) && (
+                <ClassicItemsTable {...shared} lines={pageLines} startSerial={startSerial} broughtForward={broughtForward} carriedForward={carriedForward} />
+              )}
               {isLast && lastPageSpacerPx > 0 && <div className="flex-none" style={{ height: `${lastPageSpacerPx}px` }} />}
               {isLast ? (
                 <ClassicClosing {...shared} />
@@ -454,7 +513,7 @@ function buildSharedPropsType() {
 function ClassicHeader({ company, invoiceNumber, date }: SharedProps) {
   return (
     <div className="flex-none">
-      <div className="border-b border-ink bg-surface-alt py-1.5 text-center text-[13px] font-extrabold uppercase tracking-wide text-ink">Tax Invoice</div>
+      <div className="border-b-2 border-ink bg-surface-alt py-2 text-center text-[16px] font-extrabold uppercase tracking-[0.14em] text-ink">Tax Invoice</div>
       <table className="w-full border-b border-ink">
         <tbody>
           <tr>
@@ -476,7 +535,7 @@ function ClassicHeader({ company, invoiceNumber, date }: SharedProps) {
                   />
                 )}
                 <div className="min-w-0 leading-snug">
-                  <div className="text-[14.5px] font-extrabold tracking-tight text-ink">{company.name}</div>
+                  <div className="text-[17px] font-extrabold tracking-tight text-ink">{company.name}</div>
                   {company.address && <div className="whitespace-pre-line text-[10.5px] leading-tight">{company.address}</div>}
                   <div className="mt-1 text-[10.5px]">
                     <span className="font-mono font-tabular">GSTIN: {company.gstin || '—'}</span>
@@ -506,12 +565,12 @@ function ClassicHeader({ company, invoiceNumber, date }: SharedProps) {
             {/* Invoice No./Date belong top-right, next to the seller block —
                 the standard placement on a printed GST tax invoice. */}
             <td className="w-[35%] p-2 text-right align-top">
-              <div className="text-[9.5px] font-bold uppercase tracking-wide text-ink-faint">Invoice No.</div>
+              <div className="text-[10px] font-bold uppercase tracking-wide text-ink-faint">Invoice No.</div>
               {/* No number exists yet in the builder's live preview — the
                   real one is only claimed from the sequential counter on
                   Save (see createInvoice), so this never shows a
                   workflow-status word like "Draft" on a customer-facing PDF. */}
-              <div className="font-mono font-tabular text-[17px] font-extrabold text-ink">{invoiceNumber ?? '—'}</div>
+              <div className="font-mono font-tabular text-[19.5px] font-extrabold text-ink">{invoiceNumber ?? '—'}</div>
               <div className="mt-0.5 text-[10.5px] text-ink-soft">
                 Dated <span className="font-mono font-tabular font-semibold text-ink-body">{formatInvoiceDate(date)}</span>
               </div>
@@ -523,8 +582,9 @@ function ClassicHeader({ company, invoiceNumber, date }: SharedProps) {
   );
 }
 
-/** Buyer details + delivery instructions (left) and e-Invoice QR/e-Way Bill
- * refs (right) — same repeat-per-page treatment as the letterhead above. */
+/** Three-column info strip below the letterhead — buyer details, delivery/
+ * transport info + e-Invoice compliance QR, and the payment UPI QR/GPay
+ * number — same repeat-per-page treatment as the letterhead above. */
 function ClassicBuyerRow({
   customer,
   deliveryInstructions,
@@ -542,13 +602,20 @@ function ClassicBuyerRow({
   onTransportVehicleNoChange,
   onTransportDriverNameChange,
   onTransportDriverPhoneChange,
+  upiQrDataUrl,
+  gpayNumber,
 }: SharedProps) {
   const hasTransportDetails = !!(transportVehicleNo?.trim() || transportDriverName?.trim() || transportDriverPhone?.trim());
+  // Payment QR/GPay get their own third column — shown only when the
+  // company actually has one of them configured, same opt-in gating as the
+  // rest of this row, rather than an empty column on every invoice.
+  const hasPaymentQr = !!(upiQrDataUrl || gpayNumber);
   return (
     <table className="w-full flex-none border-b border-ink">
       <tbody>
         <tr>
-          <td className="min-w-[260px] border-r border-line p-1.5 align-top leading-snug">
+          {/* Column 1 — Buyer (Bill to). */}
+          <td className="min-w-[210px] border-r border-line p-1.5 align-top leading-snug">
             <div className="mb-0.5 text-[9px] font-bold uppercase tracking-wide text-ink-faint">Buyer (Bill to)</div>
             {customer ? (
               <>
@@ -586,7 +653,11 @@ function ClassicBuyerRow({
               <div className="italic text-ink-faint">Select a customer to fill this in</div>
             )}
           </td>
-          <td className="p-1.5 text-right align-top">
+
+          {/* Column 2 — Delivery Instructions, Transport (vehicle/driver)
+              details, and the e-Invoice compliance QR/IRN (distinct from
+              the payment QR in column 3). */}
+          <td className={`p-1.5 align-top ${hasPaymentQr ? 'border-r border-line' : ''}`}>
             {/* Opt-in, unlike the Delivery Instructions box below it — only
                 appears once "Show on invoice PDF" is turned on for this
                 invoice (see the builder's Settings sheet), and even then
@@ -594,7 +665,7 @@ function ClassicBuyerRow({
                 has something in it, so turning the setting on with nothing
                 entered yet doesn't leave an empty box on the PDF. */}
             {showTransportDetails && (editable || hasTransportDetails) && (
-              <div className="mb-1.5 rounded-sm2 border border-dashed border-line p-1.5 text-left">
+              <div className="mb-1.5 rounded-sm2 border border-dashed border-line p-1.5">
                 <div className="text-[9px] font-bold uppercase tracking-wide text-ink-faint">Transport Details</div>
                 {editable ? (
                   <div className="mt-0.5 space-y-1">
@@ -637,12 +708,11 @@ function ClassicBuyerRow({
             {/* Fixed, always-visible box (not gated on having content) so
                 its position is predictable invoice to invoice — a delivery
                 crew (or the person filling this in) always finds it in the
-                same place, right of the buyer details, rather than only
-                when non-empty. This does cost real space on every invoice
-                that doesn't use it (see the pagination note in
-                InvoiceSheetClassic above), a deliberate tradeoff for that
-                predictability. */}
-            <div className="mb-1.5 rounded-sm2 border border-dashed border-line p-1.5 text-left">
+                same place, rather than only when non-empty. This does cost
+                real space on every invoice that doesn't use it (see the
+                pagination note in InvoiceSheetClassic above), a deliberate
+                tradeoff for that predictability. */}
+            <div className="mb-1.5 rounded-sm2 border border-dashed border-line p-1.5">
               <div className="text-[9px] font-bold uppercase tracking-wide text-ink-faint">Delivery Instructions</div>
               {editable ? (
                 <textarea
@@ -657,26 +727,50 @@ function ClassicBuyerRow({
               )}
             </div>
             {irn ? (
-              <>
+              <div className="flex items-start gap-2">
                 {qrImageDataUrl && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={qrImageDataUrl} alt="e-Invoice QR" className="ml-auto h-[90px] w-[90px]" />
+                  <img src={qrImageDataUrl} alt="e-Invoice QR" className="h-[70px] w-[70px] flex-none" />
                 )}
-                <div className="mt-1 font-bold uppercase tracking-wide text-ink-faint">e-Invoice</div>
-                <div className="ml-auto max-w-[220px] break-all font-mono text-[10px]">IRN : {irn}</div>
-                {ackNo && <div className="font-tabular">Ack No. : {ackNo}</div>}
-                {ackDate && <div className="font-tabular">Ack Date : {formatInvoiceDate(ackDate)}</div>}
-              </>
+                <div className="min-w-0">
+                  <div className="font-bold uppercase tracking-wide text-ink-faint">e-Invoice</div>
+                  <div className="max-w-[220px] break-all font-mono text-[10px]">IRN : {irn}</div>
+                  {ackNo && <div className="font-tabular">Ack No. : {ackNo}</div>}
+                  {ackDate && <div className="font-tabular">Ack Date : {formatInvoiceDate(ackDate)}</div>}
+                </div>
+              </div>
             ) : (
-              <div className="ml-auto inline-block rounded-sm2 border border-dashed border-line px-3 py-2 text-[10.5px] text-ink-faint print:hidden">e-Invoice not generated yet</div>
+              <div className="inline-block rounded-sm2 border border-dashed border-line px-3 py-2 text-[10.5px] text-ink-faint print:hidden">e-Invoice not generated yet</div>
             )}
             {(eway?.ewbNo || eway?.vehicleNo) && (
-              <div className="mt-2 space-y-0.5 border-t border-dashed border-line pt-1.5 text-left">
+              <div className="mt-2 space-y-0.5 border-t border-dashed border-line pt-1.5">
                 {eway?.ewbNo && <Row k="e-Way Bill No." v={eway.ewbNo} mono />}
                 {eway?.vehicleNo && <Row k="Vehicle No." v={eway.vehicleNo} mono />}
               </div>
             )}
           </td>
+
+          {/* Column 3 — Payment UPI QR + GPay number (moved up from the
+              signature block so it's visible as soon as the buyer opens the
+              invoice, not just on the last physical page of a multi-page
+              one). */}
+          {hasPaymentQr && (
+            <td className="w-[130px] p-1.5 text-center align-top">
+              {upiQrDataUrl && (
+                <div className="flex flex-col items-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={upiQrDataUrl} alt="Scan to pay via UPI" className="h-[80px] w-[80px]" />
+                  <div className="mt-1 text-[9px] font-bold uppercase tracking-wide text-ink-faint">Scan to pay via UPI</div>
+                </div>
+              )}
+              {gpayNumber && (
+                <div className={upiQrDataUrl ? 'mt-2' : ''}>
+                  <div className="text-[9px] font-bold uppercase tracking-wide text-ink-faint">Pay via GPay</div>
+                  <div className="font-mono text-[12.5px] font-extrabold text-ink">{gpayNumber}</div>
+                </div>
+              )}
+            </td>
+          )}
         </tr>
       </tbody>
     </table>
@@ -685,26 +779,54 @@ function ClassicBuyerRow({
 
 /** The line-items grid. Print mode takes a `lines`/`startSerial` slice for
  * just this physical page; editable mode always gets the whole list (never
- * paginated — see the component doc comment). */
-function ClassicItemsTable({ company, lines, editable, hasAltQty, altUnitLabel, onUpdateLine, onIncrement, onDecrement, onRemoveLine, startSerial }: SharedProps & { startSerial?: number }) {
+ * paginated — see the component doc comment). `broughtForward`/
+ * `carriedForward` add the ledger-style running-total rows described on
+ * InvoiceSheetClassic's pagination loop — both are print-only (`null` in
+ * editable mode, which is never paginated). */
+function ClassicItemsTable({
+  company,
+  lines,
+  editable,
+  hasAltQty,
+  altUnitLabel,
+  onUpdateLine,
+  onIncrement,
+  onDecrement,
+  onRemoveLine,
+  startSerial,
+  broughtForward,
+  carriedForward,
+}: SharedProps & { startSerial?: number; broughtForward?: number | null; carriedForward?: number | null }) {
   const base = startSerial ?? 0;
   return (
     <div className="flex-none overflow-x-auto print:overflow-visible">
       <table className={`w-full border-collapse text-[11px] print:min-w-0 ${editable ? 'min-w-[720px]' : 'min-w-[640px]'}`}>
         <thead>{classicTheadRow({ editable, hasAltQty, altUnitLabel })}</thead>
         <tbody>
-          {lines.length === 0 ? (
-            <tr>
-              <td colSpan={7 + (hasAltQty ? 1 : 0) + (editable ? 2 : 0)} className="py-6 text-center text-ink-faint">
-                No line items yet.
-              </td>
+          {broughtForward != null && (
+            <tr className="border-b-2 border-ink bg-surface-alt font-bold">
+              {classicCarryRow('Balance Brought Forward', broughtForward, { currency: company.currency, hasAltQty })}
             </tr>
+          )}
+          {lines.length === 0 ? (
+            broughtForward == null && (
+              <tr>
+                <td colSpan={7 + (hasAltQty ? 1 : 0) + (editable ? 2 : 0)} className="py-6 text-center text-ink-faint">
+                  No line items yet.
+                </td>
+              </tr>
+            )
           ) : (
             lines.map((l, i) => (
-              <tr key={l.lineId} className="border-b border-line">
+              <tr key={l.lineId} className={editable ? 'border-b border-line' : 'border-b border-ink'}>
                 {classicRowCells(l, base + i + 1, { company, editable, hasAltQty, onUpdateLine, onIncrement, onDecrement, onRemoveLine })}
               </tr>
             ))
+          )}
+          {carriedForward != null && (
+            <tr className="border-t-2 border-ink bg-surface-alt font-bold">
+              {classicCarryRow('Total Carried Forward', carriedForward, { currency: company.currency, hasAltQty })}
+            </tr>
           )}
         </tbody>
       </table>
@@ -949,7 +1071,11 @@ function ClassicClosing(props: SharedProps) {
         </>
       )}
 
-      {((company.pdfShowBankDetails && company.bankName) || company.terms || props.upiQrDataUrl || props.gpayNumber) && (
+      {/* Payment UPI QR/GPay used to sit here too — moved up to the
+          buyer/info row's third column (see ClassicBuyerRow) so it's
+          visible as soon as the invoice opens, not buried at the bottom of
+          the last physical page of a multi-page invoice. */}
+      {((company.pdfShowBankDetails && company.bankName) || company.terms) && (
         <div className="flex flex-wrap items-start justify-between gap-4 border-t border-line p-1.5 text-[10.5px] break-inside-avoid">
           <div className="flex flex-1 flex-wrap gap-4">
             {company.pdfShowBankDetails && company.bankName && (
@@ -991,23 +1117,6 @@ function ClassicClosing(props: SharedProps) {
               </div>
             )}
           </div>
-          {(props.upiQrDataUrl || props.gpayNumber) && (
-            <div className="flex flex-none gap-4 text-center text-[9.5px]">
-              {props.upiQrDataUrl && (
-                <div className="flex flex-col items-center">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={props.upiQrDataUrl} alt="Scan to pay via UPI" className="h-[70px] w-[70px]" />
-                  <div className="mt-0.5 font-bold uppercase tracking-wide text-ink-faint">Scan to pay via UPI</div>
-                </div>
-              )}
-              {props.gpayNumber && (
-                <div className="flex flex-col items-center justify-center">
-                  <div className="font-bold uppercase tracking-wide text-ink-faint">Pay via GPay</div>
-                  <div className="font-mono text-[13px] font-extrabold text-ink">{props.gpayNumber}</div>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       )}
 

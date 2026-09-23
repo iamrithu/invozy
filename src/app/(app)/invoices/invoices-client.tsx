@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Receipt, Copy, Trash2, Eye, Pencil, IndianRupee, ArrowRight, Filter, Plus } from 'lucide-react';
+import { Receipt, Copy, Trash2, Eye, Pencil, IndianRupee, ArrowRight, Filter, Plus, SlidersHorizontal, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Input } from '@/components/ui/input';
@@ -13,11 +13,16 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Sheet, SheetBody, SheetContent, SheetFooter, SheetHeader, SheetIcon, SheetTitle } from '@/components/ui/sheet';
+import { DateRangeFilter } from '@/components/filters/date-range-filter';
 import { fmtInr } from '@/lib/gst';
 import { customerDisplayName } from '@/lib/customer';
+import { resolveDateRange, type DateFilterMode } from '@/lib/dates';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useInvoicesPage, useInvoiceStatusCounts, useDeleteInvoice, useDuplicateInvoice, useRecordPayment } from '@/hooks/use-invoices';
+import { useCustomersForFilter } from '@/hooks/use-customers';
 import type { InvoiceSort } from '@/actions/invoices';
+
+type GstTypeFilter = 'all' | 'intra' | 'inter';
 
 type Invoice = {
   id: string;
@@ -51,8 +56,6 @@ function groupKey(inv: Invoice) {
   return inv.isOverdue ? 'Overdue' : inv.status;
 }
 
-type DateFilterMode = 'today' | 'all' | 'custom';
-
 export function InvoicesClient({ initialData, initialStatus, initialDate }: { initialData: { items: Invoice[]; total: number }; initialStatus: string; initialDate: string }) {
   const [filter, setFilter] = useState(initialStatus);
   const [searchInput, setSearchInput] = useState('');
@@ -63,6 +66,7 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const deleteInvoice = useDeleteInvoice();
   const duplicateInvoice = useDuplicateInvoice();
+  const { data: customerOptions } = useCustomersForFilter();
 
   // Defaults to all-time (matching the server's SSR-seeded fetch — see
   // invoices/page.tsx) so the list opens showing full history; "Today" or a
@@ -70,18 +74,32 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
   const [dateMode, setDateMode] = useState<DateFilterMode>('all');
   const [customFrom, setCustomFrom] = useState(initialDate);
   const [customTo, setCustomTo] = useState(initialDate);
-  const dateFrom = dateMode === 'today' ? initialDate : dateMode === 'custom' ? customFrom : undefined;
-  const dateTo = dateMode === 'today' ? initialDate : dateMode === 'custom' ? customTo : undefined;
+  const { from: dateFrom, to: dateTo } = resolveDateRange(dateMode, customFrom, customTo);
 
-  useEffect(() => setPage(1), [search, filter, sort, dateMode, customFrom, customTo]);
+  const [customerId, setCustomerId] = useState('all');
+  const [amountMinInput, setAmountMinInput] = useState('');
+  const [amountMaxInput, setAmountMaxInput] = useState('');
+  const amountMin = amountMinInput.trim() === '' ? undefined : Number(amountMinInput);
+  const amountMax = amountMaxInput.trim() === '' ? undefined : Number(amountMaxInput);
+  const [gstType, setGstType] = useState<GstTypeFilter>('all');
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
+  const hasMoreFiltersActive = customerId !== 'all' || amountMin !== undefined || amountMax !== undefined || gstType !== 'all';
 
-  const isDefaultParams = filter === initialStatus && search === '' && sort === 'newest' && page === 1 && dateMode === 'all';
-  const { data, isFetching, isLoading } = useInvoicesPage({ status: filter, search, sort, page, pageSize: PAGE_SIZE, dateFrom, dateTo }, isDefaultParams ? initialData : undefined);
+  useEffect(
+    () => setPage(1),
+    [search, filter, sort, dateMode, customFrom, customTo, customerId, amountMin, amountMax, gstType]
+  );
+
+  const isDefaultParams = filter === initialStatus && search === '' && sort === 'newest' && page === 1 && dateMode === 'all' && !hasMoreFiltersActive;
+  const { data, isFetching, isLoading } = useInvoicesPage(
+    { status: filter, search, sort, page, pageSize: PAGE_SIZE, dateFrom, dateTo, customerId: customerId === 'all' ? undefined : customerId, amountMin, amountMax, gstType },
+    isDefaultParams ? initialData : undefined
+  );
   const pageItems = (data?.items ?? []) as Invoice[];
   const total = data?.total ?? 0;
 
   // Full-set counts (not just this page) for the "Overdue · N" group labels.
-  const { data: statusCounts } = useInvoiceStatusCounts(search, dateFrom, dateTo);
+  const { data: statusCounts } = useInvoiceStatusCounts(search, dateFrom, dateTo, { customerId: customerId === 'all' ? undefined : customerId, amountMin, amountMax, gstType });
 
   const groups = useMemo(() => {
     if (filter !== 'all') return [{ key: filter, items: pageItems, count: total }];
@@ -134,60 +152,112 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
         </Button>
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl2 border border-line bg-surface p-3 shadow-card">
-        <Input
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          placeholder="Search invoice #, customer, or shop name…"
-          className="max-w-xs flex-shrink-0"
-        />
-        <div className="flex flex-1 gap-1 overflow-x-auto">
-          {FILTERS.map((f) => (
-            <Button key={f.id} type="button" size="sm" variant={filter === f.id ? 'default' : 'outline'} onClick={() => setFilter(f.id)}>
-              {f.label}
-            </Button>
-          ))}
-        </div>
-        <div className="flex flex-shrink-0 items-center gap-1.5">
-          <Select value={dateMode} onValueChange={(v) => setDateMode(v as DateFilterMode)}>
-            <SelectTrigger className="h-8 w-[120px] flex-shrink-0 text-[11.5px]">
+      <div className="mb-4 rounded-xl2 border border-line bg-surface p-3 shadow-card">
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search invoice #, customer, or shop name…"
+            className="max-w-xs flex-shrink-0"
+          />
+          <div className="flex flex-1 gap-1 overflow-x-auto">
+            {FILTERS.map((f) => (
+              <Button key={f.id} type="button" size="sm" variant={filter === f.id ? 'default' : 'outline'} onClick={() => setFilter(f.id)}>
+                {f.label}
+              </Button>
+            ))}
+          </div>
+          <DateRangeFilter mode={dateMode} onModeChange={setDateMode} from={customFrom} to={customTo} onFromChange={setCustomFrom} onToChange={setCustomTo} />
+          <Select value={sort} onValueChange={(v) => setSort(v as InvoiceSort)}>
+            <SelectTrigger className="h-8 w-[170px] flex-shrink-0 text-[11.5px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="today">Today</SelectItem>
-              <SelectItem value="all">All time</SelectItem>
-              <SelectItem value="custom">Custom range</SelectItem>
+              <SelectItem value="newest">Newest first</SelectItem>
+              <SelectItem value="oldest">Oldest first</SelectItem>
+              <SelectItem value="amount-desc">Amount: high-low</SelectItem>
+              <SelectItem value="amount-asc">Amount: low-high</SelectItem>
             </SelectContent>
           </Select>
-          {dateMode === 'custom' && (
-            <div className="flex items-center gap-1 rounded-sm2 border border-line bg-bg px-2 py-1">
+          <Button
+            type="button"
+            size="sm"
+            variant={hasMoreFiltersActive ? 'default' : 'outline'}
+            onClick={() => setShowMoreFilters((v) => !v)}
+            className="flex-shrink-0"
+          >
+            <SlidersHorizontal size={12} /> More filters{hasMoreFiltersActive ? ` · ${[customerId !== 'all', amountMin !== undefined || amountMax !== undefined, gstType !== 'all'].filter(Boolean).length}` : ''}
+          </Button>
+        </div>
+
+        {showMoreFilters && (
+          <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-dashed border-line pt-2.5">
+            <Select value={customerId} onValueChange={setCustomerId}>
+              <SelectTrigger className="h-8 w-[200px] flex-shrink-0 text-[11.5px]">
+                <SelectValue placeholder="All customers" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All customers</SelectItem>
+                {customerOptions?.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {customerDisplayName(c)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <div className="flex flex-shrink-0 items-center gap-1 rounded-sm2 border border-line bg-bg px-2 py-1">
+              <span className="text-[11px] font-bold text-ink-faint">₹</span>
               <input
-                type="date"
-                value={customFrom}
-                onChange={(e) => setCustomFrom(e.target.value)}
-                className="border-none bg-transparent font-mono text-[11px] text-ink-body outline-none"
+                type="number"
+                min={0}
+                inputMode="decimal"
+                value={amountMinInput}
+                onChange={(e) => setAmountMinInput(e.target.value)}
+                placeholder="Min"
+                className="w-[68px] border-none bg-transparent font-mono text-[11px] text-ink-body outline-none"
               />
               <span className="text-ink-faint">–</span>
               <input
-                type="date"
-                value={customTo}
-                onChange={(e) => setCustomTo(e.target.value)}
-                className="border-none bg-transparent font-mono text-[11px] text-ink-body outline-none"
+                type="number"
+                min={0}
+                inputMode="decimal"
+                value={amountMaxInput}
+                onChange={(e) => setAmountMaxInput(e.target.value)}
+                placeholder="Max"
+                className="w-[68px] border-none bg-transparent font-mono text-[11px] text-ink-body outline-none"
               />
             </div>
-          )}
-        </div>
-        <Select value={sort} onValueChange={(v) => setSort(v as InvoiceSort)}>
-          <SelectTrigger className="h-8 w-[180px] flex-shrink-0 text-[11.5px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="newest">Newest first</SelectItem>
-            <SelectItem value="oldest">Oldest first</SelectItem>
-            <SelectItem value="amount-desc">Amount: high-low</SelectItem>
-            <SelectItem value="amount-asc">Amount: low-high</SelectItem>
-          </SelectContent>
-        </Select>
+
+            <Select value={gstType} onValueChange={(v) => setGstType(v as GstTypeFilter)}>
+              <SelectTrigger className="h-8 w-[170px] flex-shrink-0 text-[11.5px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All GST types</SelectItem>
+                <SelectItem value="intra">Intra-state (CGST+SGST)</SelectItem>
+                <SelectItem value="inter">Inter-state (IGST)</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {hasMoreFiltersActive && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setCustomerId('all');
+                  setAmountMinInput('');
+                  setAmountMaxInput('');
+                  setGstType('all');
+                }}
+                className="flex-shrink-0 text-ink-faint"
+              >
+                <X size={12} /> Clear
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
       {isLoading ? (
