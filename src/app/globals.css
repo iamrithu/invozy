@@ -225,6 +225,23 @@ main:has(> .invoice-builder-root) {
   .eway-page {
     break-before: page;
   }
+  /* CLASSIC's bordered page frame (invoice-sheet-classic.tsx) intentionally
+     has no forced min-height on its last page anymore — the closing block
+     (totals/HSN/bank/declaration/signature) flows in normal document order
+     right after the item table and, on a short invoice, is left free to
+     spill onto an extra physical page via Chromium's own print pagination
+     (see that file's doc comments) rather than being pre-budgeted for here.
+     Browsers default to `box-decoration-break: slice` for a box that breaks
+     across a page boundary that way — the fragment that starts the box gets
+     no bottom border and the fragment that continues it gets no top border,
+     since the "one box" is treated as sliced open at the break. That reads
+     as a broken/unfinished frame on the continuation page (e.g. a lone
+     Declaration/Signature section with a border only on 3 sides). `clone`
+     gives each fragment its own complete border instead. */
+  .invoice-page-inner {
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
 }
 
 /* Screen palette (text-ink-soft/-faint, text-brand, etc.) is tuned for a

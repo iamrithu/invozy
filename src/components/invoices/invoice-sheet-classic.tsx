@@ -4,7 +4,7 @@ import { Minus, Plus, Trash2 } from 'lucide-react';
 import { computeTotals, computeHsnSummary, computeUnitSummary, fmtInr, formatInvoiceDate, formatUnit, DEFAULT_HSN } from '@/lib/gst';
 import { numberToWords, amountToWordsWithPaise } from '@/lib/number-to-words';
 import { gstStateCode } from '@/lib/gst-state-codes';
-import { computeCapacities, paginateLines, useMeasuredSections, USABLE_MM, USABLE_PX } from './print-pagination';
+import { computeCapacities, paginateLinesUniform, useMeasuredSections } from './print-pagination';
 
 export type ClassicCompany = {
   name: string;
@@ -212,22 +212,6 @@ function classicRowCells(
   );
 }
 
-/** A ledger-style "Balance Brought Forward" / "Total Carried Forward" row's
- * `<td>` cells — same measurement-probe sharing pattern as classicRowCells
- * above. Print-only (the editable builder view is never paginated, so it
- * never needs a running per-page total). */
-function classicCarryRow(label: string, amount: number, ctx: { currency?: string; hasAltQty: boolean }) {
-  const { currency, hasAltQty } = ctx;
-  return (
-    <>
-      <td colSpan={6 + (hasAltQty ? 1 : 0)} className="border-r border-ink px-2 py-1.5 text-right uppercase tracking-wide text-[10.5px]">
-        {label}
-      </td>
-      <td className="px-2 py-1.5 text-right font-mono font-tabular">{fmtInr(amount, currency)}</td>
-    </>
-  );
-}
-
 /** The CLASSIC (Tally/ERP-style) GST tax invoice — a distinct layout from
  * InvoiceSheet, selected per-Company via Company.invoiceTemplate. Mirrors a
  * real dairy-distributor tax invoice: IRN/QR + Ack block, buyer FSSAI/
@@ -360,9 +344,10 @@ export function InvoiceSheetClassic(props: {
     buyer: <ClassicBuyerRow {...shared} />,
     itemsTableHead: classicTheadRow({ editable: false, hasAltQty, altUnitLabel }),
     itemRow: classicRowCells(measureLine, 1, { company, editable: false, hasAltQty }),
-    continuedFooter: <div className="flex justify-end border-t border-ink p-2 text-[10.5px] font-bold text-ink-soft">Continued on Page 2 of 3 →</div>,
+    // No "Continued on Page N" footer is rendered between pages anymore —
+    // nothing to measure/reserve room for.
+    continuedFooter: null,
     closing: <ClassicClosing {...shared} />,
-    carryRow: classicCarryRow('Balance Brought Forward', 0, { currency: company.currency, hasAltQty }),
   });
 
   if (editable) {
@@ -389,17 +374,8 @@ export function InvoiceSheetClassic(props: {
   // means the probe is guaranteed to measure at the same width the real
   // content ends up laid out at.
   const capacities = heights ? computeCapacities(heights) : null;
-  const { pages } = capacities ? paginateLines(lines, capacities.perPage, capacities.singleCap, capacities.lastCap) : { pages: [] };
+  const { pages } = capacities ? paginateLinesUniform(lines, capacities.perPage) : { pages: [] };
   let serial = 0;
-  // Running total carried across pages — a ledger convention: each
-  // non-last page ends with "Total Carried Forward" (the cumulative total
-  // through that page); each page but the first opens with "Balance
-  // Brought Forward" (that same figure from the page before it). Purely a
-  // display convention — the actual Subtotal/Total in ClassicClosing is
-  // computed once from every line regardless of how they're split across
-  // pages, so it's unaffected by (and always agrees with) these running
-  // figures.
-  let cumulative = 0;
 
   return (
     <div className="relative rounded-b-lg2 border border-t-0 border-line bg-white p-5 text-[11.5px] leading-normal text-ink-body shadow-card print:rounded-none print:border-none print:p-0 print:shadow-none">
@@ -419,69 +395,23 @@ export function InvoiceSheetClassic(props: {
         // page drops it to make room for the closing block instead (it
         // already appeared on page 1).
         const showBuyer = isLast ? pages.length === 1 : true;
-        const pageAmount = pageLines.reduce((sum, l) => sum + l.qty * l.rate * (1 - l.discount / 100), 0);
-        const broughtForward = i > 0 ? cumulative : null;
-        cumulative += pageAmount;
-        const carriedForward = !isLast ? cumulative : null;
-        // Explicit pixel height for the spacer below, computed from the same
-        // measured heights this page's row/column split was already
-        // computed from — rather than a `flex: 1` spacer growing into a
-        // `min-height` on its flex container. See the isLast-only rationale
-        // below for why only the last page gets one at all. Also accounts
-        // for the "Balance Brought Forward" row when this last page is
-        // itself a continuation page (i > 0) — it adds real height above
-        // the items that the spacer needs to make room for, same as every
-        // other fixed section here.
-        const lastPageSpacerPx =
-          isLast && heights
-            ? Math.max(
-                0,
-                USABLE_PX -
-                  (heights.header +
-                    (showBuyer ? heights.buyer : 0) +
-                    heights.thead +
-                    (broughtForward !== null ? heights.carryRow : 0) +
-                    pageLines.length * heights.row +
-                    heights.closing)
-              )
-            : 0;
         return (
           <div key={i} className={`invoice-page flex flex-col ${i > 0 ? 'mt-6 print:mt-0' : ''} ${!isLast ? 'print:break-after-page ' : ''}`}>
-
-            {/* print:min-h anchors this box to (a safety-margined) full page
-                height so the fixed-height spacer below always sums with the
-                rest of this page's content to that same height — pushing
-                the closing block down to sit flush against the bottom of
-                the page instead of floating right under the items table
-                with a big blank gap under it. Deliberately ONLY on the last
-                page: a continuation page has no closing block to anchor,
-                just a one-line "Continued on Page N" strip — stretching
-                that page to full height too would drag the strip down and
-                leave a large, clearly-visible empty gap inside the bordered
-                box above it. */}
-            <div
-              className="invoice-page-inner flex flex-1 flex-col border border-ink"
-              style={isLast ? { minHeight: `${USABLE_MM}mm` } : undefined}
-            >
+            <div className="invoice-page-inner flex flex-1 flex-col border border-ink">
               <ClassicHeader {...shared} />
               {showBuyer && <ClassicBuyerRow {...shared} />}
-              {/* Rendered even with zero items on this page when there's a
-                  "Balance Brought Forward" figure to show (e.g. every item
-                  fit on earlier pages and this page exists purely to give
-                  the closing block room) — otherwise that running total
-                  would just silently vanish rather than carrying through
-                  to the final page's Subtotal. */}
-              {(pageLines.length > 0 || broughtForward !== null) && (
-                <ClassicItemsTable {...shared} lines={pageLines} startSerial={startSerial} broughtForward={broughtForward} carriedForward={carriedForward} />
-              )}
-              {isLast && lastPageSpacerPx > 0 && <div className="flex-none" style={{ height: `${lastPageSpacerPx}px` }} />}
-              {isLast ? (
-                <ClassicClosing {...shared} />
-              ) : (
-                <div className="flex justify-end border-t border-ink p-2 text-[10.5px] font-bold text-ink-soft">
-                  Continued on Page {i + 2} of {pages.length} →
-                </div>
-              )}
+              {pageLines.length > 0 && <ClassicItemsTable {...shared} lines={pageLines} startSerial={startSerial} />}
+              {/* The closing block (totals/HSN/bank/declaration/signature)
+                  on the true last page flows in normal document order right
+                  after the item table — no forced full-page-height spacer.
+                  Every sub-section inside ClassicClosing already has its own
+                  `break-inside-avoid`, so if it doesn't all fit on this
+                  physical page, Chromium's native print pagination keeps
+                  each section intact and continues the rest — typically
+                  just the signature block — at the top of a following page,
+                  rather than this component pre-computing and forcing a
+                  bottom-anchored layout. */}
+              {isLast && <ClassicClosing {...shared} />}
             </div>
           </div>
         );
@@ -779,54 +709,26 @@ function ClassicBuyerRow({
 
 /** The line-items grid. Print mode takes a `lines`/`startSerial` slice for
  * just this physical page; editable mode always gets the whole list (never
- * paginated — see the component doc comment). `broughtForward`/
- * `carriedForward` add the ledger-style running-total rows described on
- * InvoiceSheetClassic's pagination loop — both are print-only (`null` in
- * editable mode, which is never paginated). */
-function ClassicItemsTable({
-  company,
-  lines,
-  editable,
-  hasAltQty,
-  altUnitLabel,
-  onUpdateLine,
-  onIncrement,
-  onDecrement,
-  onRemoveLine,
-  startSerial,
-  broughtForward,
-  carriedForward,
-}: SharedProps & { startSerial?: number; broughtForward?: number | null; carriedForward?: number | null }) {
+ * paginated — see the component doc comment). */
+function ClassicItemsTable({ company, lines, editable, hasAltQty, altUnitLabel, onUpdateLine, onIncrement, onDecrement, onRemoveLine, startSerial }: SharedProps & { startSerial?: number }) {
   const base = startSerial ?? 0;
   return (
     <div className="flex-none overflow-x-auto print:overflow-visible">
       <table className={`w-full border-collapse text-[11px] print:min-w-0 ${editable ? 'min-w-[720px]' : 'min-w-[640px]'}`}>
         <thead>{classicTheadRow({ editable, hasAltQty, altUnitLabel })}</thead>
         <tbody>
-          {broughtForward != null && (
-            <tr className="border-b-2 border-ink bg-surface-alt font-bold">
-              {classicCarryRow('Balance Brought Forward', broughtForward, { currency: company.currency, hasAltQty })}
-            </tr>
-          )}
           {lines.length === 0 ? (
-            broughtForward == null && (
-              <tr>
-                <td colSpan={7 + (hasAltQty ? 1 : 0) + (editable ? 2 : 0)} className="py-6 text-center text-ink-faint">
-                  No line items yet.
-                </td>
-              </tr>
-            )
+            <tr>
+              <td colSpan={7 + (hasAltQty ? 1 : 0) + (editable ? 2 : 0)} className="py-6 text-center text-ink-faint">
+                No line items yet.
+              </td>
+            </tr>
           ) : (
             lines.map((l, i) => (
               <tr key={l.lineId} className={editable ? 'border-b border-line' : 'border-b border-ink'}>
                 {classicRowCells(l, base + i + 1, { company, editable, hasAltQty, onUpdateLine, onIncrement, onDecrement, onRemoveLine })}
               </tr>
             ))
-          )}
-          {carriedForward != null && (
-            <tr className="border-t-2 border-ink bg-surface-alt font-bold">
-              {classicCarryRow('Total Carried Forward', carriedForward, { currency: company.currency, hasAltQty })}
-            </tr>
           )}
         </tbody>
       </table>

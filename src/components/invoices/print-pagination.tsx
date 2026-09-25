@@ -126,6 +126,54 @@ export function paginateLines<T>(lines: T[], perPage: number, singleCap: number,
   return { pages };
 }
 
+/** Splits line items into physical pages using a single, uniform per-page
+ * cap — every page, including the last, can hold up to `perPage` items
+ * (spread evenly among pages when there's more than one, so an early page
+ * never sits mostly blank while a later one is dense). Unlike `paginateLines`
+ * above (MODERN's model — a separate, reduced `lastCap` for a dedicated
+ * last/closing page that a spacer then stretches to the full physical page
+ * height), this makes no attempt to pre-compute whether the closing block
+ * fits alongside the last chunk of items: the caller (CLASSIC) appends the
+ * closing block directly after the last chunk in the *same* physical-page
+ * flow, with no forced page break before it, and lets Chromium's native
+ * print pagination carry over onto more pages whatever doesn't fit —
+ * `break-inside-avoid` on each of the closing block's own sub-sections (see
+ * ClassicClosing) keeps each one intact across that overflow.
+ *
+ * This avoids a failure mode `paginateLines`' reduced-last-page-cap model
+ * has for CLASSIC specifically: its closing block (HSN summary, bank
+ * details, QR, declaration, signature) is tall enough that `singleCap`
+ * (item capacity for a page that also fits the *entire* closing block) can
+ * come out smaller than the item count even when every item easily fits on
+ * page 1 by itself — e.g. 2 items but `singleCap` of 1 forces a second,
+ * dedicated "closing-only" page that stretches to full height while page 1
+ * sits mostly blank below those 2 items. Capping every page uniformly by
+ * `perPage` (which never accounts for closing at all) keeps every item on
+ * page 1 in that case, with the closing block flowing to fill whatever
+ * space remains there before any of it spills to page 2. */
+export function paginateLinesUniform<T>(lines: T[], perPage: number): PaginationResult<T> {
+  const total = lines.length;
+  if (total === 0) return { pages: [[]] };
+
+  const pageCount = Math.max(1, Math.ceil(total / perPage));
+  const counts = new Array(pageCount).fill(0);
+  let remaining = total;
+  for (let i = 0; i < pageCount; i++) {
+    const pagesLeft = pageCount - i;
+    const take = Math.min(perPage, Math.ceil(remaining / pagesLeft));
+    counts[i] = take;
+    remaining -= take;
+  }
+
+  const pages: T[][] = [];
+  let idx = 0;
+  for (const c of counts) {
+    pages.push(lines.slice(idx, idx + c));
+    idx += c;
+  }
+  return { pages };
+}
+
 export type MeasuredHeights = {
   header: number;
   buyer: number;
@@ -133,32 +181,17 @@ export type MeasuredHeights = {
   row: number;
   continued: number;
   closing: number;
-  /** Height of a "Balance Brought Forward" / "Total Carried Forward" ledger
-   * row — 0 for templates that don't use the carry-forward feature (see
-   * ProbeContent.carryRow below), in which case it's a no-op in the budget
-   * math. Only the CLASSIC template supplies this today. */
-  carryRow: number;
 };
 
 export type PageCapacities = { perPage: number; singleCap: number; lastCap: number };
 
 /** The same "sum the fixed sections, subtract from usable, divide by row
  * height" arithmetic invoice-sheet-classic.tsx always used — now taking
- * measured pixel heights instead of hardcoded mm constants.
- *
- * Every non-last page always shows a "Total Carried Forward" row after its
- * items, and every page but the first shows a "Balance Brought Forward" row
- * before them (see InvoiceSheetClassic) — both budgeted here so a page's
- * item count leaves room for them instead of the row silently pushing the
- * page over its physical height. `perPage` reserves room for both (the
- * worst case, a middle continuation page that shows both rows) even though
- * page 1 only ever shows one of them — a page 1 very occasionally rendering
- * one row shorter than it strictly needed to is a far smaller cost than the
- * alternative of running long. */
+ * measured pixel heights instead of hardcoded mm constants. */
 export function computeCapacities(h: MeasuredHeights): PageCapacities {
-  const perPage = Math.max(1, Math.floor((USABLE_PX - h.header - h.buyer - h.thead - h.continued - h.carryRow * 2) / h.row));
+  const perPage = Math.max(1, Math.floor((USABLE_PX - h.header - h.buyer - h.thead - h.continued) / h.row));
   const singleCap = Math.max(0, Math.floor((USABLE_PX - h.header - h.buyer - h.thead - h.closing - ENDBAND_PX) / h.row));
-  const lastCap = Math.max(0, Math.floor((USABLE_PX - h.header - h.thead - h.closing - ENDBAND_PX - h.carryRow) / h.row));
+  const lastCap = Math.max(0, Math.floor((USABLE_PX - h.header - h.thead - h.closing - ENDBAND_PX) / h.row));
   return { perPage, singleCap, lastCap };
 }
 
@@ -177,11 +210,6 @@ export type ProbeContent = {
    * (bank details, discount row, paid box, HSN table, "you saved", …)
    * this specific invoice actually renders. */
   closing: ReactNode;
-  /** A representative "Balance Brought Forward"/"Total Carried Forward"
-   * `<tr>` — omit entirely for templates without the carry-forward feature
-   * (see MeasuredHeights.carryRow), which measures as 0 and is a no-op in
-   * the capacity math. */
-  carryRow?: ReactNode;
 };
 
 /** Mounts a hidden, off-screen probe of this invoice's real sections
@@ -203,7 +231,6 @@ export function useMeasuredSections(content: ProbeContent): { heights: MeasuredH
   const rowRef = useRef<HTMLTableRowElement>(null);
   const continuedRef = useRef<HTMLDivElement>(null);
   const closingRef = useRef<HTMLDivElement>(null);
-  const carryRowRef = useRef<HTMLTableRowElement>(null);
   const [heights, setHeights] = useState<MeasuredHeights | null>(null);
   // Distinct from `heights !== null` — see below. The PDF route should
   // only treat the layout as settled once `ready` is true.
@@ -218,7 +245,6 @@ export function useMeasuredSections(content: ProbeContent): { heights: MeasuredH
         row: rowRef.current?.getBoundingClientRect().height ?? 0,
         continued: continuedRef.current?.getBoundingClientRect().height ?? 0,
         closing: closingRef.current?.getBoundingClientRect().height ?? 0,
-        carryRow: carryRowRef.current?.getBoundingClientRect().height ?? 0,
       });
 
     // Measure immediately — keeps a real (non-PDF) viewer's flash-of-
@@ -267,13 +293,6 @@ export function useMeasuredSections(content: ProbeContent): { heights: MeasuredH
       </table>
       <div ref={continuedRef}>{content.continuedFooter}</div>
       <div ref={closingRef}>{content.closing}</div>
-      {content.carryRow && (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <tbody>
-            <tr ref={carryRowRef}>{content.carryRow}</tr>
-          </tbody>
-        </table>
-      )}
     </div>
   );
 

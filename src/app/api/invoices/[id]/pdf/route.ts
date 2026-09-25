@@ -82,11 +82,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const pdf = await page.pdf({
       format: 'A4',
       printBackground: true,
-      // A multi-page invoice (many line items, or the e-Way Bill's own
-      // extra page) otherwise gives no clue a page was cut off — this
-      // footer runs on every physical page once page count is known,
-      // using Chromium's own pagination (pageNumber/totalPages are
-      // computed post-layout, not something this route can know upfront).
+      // A multi-page invoice (many line items, or the closing block
+      // overflowing onto its own page — see ClassicClosing's natural print
+      // flow) otherwise gives no clue a page was cut off — this footer runs
+      // on every physical page once page count is known, using Chromium's
+      // own pagination (`pageNumber`/`totalPages` are computed post-layout
+      // by Chromium itself, so this is accurate even when the split comes
+      // from natural content overflow rather than this app's own explicit
+      // per-item pagination).
       displayHeaderFooter: true,
       headerTemplate: '<span></span>',
       footerTemplate: `
