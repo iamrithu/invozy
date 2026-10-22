@@ -1,13 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import Image from 'next/image';
 import { Compass, Package, Users, Receipt } from 'lucide-react';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { completeOnboarding } from '@/actions/onboarding';
 import { useAppDispatch } from '@/lib/redux/hooks';
 import { requestTour } from '@/lib/redux/ui-slice';
+import { BrandMark } from '@/components/shell/brand-mark';
+import { APP_NAME } from '@/lib/brand';
 
 // Mirrors (but doesn't share code with) the dashboard's GettingStarted
 // component (src/app/(app)/dashboard/page.tsx) and the landing page's "How
@@ -41,10 +42,8 @@ export function WelcomeCard({ show, companyName }: { show: boolean; companyName:
   return (
     <Dialog open={open} onOpenChange={(next) => !next && dismiss()}>
       <DialogContent className="max-w-[420px] text-center">
-        <span className="mx-auto flex h-14 w-14 animate-bump items-center justify-center rounded-sm2 bg-white shadow-card ring-1 ring-black/5">
-          <Image src="/brand/mark.png" alt="Invozy" width={64} height={64} className="h-9 w-9 object-contain" />
-        </span>
-        <h2 className="mt-1 text-[19px] font-extrabold text-ink">Welcome to Invozy, {companyName}!</h2>
+        <BrandMark className="mx-auto h-14 w-14 animate-bump text-[17px] shadow-card" />
+        <h2 className="mt-1 text-[19px] font-extrabold text-ink">Welcome to {APP_NAME}, {companyName}!</h2>
         <p className="mx-auto mt-1 max-w-[320px] text-[13px] leading-relaxed text-ink-soft">
           GST billing that gets out of your way — add a product, add a customer, and send a GST-correct invoice in under a minute.
         </p>

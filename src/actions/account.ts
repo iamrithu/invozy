@@ -3,16 +3,12 @@
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
-import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
+import { requireUser } from '@/lib/session';
+import { COMPANY_ID } from '@/lib/company-id';
 
 async function requireUserId() {
-  const session = await auth();
-  const userId = session?.user?.id;
-  if (!userId || session?.user?.role === 'SUPER_ADMIN') {
-    throw new Error('Not signed in.');
-  }
-  return userId;
+  return (await requireUser()).id;
 }
 
 const ProfileSchema = z
@@ -33,7 +29,7 @@ export async function updateMyProfile(_prev: ProfileFormState, formData: FormDat
   if (!parsed.success) {
     return { error: 'Check the highlighted fields.', fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string> };
   }
-  const email = parsed.data.email || null;
+  const email = parsed.data.email?.trim().toLowerCase() || null;
   const phone = parsed.data.phone || null;
 
   const existing = await prisma.user.findFirst({
@@ -43,13 +39,12 @@ export async function updateMyProfile(_prev: ProfileFormState, formData: FormDat
     return { error: 'That email or phone is already used by another account.', fieldErrors: { email: 'Already in use' } };
   }
 
-  // Company.email always mirrors the owner's login email (see
-  // src/actions/company.ts) — since there's exactly one user per company,
-  // this is the single place that value is ever written.
-  await prisma.$transaction(async (tx) => {
-    const user = await tx.user.update({ where: { id: userId }, data: { email, phone } });
-    await tx.company.update({ where: { id: user.companyId }, data: { email } });
-  });
+  // Company.email mirrors the login email (see src/actions/company.ts) —
+  // this is the single place that value is ever written after setup.
+  await prisma.$transaction([
+    prisma.user.update({ where: { id: userId }, data: { email, phone } }),
+    prisma.company.update({ where: { id: COMPANY_ID }, data: { email } }),
+  ]);
   revalidatePath('/account');
   revalidatePath('/company');
   return {};

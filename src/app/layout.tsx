@@ -3,6 +3,7 @@ import { IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google';
 import Script from 'next/script';
 import './globals.css';
 import { Providers } from '@/components/providers';
+import { APP_NAME } from '@/lib/brand';
 
 // IBM Plex Sans/Mono — a typeface family literally designed for enterprise
 // software, matching the app's boxy/zero-radius direction better than the
@@ -30,7 +31,7 @@ try {
 `;
 
 export const metadata: Metadata = {
-  title: 'Invozy — GST billing & invoicing',
+  title: `${APP_NAME} — GST billing & invoicing`,
   description: 'GST billing and invoicing for Indian businesses.',
 };
 

@@ -19,7 +19,7 @@ export default async function DashboardPage() {
     getBillingTrend(),
     getCollectedTrend(6),
     getMonthOverMonth(),
-    getTopCustomers(),
+    getTopCustomers(undefined, 10),
     getFrequentCustomItems(),
   ]);
 
@@ -27,7 +27,7 @@ export default async function DashboardPage() {
   const momTrend: 'up' | 'down' | 'flat' = pct === null ? (mom.thisMonthTotal > 0 ? 'up' : 'flat') : pct > 0.5 ? 'up' : pct < -0.5 ? 'down' : 'flat';
   const momText = pct === null ? (mom.thisMonthTotal > 0 ? 'New activity this month' : 'No billing yet') : `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}% vs last month`;
 
-  const quickAccess = topCustomers.filter((c) => c.count > 0).slice(0, 10);
+  const quickAccess = topCustomers;
   const isBrandNew = stats.activeProducts === 0 && stats.customerCount === 0 && stats.recent.length === 0;
   const profileIncomplete = !company.gstin || !company.bankAcc;
 
@@ -185,29 +185,29 @@ export default async function DashboardPage() {
               </TableHeader>
               <TableBody>
                 {stats.recent.map((r) => (
-                  <TableRow key={r.invoice.id}>
+                  <TableRow key={r.id}>
                     <TableCell>
                       <div className="flex items-center gap-2.5">
                         <span
                           className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-sm2 text-[11px] font-extrabold text-white"
-                          style={{ background: hashColor(customerDisplayName(r.invoice.customer)) }}
+                          style={{ background: hashColor(customerDisplayName(r.customer)) }}
                         >
-                          {initials(customerDisplayName(r.invoice.customer))}
+                          {initials(customerDisplayName(r.customer))}
                         </span>
                         <div>
-                          <Link href={`/invoices/${r.invoice.id}`} className="font-mono font-bold text-ink hover:text-brand">
-                            {r.invoice.number}
+                          <Link href={`/invoices/${r.id}`} className="font-mono font-bold text-ink hover:text-brand">
+                            {r.number}
                           </Link>
                           <div className="text-[11px] text-ink-faint">
-                            {customerDisplayName(r.invoice.customer)} · {new Date(r.invoice.date).toLocaleDateString('en-IN')}
+                            {customerDisplayName(r.customer)} · {new Date(r.date).toLocaleDateString('en-IN')}
                           </div>
                         </div>
                       </div>
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={r.invoice.status} overdue={r.invoice.status !== 'PAID' && r.invoice.due < new Date()} />
+                      <StatusBadge status={r.status} overdue={r.isOverdue} />
                     </TableCell>
-                    <TableCell className="text-right font-mono font-bold text-ink">{fmtInr(r.totals.total, company.currency)}</TableCell>
+                    <TableCell className="text-right font-mono font-bold text-ink">{fmtInr(r.total, company.currency)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -228,7 +228,7 @@ function GettingStarted() {
   return (
     <div className="rounded-xl2 border border-brand bg-brand-light p-4">
       <div className="text-[13.5px] font-extrabold text-brand-dark">Get set up in three steps</div>
-      <p className="mt-0.5 text-[12px] text-ink-soft">You&apos;re all signed up — here&apos;s the fastest way to your first invoice.</p>
+      <p className="mt-0.5 text-[12px] text-ink-soft">Here&apos;s the fastest way to your first invoice.</p>
       <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
         {steps.map((s, i) => (
           <Link

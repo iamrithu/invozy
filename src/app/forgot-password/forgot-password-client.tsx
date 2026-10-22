@@ -1,12 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import Image from 'next/image';
 import Link from 'next/link';
 import { KeyRound } from 'lucide-react';
 import { requestPasswordReset } from '@/actions/auth';
 import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
+import { BrandMark } from '@/components/shell/brand-mark';
 
 export function ForgotPasswordClient() {
   const [pending, setPending] = useState(false);
@@ -25,9 +25,7 @@ export function ForgotPasswordClient() {
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10">
       <div className="w-full max-w-[380px] rounded-xl2 border border-line bg-surface p-7 shadow-elevated">
         <div className="mb-6 flex flex-col items-center gap-2.5 text-center">
-          <span className="flex h-11 w-11 items-center justify-center rounded-sm2 bg-white shadow-card ring-1 ring-black/5">
-            <Image src="/brand/mark.png" alt="Invozy" width={64} height={64} className="h-7 w-7 object-contain" />
-          </span>
+          <BrandMark className="h-11 w-11 text-[14px] shadow-card" />
           <h1 className="text-[19px] font-extrabold text-ink">Reset your password</h1>
           <p className="text-[12.5px] text-ink-faint">Enter the email you signed up with and we&apos;ll send a reset link.</p>
         </div>

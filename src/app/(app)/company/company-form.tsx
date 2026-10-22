@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { useActionState } from 'react';
 import Link from 'next/link';
-import { useSession } from 'next-auth/react';
 import type { Company } from '@prisma/client';
 import { Building2, Globe, Phone, PhoneCall, Home, IdCard, Percent, Landmark, Hash, FileText, Pencil, Check, Flag, Palette, ImagePlus, X, Mail, ShieldCheck, MapPin, KeyRound, LayoutTemplate, PenLine } from 'lucide-react';
 import { toast } from 'sonner';
@@ -28,7 +27,6 @@ const TABS = [
 ] as const;
 
 export function CompanyForm({ company }: { company: Company }) {
-  const { data: session } = useSession();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<(typeof TABS)[number]['id']>('identity');
   const [state, formAction, actionPending] = useActionState<CompanyFormState, FormData>(updateCompany, {});
@@ -150,7 +148,7 @@ export function CompanyForm({ company }: { company: Company }) {
                   <label className="mb-1 flex items-center gap-1.5 text-[11px] font-bold text-ink-faint">
                     <Mail size={12} className="flex-shrink-0" /> Email
                   </label>
-                  <div className="w-full truncate rounded-sm2 border border-line bg-bg px-3 py-2 text-[13px] text-ink-soft">{session?.user?.email ?? '—'}</div>
+                  <div className="w-full truncate rounded-sm2 border border-line bg-bg px-3 py-2 text-[13px] text-ink-soft">{company.email ?? '—'}</div>
                   <p className="mt-1 text-[11px] text-ink-faint">
                     Same as your account email —{' '}
                     <Link href="/account" className="font-bold text-brand" onClick={() => setOpen(false)}>

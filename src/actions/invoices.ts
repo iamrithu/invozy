@@ -1,10 +1,13 @@
 'use server';
 
 import { z } from 'zod';
+import type { Prisma, InvoiceStatus } from '@prisma/client';
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
 import { getCompany } from '@/lib/get-company';
+import { requireUser } from '@/lib/session';
 import { computeTotals, formatInvoiceNumber, isOverCreditLimit, deriveStatus, DEFAULT_HSN } from '@/lib/gst';
+import { totalsColumns, customerOutstanding } from '@/lib/invoice-totals';
 import { istDayRangeUtc } from '@/lib/dates';
 
 const LineSchema = z.object({
@@ -75,14 +78,15 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
   }
   const data = parsed.data;
 
-  const [company, customer] = await Promise.all([
+  // The outstanding-balance lookup only matters when the customer has a
+  // credit limit, but it's one indexed aggregate — running it alongside
+  // the other two reads is cheaper than a second round trip afterwards.
+  const [company, customer, outstandingBefore] = await Promise.all([
     getCompany(),
     prisma.customer.findUnique({ where: { id: data.customerId } }),
+    customerOutstanding(data.customerId),
   ]);
-  // Without the companyId check, an invoice could be created against another
-  // company's customer row — leaking that customer's name/GSTIN/address into
-  // this invoice and corrupting their data with a foreign invoice reference.
-  if (!customer || customer.companyId !== company.id) return { error: 'Customer not found' };
+  if (!customer) return { error: 'Customer not found' };
 
   const totals = computeTotals(
     data.items.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount })),
@@ -100,45 +104,16 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
   );
 
   // §3.4 — advisory, not blocking, matching the prototype's UI.
-  let warning: string | undefined;
-  if (customer.creditLimit && Number(customer.creditLimit) > 0) {
-    const existingInvoices = await prisma.invoice.findMany({
-      where: { customerId: customer.id },
-      include: { items: true, payments: true },
-    });
-    const outstandingBefore = existingInvoices.reduce((sum, inv) => {
-      const t = computeTotals(
-        inv.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) })),
-        { type: inv.overallDiscountType, value: Number(inv.overallDiscountValue) },
-        {
-          cgstRate: Number(inv.cgstRate),
-          sgstRate: Number(inv.sgstRate),
-          igstRate: Number(inv.igstRate),
-          cgstEnabled: inv.cgstEnabled,
-          sgstEnabled: inv.sgstEnabled,
-          igstEnabled: inv.igstEnabled,
-        },
-        company.state,
-        customer.state
-      );
-      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
-      return sum + Math.max(t.total - paid, 0);
-    }, 0);
-    if (isOverCreditLimit(outstandingBefore, totals.total, Number(customer.creditLimit))) {
-      warning = `This will put ${customer.name} at or over their credit limit.`;
-    }
-  }
+  const warning = isOverCreditLimit(outstandingBefore, totals.total, Number(customer.creditLimit))
+    ? `This will put ${customer.name} at or over their credit limit.`
+    : undefined;
 
   // §3.3 — claim the number and insert inside one transaction so two
   // concurrent invoice creations can never collide on the same number.
   const invoice = await prisma.$transaction(async (tx) => {
-    const freshCompany = await tx.company.findUniqueOrThrow({ where: { id: company.id } });
-    const number = formatInvoiceNumber(freshCompany.invoicePrefix, freshCompany.invoiceFY, freshCompany.nextInvoiceNo);
-    await tx.company.update({ where: { id: company.id }, data: { nextInvoiceNo: { increment: 1 } } });
-
+    const number = await claimInvoiceNumber(tx, company.id);
     return tx.invoice.create({
       data: {
-        companyId: company.id,
         customerId: customer.id,
         number,
         date: new Date(data.date),
@@ -163,6 +138,8 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
         showHsnSummary: data.showHsnSummary,
         showUpiQr: data.showUpiQr,
         showGpayNumber: data.showGpayNumber,
+        ...totalsColumns(totals),
+        amountPaid: data.markPaid ? totals.total : 0,
         items: {
           create: data.items.map((l) => ({
             productId: l.productId,
@@ -190,6 +167,20 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
   return { invoiceId: invoice.id, warning };
 }
 
+/** Atomically takes the company's next invoice number — the UPDATE's row
+ * lock serializes concurrent callers, and reading the incremented value back
+ * from the same statement means no separate SELECT that two transactions
+ * could both see before either increments. Must run inside the transaction
+ * that inserts the invoice, so a failed insert releases the number. */
+async function claimInvoiceNumber(tx: Pick<typeof prisma, 'company'>, companyId: string) {
+  const c = await tx.company.update({
+    where: { id: companyId },
+    data: { nextInvoiceNo: { increment: 1 } },
+    select: { invoicePrefix: true, invoiceFY: true, nextInvoiceNo: true },
+  });
+  return formatInvoiceNumber(c.invoicePrefix, c.invoiceFY, c.nextInvoiceNo - 1);
+}
+
 /**
  * Full edit of an existing invoice — same validation/totals/credit-limit flow
  * as createInvoice, but updates the invoice row + replaces its items in
@@ -205,18 +196,21 @@ export async function updateInvoice(invoiceId: string, input: InvoiceInput): Pro
   }
   const data = parsed.data;
 
-  const [company, existing, customer] = await Promise.all([
+  const [company, existing, customer, outstandingBefore] = await Promise.all([
     getCompany(),
-    prisma.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true } }),
+    prisma.invoice.findUnique({ where: { id: invoiceId } }),
     prisma.customer.findUnique({ where: { id: data.customerId } }),
+    // Excludes this invoice's own (pre-edit) record — otherwise its old
+    // total would double-count against the newly edited total below.
+    customerOutstanding(data.customerId, invoiceId),
   ]);
-  if (!existing || existing.companyId !== company.id) return { error: 'Invoice not found' };
+  if (!existing) return { error: 'Invoice not found' };
   if (existing.status === 'PAID') return { error: 'This invoice is already paid in full and can no longer be edited' };
-  if (!customer || customer.companyId !== company.id) return { error: 'Customer not found' };
+  if (!customer) return { error: 'Customer not found' };
   // Real money already recorded (e.g. a PARTIALLY_PAID invoice) — markPaid
   // below must only top up the remaining balance, never re-insert the full
   // total as a second payment on top of what's already on file.
-  const alreadyPaid = existing.payments.reduce((s, p) => s + Number(p.amount), 0);
+  const alreadyPaid = Number(existing.amountPaid);
 
   // Once an e-Invoice IRN has been filed with NIC, its tax amounts are
   // locked with the government (there's no amend API, only cancel-within-
@@ -266,36 +260,9 @@ export async function updateInvoice(invoiceId: string, input: InvoiceInput): Pro
     customer.state
   );
 
-  let warning: string | undefined;
-  if (customer.creditLimit && Number(customer.creditLimit) > 0) {
-    // Excludes this invoice's own (pre-edit) record — otherwise its old
-    // total would double-count against the newly edited total below.
-    const existingInvoices = await prisma.invoice.findMany({
-      where: { customerId: customer.id, id: { not: invoiceId } },
-      include: { items: true, payments: true },
-    });
-    const outstandingBefore = existingInvoices.reduce((sum, inv) => {
-      const t = computeTotals(
-        inv.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) })),
-        { type: inv.overallDiscountType, value: Number(inv.overallDiscountValue) },
-        {
-          cgstRate: Number(inv.cgstRate),
-          sgstRate: Number(inv.sgstRate),
-          igstRate: Number(inv.igstRate),
-          cgstEnabled: inv.cgstEnabled,
-          sgstEnabled: inv.sgstEnabled,
-          igstEnabled: inv.igstEnabled,
-        },
-        company.state,
-        customer.state
-      );
-      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
-      return sum + Math.max(t.total - paid, 0);
-    }, 0);
-    if (isOverCreditLimit(outstandingBefore, totals.total, Number(customer.creditLimit))) {
-      warning = `This will put ${customer.name} at or over their credit limit.`;
-    }
-  }
+  const warning = isOverCreditLimit(outstandingBefore, totals.total, Number(customer.creditLimit))
+    ? `This will put ${customer.name} at or over their credit limit.`
+    : undefined;
 
   // Only top up the remaining balance — inserting the full total again would
   // double-count whatever's already been recorded against this invoice
@@ -337,6 +304,8 @@ export async function updateInvoice(invoiceId: string, input: InvoiceInput): Pro
         showHsnSummary: gst.showHsnSummary,
         showUpiQr: gst.showUpiQr,
         showGpayNumber: gst.showGpayNumber,
+        ...totalsColumns(totals),
+        amountPaid: alreadyPaid + (topUp > 0.004 ? topUp : 0),
         items: {
           create: data.items.map((l) => ({
             productId: l.productId,
@@ -362,104 +331,98 @@ export async function updateInvoice(invoiceId: string, input: InvoiceInput): Pro
   return { invoiceId: updated.id, warning };
 }
 
-function withComputedTotals<
-  T extends {
-    items: any[];
-    overallDiscountType: any;
-    overallDiscountValue: any;
-    payments: any[];
-    status: string;
-    due: Date;
-    customer: { state: string };
-    cgstRate: any;
-    sgstRate: any;
-    igstRate: any;
-    cgstEnabled: boolean;
-    sgstEnabled: boolean;
-    igstEnabled: boolean;
-  },
->(inv: T, company: { state: string }) {
-  const totals = computeTotals(
-    inv.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) })),
-    { type: inv.overallDiscountType, value: Number(inv.overallDiscountValue) },
-    {
-      cgstRate: Number(inv.cgstRate),
-      sgstRate: Number(inv.sgstRate),
-      igstRate: Number(inv.igstRate),
-      cgstEnabled: inv.cgstEnabled,
-      sgstEnabled: inv.sgstEnabled,
-      igstEnabled: inv.igstEnabled,
-    },
-    company.state,
-    inv.customer.state
-  );
-  const amountPaid = inv.payments.reduce((s: number, p: any) => s + Number(p.amount), 0);
+/** Only the columns the Invoices list/detail sheet actually render — totals
+ * come from the stored columns (see schema.prisma), so no items join is
+ * needed, just a count. */
+const LIST_SELECT = {
+  id: true,
+  number: true,
+  date: true,
+  due: true,
+  status: true,
+  total: true,
+  amountPaid: true,
+  interState: true,
+  customer: { select: { name: true, shopName: true, state: true } },
+  payments: { select: { amount: true, date: true, mode: true }, orderBy: { date: 'asc' } },
+  _count: { select: { items: true } },
+} satisfies Prisma.InvoiceSelect;
+
+function toListRow(inv: Prisma.InvoiceGetPayload<{ select: typeof LIST_SELECT }>, now: Date) {
+  const total = Number(inv.total);
+  const amountPaid = Number(inv.amountPaid);
+  const { _count, total: _t, interState, ...rest } = inv;
   return {
-    ...inv,
-    computedTotal: totals.total,
+    ...rest,
+    payments: inv.payments.map((p) => ({ ...p, amount: Number(p.amount) })),
+    computedTotal: total,
     amountPaid,
-    balanceDue: totals.total - amountPaid,
-    isOverdue: inv.status !== 'PAID' && inv.due < new Date(),
+    balanceDue: total - amountPaid,
+    isOverdue: inv.status !== 'PAID' && inv.due < now,
     // Inter-state (IGST) vs intra-state (CGST+SGST) — for the GST type
-    // filter on the Invoices list (see listInvoicesPage's `gstType` opt).
-    useIgst: totals.useIgst,
+    // filter on the Invoices list.
+    useIgst: interState,
+    itemCount: _count.items,
   };
 }
 
-/** Cheap aggregate (status + due date only, no items/payments/customer join)
- * for the invoice list's "Overdue · N" / "Draft · N" group labels — these
- * must reflect the full filtered set, not just the current page, so this
- * runs separately from the paginated row fetch below and takes the same
- * filters it does (everything except sort/page, which don't affect counts).
- * Amount range and GST type aren't DB-expressible (see listInvoicesPage's
- * doc comment), so those two still need the items/customer join here too
- * when present. */
+type InvoiceWhereFilters = Omit<InvoiceListFilters, 'sort' | 'page' | 'pageSize'>;
+
+/** One WHERE for the Invoices list and its status counts, so the two can
+ * never disagree. Every filter — including amount range and GST type —
+ * runs in Postgres against the stored totals columns. */
+function invoiceWhere(f: InvoiceWhereFilters): Prisma.InvoiceWhereInput {
+  return {
+    ...(f.status && f.status !== 'all' ? { status: f.status as InvoiceStatus } : {}),
+    ...(f.customerId ? { customerId: f.customerId } : {}),
+    ...(f.search
+      ? {
+          OR: [
+            { number: { contains: f.search, mode: 'insensitive' } },
+            { customer: { name: { contains: f.search, mode: 'insensitive' } } },
+            { customer: { shopName: { contains: f.search, mode: 'insensitive' } } },
+          ],
+        }
+      : {}),
+    // `dateFrom`/`dateTo` are IST calendar dates (YYYY-MM-DD), not UTC —
+    // see src/lib/dates.ts for why that distinction matters for an
+    // India-only app running on a UTC server.
+    ...(f.dateFrom || f.dateTo
+      ? { date: { ...(f.dateFrom ? { gte: istDayRangeUtc(f.dateFrom).gte } : {}), ...(f.dateTo ? { lt: istDayRangeUtc(f.dateTo).lt } : {}) } }
+      : {}),
+    ...(f.amountMin != null || f.amountMax != null
+      ? { total: { ...(f.amountMin != null ? { gte: f.amountMin } : {}), ...(f.amountMax != null ? { lte: f.amountMax } : {}) } }
+      : {}),
+    ...(f.gstType === 'intra' ? { interState: false } : f.gstType === 'inter' ? { interState: true } : {}),
+  };
+}
+
+/** Counts for the invoice list's "Overdue · N" / "Draft · N" group labels —
+ * these must reflect the full filtered set, not just the current page, so
+ * this runs separately from the paginated row fetch and takes the same
+ * filters (everything except status/sort/page, which don't affect counts).
+ * Two GROUP BYs instead of fetching rows: an overdue invoice counts under
+ * "Overdue" rather than its own status, so the overdue counts are
+ * subtracted back out of each status. */
 export async function getInvoiceStatusCounts(
   search?: string,
   dateFrom?: string,
   dateTo?: string,
   opts?: { customerId?: string; amountMin?: number; amountMax?: number; gstType?: 'all' | 'intra' | 'inter' }
 ) {
-  const company = await getCompany();
-  const where = {
-    companyId: company.id,
-    ...(opts?.customerId ? { customerId: opts.customerId } : {}),
-    ...(search
-      ? {
-          OR: [
-            { number: { contains: search, mode: 'insensitive' as const } },
-            { customer: { name: { contains: search, mode: 'insensitive' as const } } },
-            { customer: { shopName: { contains: search, mode: 'insensitive' as const } } },
-          ],
-        }
-      : {}),
-    ...(dateFrom || dateTo
-      ? { date: { ...(dateFrom ? istDayRangeUtc(dateFrom) : {}), ...(dateTo ? { lt: istDayRangeUtc(dateTo).lt } : {}) } }
-      : {}),
-  };
-  const needsAmountsForCounts = (opts?.amountMin != null || opts?.amountMax != null || (opts?.gstType && opts.gstType !== 'all')) ?? false;
-  const now = new Date();
+  await requireUser();
+  const where = invoiceWhere({ search, dateFrom, dateTo, ...opts });
+  const [all, overdue] = await Promise.all([
+    prisma.invoice.groupBy({ by: ['status'], where, _count: { _all: true } }),
+    prisma.invoice.groupBy({ by: ['status'], where: { AND: [where, { status: { not: 'PAID' }, due: { lt: new Date() } }] }, _count: { _all: true } }),
+  ]);
   const counts: Record<string, number> = {};
-
-  if (needsAmountsForCounts) {
-    const rows = await prisma.invoice.findMany({ where, include: { customer: true, items: true, payments: true } });
-    for (const inv of rows) {
-      const r = withComputedTotals(inv, company);
-      if (opts?.amountMin != null && r.computedTotal < opts.amountMin) continue;
-      if (opts?.amountMax != null && r.computedTotal > opts.amountMax) continue;
-      if (opts?.gstType === 'intra' && r.useIgst) continue;
-      if (opts?.gstType === 'inter' && !r.useIgst) continue;
-      const key = r.status !== 'PAID' && r.due < now ? 'Overdue' : r.status;
-      counts[key] = (counts[key] ?? 0) + 1;
-    }
-    return counts;
+  for (const row of all) counts[row.status] = row._count._all;
+  for (const row of overdue) {
+    counts[row.status] -= row._count._all;
+    counts.Overdue = (counts.Overdue ?? 0) + row._count._all;
   }
-
-  const rows = await prisma.invoice.findMany({ where, select: { status: true, due: true } });
-  for (const inv of rows) {
-    const key = inv.status !== 'PAID' && inv.due < now ? 'Overdue' : inv.status;
-    counts[key] = (counts[key] ?? 0) + 1;
-  }
+  for (const key of Object.keys(counts)) if (counts[key] === 0) delete counts[key];
   return counts;
 }
 
@@ -476,137 +439,78 @@ export type InvoiceListFilters = {
   customerId?: string;
   amountMin?: number;
   amountMax?: number;
-  /** Inter-state (IGST) vs intra-state (CGST+SGST) — derived from computed
-   * totals (see withComputedTotals' `useIgst`), not a stored column. */
+  /** Inter-state (IGST) vs intra-state (CGST+SGST) — the stored
+   * Invoice.interState column. */
   gstType?: 'all' | 'intra' | 'inter';
 };
 
-/** DB-level search/filter/pagination for the Invoices list page. Amount
- * sort, amount range, and GST type can't be a plain SQL WHERE/ORDER BY —
- * they depend on the computed total (GST math, not a stored column) — so
- * whenever any of those three is active this loads every matching invoice,
- * computes totals in JS, filters/sorts there, then slices for the requested
- * page. The common case (no amount/GST filter, date-based sort) still gets
- * a real skip/take query. */
+const SORT_ORDER: Record<InvoiceSort, Prisma.InvoiceOrderByWithRelationInput[]> = {
+  // `number` breaks ties between same-day invoices, so paging through a
+  // busy day never repeats or skips a row.
+  newest: [{ date: 'desc' }, { number: 'desc' }],
+  oldest: [{ date: 'asc' }, { number: 'asc' }],
+  'amount-desc': [{ total: 'desc' }, { date: 'desc' }, { number: 'desc' }],
+  'amount-asc': [{ total: 'asc' }, { date: 'desc' }, { number: 'desc' }],
+};
+
+/** DB-level search/filter/sort/pagination for the Invoices list page — one
+ * skip/take query plus a count, for every filter and sort combination. */
 export async function listInvoicesPage(opts?: InvoiceListFilters) {
-  const company = await getCompany();
+  await requireUser();
   const page = Math.max(opts?.page ?? 1, 1);
   const pageSize = opts?.pageSize ?? 20;
-  const where = {
-    companyId: company.id,
-    ...(opts?.status && opts.status !== 'all' ? { status: opts.status as any } : {}),
-    ...(opts?.customerId ? { customerId: opts.customerId } : {}),
-    ...(opts?.search
-      ? {
-          OR: [
-            { number: { contains: opts.search, mode: 'insensitive' as const } },
-            { customer: { name: { contains: opts.search, mode: 'insensitive' as const } } },
-            { customer: { shopName: { contains: opts.search, mode: 'insensitive' as const } } },
-          ],
-        }
-      : {}),
-    // `dateFrom`/`dateTo` are IST calendar dates (YYYY-MM-DD), not UTC —
-    // see src/lib/dates.ts for why that distinction matters for an
-    // India-only app running on a UTC server.
-    ...(opts?.dateFrom || opts?.dateTo
-      ? { date: { ...(opts.dateFrom ? istDayRangeUtc(opts.dateFrom) : {}), ...(opts.dateTo ? { lt: istDayRangeUtc(opts.dateTo).lt } : {}) } }
-      : {}),
-  };
-
-  const needsJsFallback =
-    opts?.sort === 'amount-desc' || opts?.sort === 'amount-asc' || opts?.amountMin != null || opts?.amountMax != null || (opts?.gstType && opts.gstType !== 'all');
-
-  if (needsJsFallback) {
-    const all = await prisma.invoice.findMany({ where, include: { customer: true, items: true, payments: true } });
-    let withTotals = all.map((inv) => withComputedTotals(inv, company));
-    if (opts?.amountMin != null) withTotals = withTotals.filter((r) => r.computedTotal >= opts.amountMin!);
-    if (opts?.amountMax != null) withTotals = withTotals.filter((r) => r.computedTotal <= opts.amountMax!);
-    if (opts?.gstType === 'intra') withTotals = withTotals.filter((r) => !r.useIgst);
-    if (opts?.gstType === 'inter') withTotals = withTotals.filter((r) => r.useIgst);
-    withTotals.sort((a, b) => {
-      if (opts?.sort === 'amount-asc') return a.computedTotal - b.computedTotal;
-      if (opts?.sort === 'amount-desc') return b.computedTotal - a.computedTotal;
-      return opts?.sort === 'oldest' ? a.date.getTime() - b.date.getTime() : b.date.getTime() - a.date.getTime();
-    });
-    const items = withTotals.slice((page - 1) * pageSize, page * pageSize);
-    return { items: JSON.parse(JSON.stringify(items)), total: withTotals.length };
-  }
+  const where = invoiceWhere(opts ?? {});
 
   const [rows, total] = await Promise.all([
     prisma.invoice.findMany({
       where,
-      include: { customer: true, items: true, payments: true },
-      orderBy: { date: opts?.sort === 'oldest' ? 'asc' : 'desc' },
+      select: LIST_SELECT,
+      orderBy: SORT_ORDER[opts?.sort ?? 'newest'],
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
     prisma.invoice.count({ where }),
   ]);
-  const items = rows.map((inv) => withComputedTotals(inv, company));
-  return { items: JSON.parse(JSON.stringify(items)), total };
+  const now = new Date();
+  return { items: JSON.parse(JSON.stringify(rows.map((inv) => toListRow(inv, now)))), total };
 }
 
 export async function recordPayment(invoiceId: string, amount: number, date: string, mode?: string) {
+  await requireUser();
   if (amount <= 0) throw new Error('Amount must be greater than zero');
-  const [invoice, company] = await Promise.all([
-    prisma.invoice.findUniqueOrThrow({
-      where: { id: invoiceId },
-      include: { items: true, payments: true, customer: true },
-    }),
-    getCompany(),
-  ]);
-  // Without this, any logged-in user could record a fake payment against —
-  // and flip the status of — another company's invoice.
-  if (invoice.companyId !== company.id) throw new Error('Invoice not found');
+  const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, select: { total: true, amountPaid: true, status: true } });
+  if (!invoice) throw new Error('Invoice not found');
 
-  await prisma.payment.create({ data: { invoiceId, amount, date: new Date(date), mode } });
+  const totalPaid = Number(invoice.amountPaid) + amount;
+  const newStatus = deriveStatus(Number(invoice.total), totalPaid, invoice.status !== 'DRAFT');
 
-  const totals = computeTotals(
-    invoice.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) })),
-    { type: invoice.overallDiscountType, value: Number(invoice.overallDiscountValue) },
-    {
-      cgstRate: Number(invoice.cgstRate),
-      sgstRate: Number(invoice.sgstRate),
-      igstRate: Number(invoice.igstRate),
-      cgstEnabled: invoice.cgstEnabled,
-      sgstEnabled: invoice.sgstEnabled,
-      igstEnabled: invoice.igstEnabled,
-    },
-    company.state,
-    invoice.customer.state
-  );
-  const totalPaid = invoice.payments.reduce((s, p) => s + Number(p.amount), 0) + amount;
-  const newStatus = deriveStatus(totals.total, totalPaid, invoice.status !== 'DRAFT');
-
-  await prisma.invoice.update({ where: { id: invoiceId }, data: { status: newStatus } });
+  // One statement: the payment row, the running amountPaid, and the status
+  // all land together or not at all.
+  await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: { status: newStatus, amountPaid: { increment: amount }, payments: { create: { amount, date: new Date(date), mode } } },
+  });
   revalidatePath('/invoices');
   revalidatePath('/dashboard');
 }
 
 export async function deleteInvoice(id: string) {
-  const [invoice, company] = await Promise.all([prisma.invoice.findUniqueOrThrow({ where: { id } }), getCompany()]);
-  // Without this, any logged-in user could delete any other company's
-  // invoice (cascading to its items + payments) just by knowing its id.
-  if (invoice.companyId !== company.id) throw new Error('Invoice not found');
-  await prisma.invoice.delete({ where: { id } }); // cascades to items + payments
+  await requireUser();
+  const { count } = await prisma.invoice.deleteMany({ where: { id } }); // cascades to items + payments
+  if (!count) throw new Error('Invoice not found');
   revalidatePath('/invoices');
+  revalidatePath('/dashboard');
 }
 
 export async function duplicateInvoice(id: string) {
-  const [src, company] = await Promise.all([prisma.invoice.findUniqueOrThrow({ where: { id }, include: { items: true } }), getCompany()]);
-  // Without this, any logged-in user could read — and copy into their own
-  // company — another company's full invoice (items, discounts, customer
-  // reference).
-  if (src.companyId !== company.id) throw new Error('Invoice not found');
+  const [src, company] = await Promise.all([prisma.invoice.findUnique({ where: { id }, include: { items: true } }), getCompany()]);
+  if (!src) throw new Error('Invoice not found');
 
   const created = await prisma.$transaction(async (tx) => {
-    const freshCompany = await tx.company.findUniqueOrThrow({ where: { id: company.id } });
-    const number = formatInvoiceNumber(freshCompany.invoicePrefix, freshCompany.invoiceFY, freshCompany.nextInvoiceNo);
-    await tx.company.update({ where: { id: company.id }, data: { nextInvoiceNo: { increment: 1 } } });
+    const number = await claimInvoiceNumber(tx, company.id);
     const today = new Date();
     return tx.invoice.create({
       data: {
-        companyId: company.id,
         customerId: src.customerId,
         number,
         date: today,
@@ -634,6 +538,14 @@ export async function duplicateInvoice(id: string) {
         showHsnSummary: src.showHsnSummary,
         showUpiQr: src.showUpiQr,
         showGpayNumber: src.showGpayNumber,
+        // Same lines, discount, GST snapshot, and customer — so the same
+        // stored totals; nothing has been paid on the copy yet.
+        taxable: src.taxable,
+        cgst: src.cgst,
+        sgst: src.sgst,
+        igst: src.igst,
+        total: src.total,
+        interState: src.interState,
         items: {
           create: src.items.map((it) => ({
             productId: it.productId,
@@ -652,6 +564,7 @@ export async function duplicateInvoice(id: string) {
     });
   });
   revalidatePath('/invoices');
+  revalidatePath('/dashboard');
   return created.id;
 }
 
@@ -675,11 +588,8 @@ export async function updateDispatchDetails(invoiceId: string, input: z.infer<ty
   const parsed = DispatchDetailsSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid dispatch details' };
 
-  const company = await getCompany();
-  const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
-  if (invoice.companyId !== company.id) return { error: 'Invoice not found.' };
-
-  await prisma.invoice.update({
+  await requireUser();
+  const { count } = await prisma.invoice.updateMany({
     where: { id: invoiceId },
     data: {
       deliveryNote: parsed.data.deliveryNote,
@@ -692,6 +602,7 @@ export async function updateDispatchDetails(invoiceId: string, input: z.infer<ty
       destination: parsed.data.destination,
     },
   });
+  if (!count) return { error: 'Invoice not found.' };
   revalidatePath(`/invoices/${invoiceId}`);
   return {};
 }

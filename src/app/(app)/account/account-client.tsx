@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetIcon, SheetBody, SheetFooter } from '@/components/ui/sheet';
 import { initials, hashColor } from '@/lib/avatar';
 
-type AccountUser = { email: string | null; phone: string | null; role: string; companyName: string };
+type AccountUser = { email: string | null; phone: string | null; companyName: string };
 
 const TABS = [
   { id: 'profile', label: 'Profile', icon: IdCard },
@@ -41,7 +41,7 @@ export function AccountClient({ user }: { user: AccountUser }) {
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[18px] font-extrabold text-ink">{user.email ?? user.phone}</span>
             <span className="rounded-sm2 bg-brand-light px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-dark">
-              <ShieldCheck size={10} className="mr-1 inline" /> {user.role === 'OWNER' ? 'Owner' : user.role}
+              <ShieldCheck size={10} className="mr-1 inline" /> Owner
             </span>
           </div>
           <Link href="/company" className="mt-1 flex items-center gap-1.5 text-[12px] text-ink-faint hover:text-brand">

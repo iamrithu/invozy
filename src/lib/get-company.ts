@@ -1,21 +1,20 @@
 import { cache } from 'react';
 import { prisma } from './prisma';
-import { auth } from '@/auth';
+import { COMPANY_ID } from './company-id';
+import { requireUser } from './session';
 
 /**
- * Multi-tenant lookup scoped to the signed-in user's companyId — every
- * server action calls this with no arguments, so this one function is the
- * entire tenancy boundary for the data layer. Throws rather than returning
- * null so callers never have to re-check.
+ * The one company this deployment bills for — a primary-key lookup on the
+ * singleton row created by `npm run setup`. Also enforces sign-in (via
+ * requireUser), so a caller that only needs the session and not company
+ * data should call requireUser() directly and skip the query.
  *
  * Wrapped in React's cache() so the layout and a page can both call this in
- * the same request without doubling the DB round-trip — repeat calls within
- * one render tree return the same in-flight/resolved promise.
+ * the same request without doubling the DB round-trip.
  */
 export const getCompany = cache(async () => {
-  const session = await auth();
-  if (!session?.user?.companyId) {
-    throw new Error('Not signed in to a company.');
-  }
-  return prisma.company.findUniqueOrThrow({ where: { id: session.user.companyId } });
+  // In parallel — the company row is discarded if the auth check throws.
+  const [, company] = await Promise.all([requireUser(), prisma.company.findUnique({ where: { id: COMPANY_ID } })]);
+  if (!company) throw new Error('Company profile not found — run `npm run setup` to create it.');
+  return company;
 });

@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
 import { getCompany } from '@/lib/get-company';
+import { requireUser } from '@/lib/session';
+import { recomputeStoredTotals } from '@/lib/invoice-totals';
 
 const CustomerSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -30,11 +32,11 @@ export type CustomerSort = 'name' | 'billed-desc';
  * guests get a real row (everything downstream depends on a real customer
  * relation) but are excluded from the main directory by default.
  *
- * "Billed: high to low" can't be a plain SQL ORDER BY — billed totals are
- * computed (GST math depends on company + customer state, not a stored
- * column), so that one sort mode fetches every matching row, sorts in JS via
- * getCustomerBillingTotals, and slices for the requested page. Every other
- * sort/filter/search runs as a real DB query with skip/take. */
+ * "Billed: high to low" ranks by a per-customer SUM over Invoice's stored
+ * totals (one GROUP BY via getCustomerBillingTotals), then sorts the
+ * matching customers by it in JS and slices the requested page — Prisma
+ * can't ORDER BY a relation aggregate. Every other sort/filter/search runs
+ * as a real DB query with skip/take. */
 export async function listCustomersPage(opts?: {
   search?: string;
   state?: string;
@@ -43,11 +45,10 @@ export async function listCustomersPage(opts?: {
   pageSize?: number;
   includeGuests?: boolean;
 }) {
-  const company = await getCompany();
+  await requireUser();
   const page = Math.max(opts?.page ?? 1, 1);
   const pageSize = opts?.pageSize ?? 20;
   const where = {
-    companyId: company.id,
     guest: opts?.includeGuests ? undefined : false,
     ...(opts?.search
       ? { OR: [{ name: { contains: opts.search, mode: 'insensitive' as const } }, { phone: { contains: opts.search } }] }
@@ -77,8 +78,8 @@ export async function listCustomersPage(opts?: {
  * paginated, so it always reflects every state in the directory even when
  * the current filtered page doesn't happen to include them. */
 export async function listCustomerStates() {
-  const company = await getCompany();
-  const rows = await prisma.customer.findMany({ where: { companyId: company.id, guest: false }, select: { state: true }, distinct: ['state'] });
+  await requireUser();
+  const rows = await prisma.customer.findMany({ where: { guest: false }, select: { state: true }, distinct: ['state'] });
   return rows.map((r) => r.state).sort();
 }
 
@@ -88,9 +89,9 @@ export async function listCustomerStates() {
  * behind a search term, since a filter dropdown needs every option up
  * front, not just the first few matches. */
 export async function listCustomersForFilter() {
-  const company = await getCompany();
+  await requireUser();
   const customers = await prisma.customer.findMany({
-    where: { companyId: company.id, guest: false },
+    where: { guest: false },
     select: { id: true, name: true, shopName: true },
     orderBy: { name: 'asc' },
   });
@@ -100,16 +101,14 @@ export async function listCustomersForFilter() {
 /** Used by the invoice builder's Bill-To search — deliberately includes guests,
  * since a repeat walk-in should still be findable by name or phone. */
 export async function searchCustomersForBilling(term: string) {
-  const company = await getCompany();
+  await requireUser();
   const customers = term
     ? await prisma.customer.findMany({
-        where: {
-          companyId: company.id,
-          OR: [{ name: { contains: term, mode: 'insensitive' } }, { phone: { contains: term } }],
-        },
+        where: { OR: [{ name: { contains: term, mode: 'insensitive' } }, { phone: { contains: term } }] },
+        orderBy: { name: 'asc' },
         take: 8,
       })
-    : await prisma.customer.findMany({ where: { companyId: company.id, guest: false }, orderBy: { name: 'asc' }, take: 8 });
+    : await prisma.customer.findMany({ where: { guest: false }, orderBy: { name: 'asc' }, take: 8 });
   // Decimal (creditLimit) doesn't cross the server-action boundary as a class
   // instance — see listCustomers for the same normalization.
   return JSON.parse(JSON.stringify(customers));
@@ -120,8 +119,8 @@ export async function createCustomer(guest: boolean, _prev: CustomerFormState, f
   if (!parsed.success) {
     return { error: 'Check the highlighted fields.', fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string> };
   }
-  const company = await getCompany();
-  const customer = await prisma.customer.create({ data: { ...parsed.data, guest, companyId: company.id } });
+  await requireUser();
+  const customer = await prisma.customer.create({ data: { ...parsed.data, guest } });
   revalidatePath('/customers');
   return { id: customer.id };
 }
@@ -131,100 +130,66 @@ export async function updateCustomer(id: string, _prev: CustomerFormState, formD
   if (!parsed.success) {
     return { error: 'Check the highlighted fields.', fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string> };
   }
-  const [company, existing] = await Promise.all([getCompany(), prisma.customer.findUnique({ where: { id } })]);
-  // Without this, any logged-in user could overwrite another company's
-  // customer record (name, GSTIN, address, credit limit, contact info).
-  if (!existing || existing.companyId !== company.id) return { error: 'Customer not found.' };
+  const [company, existing] = await Promise.all([getCompany(), prisma.customer.findUnique({ where: { id }, select: { state: true } })]);
+  if (!existing) return { error: 'Customer not found.' };
   await prisma.customer.update({ where: { id }, data: parsed.data });
+  // The customer's state decides IGST vs CGST+SGST on each of their
+  // invoices, so a state change has to re-derive those invoices' stored
+  // totals — exactly as the live computeTotals() on the invoice page will.
+  if (existing.state !== parsed.data.state) {
+    await recomputeStoredTotals({ customerId: id }, company.state);
+    revalidatePath('/invoices');
+    revalidatePath('/dashboard');
+  }
   revalidatePath('/customers');
   return {};
 }
 
 export async function deleteCustomer(id: string) {
-  const [company, existing] = await Promise.all([getCompany(), prisma.customer.findUnique({ where: { id } })]);
-  // Without this, any logged-in user could delete another company's
-  // customer (as long as it happens to have no invoices on file).
-  if (!existing || existing.companyId !== company.id) throw new Error('Customer not found.');
-  const hasInvoices = await prisma.invoice.findFirst({ where: { customerId: id } });
+  await requireUser();
+  const hasInvoices = await prisma.invoice.findFirst({ where: { customerId: id }, select: { id: true } });
   if (hasInvoices) {
     throw new Error('This customer has invoices on file and can\u2019t be deleted.');
   }
-  await prisma.customer.delete({ where: { id } });
+  const { count } = await prisma.customer.deleteMany({ where: { id } });
+  if (!count) throw new Error('Customer not found.');
   revalidatePath('/customers');
 }
 
-/** Powers the Customers list's "Billed: high to low" sort — one batched query
- * instead of N calls to getCustomerLedger. */
+/** Powers the Customers list's "Billed: high to low" sort — one GROUP BY
+ * over the stored invoice totals. */
 export async function getCustomerBillingTotals(): Promise<Record<string, number>> {
-  const company = await getCompany();
-  const invoices = await prisma.invoice.findMany({
-    where: { companyId: company.id },
-    include: { items: true, customer: { select: { state: true } } },
-  });
-  const { computeTotals } = await import('@/lib/gst');
-
-  const totals: Record<string, number> = {};
-  for (const inv of invoices) {
-    const t = computeTotals(
-      inv.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) })),
-      { type: inv.overallDiscountType, value: Number(inv.overallDiscountValue) },
-      {
-        cgstRate: Number(inv.cgstRate),
-        sgstRate: Number(inv.sgstRate),
-        igstRate: Number(inv.igstRate),
-        cgstEnabled: inv.cgstEnabled,
-        sgstEnabled: inv.sgstEnabled,
-        igstEnabled: inv.igstEnabled,
-      },
-      company.state,
-      inv.customer.state
-    );
-    totals[inv.customerId] = (totals[inv.customerId] ?? 0) + t.total;
-  }
-  return totals;
+  await requireUser();
+  const rows = await prisma.invoice.groupBy({ by: ['customerId'], _sum: { total: true } });
+  return Object.fromEntries(rows.map((r) => [r.customerId, Number(r._sum.total ?? 0)]));
 }
 
 /** Powers the Customers detail pane's ledger section — invoices + running totals. */
 export async function getCustomerLedger(id: string) {
-  const [customer, company] = await Promise.all([
-    prisma.customer.findUniqueOrThrow({
-      where: { id },
-      include: { invoices: { include: { items: true, payments: true }, orderBy: { date: 'desc' } } },
-    }),
-    getCompany(),
-  ]);
-  // Without this, any logged-in user could pull another company's full
-  // customer record plus every invoice (line items, payments, totals) just
-  // by knowing/guessing the customer's id.
-  if (customer.companyId !== company.id) throw new Error('Customer not found.');
+  await requireUser();
+  const customer = await prisma.customer.findUnique({
+    where: { id },
+    include: {
+      invoices: {
+        select: { id: true, number: true, date: true, due: true, status: true, total: true, amountPaid: true },
+        orderBy: [{ date: 'desc' }, { number: 'desc' }],
+      },
+    },
+  });
+  if (!customer) throw new Error('Customer not found.');
 
-  const { computeTotals } = await import('@/lib/gst');
-
+  const { invoices: rows, ...customerFields } = customer;
   let totalBilled = 0;
   let outstanding = 0;
-  const invoicesWithTotals = customer.invoices.map((inv) => {
-    const totals = computeTotals(
-      inv.items.map((it) => ({ qty: Number(it.qty), rate: Number(it.rate), discount: Number(it.discount) })),
-      { type: inv.overallDiscountType, value: Number(inv.overallDiscountValue) },
-      {
-        cgstRate: Number(inv.cgstRate),
-        sgstRate: Number(inv.sgstRate),
-        igstRate: Number(inv.igstRate),
-        cgstEnabled: inv.cgstEnabled,
-        sgstEnabled: inv.sgstEnabled,
-        igstEnabled: inv.igstEnabled,
-      },
-      company.state,
-      customer.state
-    );
-    const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
-    const balance = totals.total - paid;
-    totalBilled += totals.total;
-    outstanding += Math.max(balance, 0);
-    return { ...inv, computedTotal: totals.total, amountPaid: paid, balanceDue: balance };
+  const invoices = rows.map((inv) => {
+    const total = Number(inv.total);
+    const paid = Number(inv.amountPaid);
+    totalBilled += total;
+    outstanding += Math.max(total - paid, 0);
+    return { ...inv, computedTotal: total, amountPaid: paid, balanceDue: total - paid };
   });
 
-  const result = { customer, invoices: invoicesWithTotals, totalBilled, outstanding, invoiceCount: customer.invoices.length };
+  const result = { customer: customerFields, invoices, totalBilled, outstanding, invoiceCount: invoices.length };
   // Same Decimal/Date normalization as listCustomers — keeps this safe to
   // call directly from a client-side queryFn.
   return JSON.parse(JSON.stringify(result));

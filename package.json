@@ -10,11 +10,9 @@
     "postinstall": "prisma generate && ([ -n \"$VERCEL\" ] && echo 'Skipping playwright chromium download on Vercel — @sparticuz/chromium is used there instead' || playwright install chromium || echo 'playwright chromium install failed - PDF download (/api/invoices/[id]/pdf) will be unavailable until this succeeds on this host')",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
-  },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "db:deploy": "prisma migrate deploy",
+    "db:studio": "prisma studio",
+    "setup": "tsx scripts/setup-company.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",

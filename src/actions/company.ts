@@ -7,12 +7,13 @@ import { getCompany } from '@/lib/get-company';
 import { saveUploadedImage, deleteUploadedImage } from '@/lib/uploads';
 import { isValidThemeColor } from '@/lib/theme-presets';
 import { encryptSecret } from '@/lib/secret';
+import { recomputeStoredTotals } from '@/lib/invoice-totals';
 
 const CompanySchema = z.object({
   name: z.string().min(1),
   domain: z.string().optional().nullable(),
-  // Optional to match the nullable DB columns — a brand-new signup hasn't
-  // filled these in yet, and each Company settings save submits every tab's
+  // Optional to match the nullable DB columns — the setup script only
+  // requires name + state, and each Company settings save submits every tab's
   // fields together, so requiring all of them would block saving just the
   // business name until GST/banking details exist too.
   address: z.string().optional().nullable(),
@@ -97,7 +98,7 @@ export async function updateCompany(_prev: CompanyFormState, formData: FormData)
   const removeLogo = formData.get('removeLogo') === 'true';
   if (logoFile instanceof File && logoFile.size > 0) {
     try {
-      logoUrl = await saveUploadedImage(logoFile, company.id, 'company');
+      logoUrl = await saveUploadedImage(logoFile, 'company');
     } catch (e: any) {
       return { error: e.message ?? 'Could not upload logo.' };
     }
@@ -112,7 +113,7 @@ export async function updateCompany(_prev: CompanyFormState, formData: FormData)
   const removeSignature = formData.get('removeSignature') === 'true';
   if (signatureFile instanceof File && signatureFile.size > 0) {
     try {
-      signatureUrl = await saveUploadedImage(signatureFile, company.id, 'signature');
+      signatureUrl = await saveUploadedImage(signatureFile, 'signature');
     } catch (e: any) {
       return { error: e.message ?? 'Could not upload signature.' };
     }
@@ -136,6 +137,13 @@ export async function updateCompany(_prev: CompanyFormState, formData: FormData)
     where: { id: company.id },
     data: { ...parsed.data, ...(logoUrl !== undefined ? { logoUrl } : {}), ...(signatureUrl !== undefined ? { signatureUrl } : {}), ...secretUpdates },
   });
+  // The company's state decides IGST vs CGST+SGST on every invoice (compared
+  // against each customer's state), so moving it re-derives every invoice's
+  // stored totals — exactly as the live computeTotals() on the invoice page
+  // will.
+  if (parsed.data.state !== company.state) {
+    await recomputeStoredTotals({}, parsed.data.state);
+  }
   revalidatePath('/company');
   revalidatePath('/'); // GST rate changes affect every page that computes totals
   return {};

@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
-import { getCompany } from '@/lib/get-company';
+import { requireUser } from '@/lib/session';
 import { saveUploadedImage, deleteUploadedImage } from '@/lib/uploads';
 
 const MAX_IMAGES = 6;
@@ -55,19 +55,18 @@ function parseTiers(formData: FormData): { tiers: z.infer<typeof PriceTierSchema
 
 /** Uploads any new image files in `newImages`, appends them to the URLs the
  * client says to keep (`images`), and caps the result at MAX_IMAGES. */
-async function resolveImages(formData: FormData, companyId: string, keep: string[]) {
+async function resolveImages(formData: FormData, keep: string[]) {
   const newFiles = formData.getAll('newImages').filter((f): f is File => f instanceof File && f.size > 0);
-  const uploaded = await Promise.all(newFiles.map((f) => saveUploadedImage(f, companyId, 'products')));
+  const uploaded = await Promise.all(newFiles.map((f) => saveUploadedImage(f, 'products')));
   return [...keep, ...uploaded].slice(0, MAX_IMAGES);
 }
 
 export type ProductFormState = { error?: string; fieldErrors?: Record<string, string>; id?: string };
 
 export async function listProducts(opts?: { search?: string; category?: string; activeOnly?: boolean }) {
-  const company = await getCompany();
+  await requireUser();
   return prisma.product.findMany({
     where: {
-      companyId: company.id,
       ...(opts?.search ? { name: { contains: opts.search, mode: 'insensitive' } } : {}),
       ...(opts?.category && opts.category !== 'all' ? { category: opts.category } : {}),
       ...(opts?.activeOnly ? { active: true } : {}),
@@ -90,11 +89,10 @@ export async function listProductsPage(opts?: {
   page?: number;
   pageSize?: number;
 }) {
-  const company = await getCompany();
+  await requireUser();
   const page = Math.max(opts?.page ?? 1, 1);
   const pageSize = opts?.pageSize ?? 20;
   const where = {
-    companyId: company.id,
     ...(opts?.search ? { name: { contains: opts.search, mode: 'insensitive' as const } } : {}),
     ...(opts?.category && opts.category !== 'all' ? { category: opts.category } : {}),
     ...(opts?.activeOnly ? { active: true } : {}),
@@ -104,7 +102,7 @@ export async function listProductsPage(opts?: {
       ? [{ price: 'asc' as const }]
       : opts?.sort === 'price-desc'
         ? [{ price: 'desc' as const }]
-        : [{ category: 'asc' as const }, { name: 'asc' as const }];
+        : [{ category: 'asc' as const }, { name: 'asc' as const }, { id: 'asc' as const }];
 
   const [items, total] = await Promise.all([
     prisma.product.findMany({
@@ -125,9 +123,8 @@ export async function listProductsPage(opts?: {
  * DISTINCT query so the same spelling gets reused instead of drifting
  * ("Milk" vs "milk" vs "Milks") across a growing catalog. */
 export async function getProductCategories() {
-  const company = await getCompany();
+  await requireUser();
   const rows = await prisma.product.findMany({
-    where: { companyId: company.id },
     select: { category: true },
     distinct: ['category'],
     orderBy: { category: 'asc' },
@@ -145,10 +142,10 @@ export async function createProduct(_prev: ProductFormState, formData: FormData)
   if ('error' in tiersResult) {
     return { error: tiersResult.error, fieldErrors: { tiers: tiersResult.error } };
   }
-  const company = await getCompany();
+  await requireUser();
   let images: string[];
   try {
-    images = await resolveImages(formData, company.id, []);
+    images = await resolveImages(formData, []);
   } catch (e: any) {
     return { error: e.message ?? 'Could not upload photo.' };
   }
@@ -163,7 +160,6 @@ export async function createProduct(_prev: ProductFormState, formData: FormData)
         price: primary.price,
         packQty: parsed.data.packQty ?? null,
         images,
-        companyId: company.id,
         priceTiers: {
           create: tiersResult.tiers.map((t, i) => ({ unit: t.unit, price: t.price, approxQty: t.approxQty ?? null, sortOrder: i })),
         },
@@ -183,8 +179,8 @@ export async function updateProduct(id: string, _prev: ProductFormState, formDat
   if ('error' in tiersResult) {
     return { error: tiersResult.error, fieldErrors: { tiers: tiersResult.error } };
   }
-  const company = await getCompany();
-  const existing = await prisma.product.findFirst({ where: { id, companyId: company.id } });
+  await requireUser();
+  const existing = await prisma.product.findUnique({ where: { id }, select: { images: true } });
   if (!existing) {
     return { error: 'Product not found.' };
   }
@@ -194,7 +190,7 @@ export async function updateProduct(id: string, _prev: ProductFormState, formDat
   await Promise.all(removed.map(deleteUploadedImage));
   let images: string[];
   try {
-    images = await resolveImages(formData, company.id, keep);
+    images = await resolveImages(formData, keep);
   } catch (e: any) {
     return { error: e.message ?? 'Could not upload photo.' };
   }
@@ -225,20 +221,16 @@ export async function updateProduct(id: string, _prev: ProductFormState, formDat
 
 /** Powers the invoice builder's "frequently ordered by this customer" shortcut. */
 export async function frequentProductIdsForCustomer(customerId: string, limit = 4) {
-  const company = await getCompany();
-  const items = await prisma.invoiceItem.findMany({
-    // Scoped by companyId (not just customerId) so a foreign customerId
-    // can't be used to probe which of another company's products get
-    // reordered most.
-    where: { invoice: { customerId, companyId: company.id } },
-    select: { productId: true, qty: true },
+  await requireUser();
+  const rows = await prisma.invoiceItem.groupBy({
+    by: ['productId'],
+    // Ad-hoc/custom line items have no product to recommend.
+    where: { productId: { not: null }, invoice: { customerId } },
+    _sum: { qty: true },
+    orderBy: { _sum: { qty: 'desc' } },
+    take: limit,
   });
-  const counts = new Map<string, number>();
-  for (const it of items) {
-    if (!it.productId) continue; // ad-hoc/custom line items have no product to recommend
-    counts.set(it.productId, (counts.get(it.productId) ?? 0) + Number(it.qty));
-  }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([id]) => id);
+  return rows.map((r) => r.productId!);
 }
 
 /** Surfaces a "you keep billing this by hand" nudge on the dashboard —
@@ -247,37 +239,37 @@ export async function frequentProductIdsForCustomer(customerId: string, limit = 
  * them to the catalog in one click instead of re-typing them each time.
  * Known simplification: exact-string match (case-sensitive) on `name`. */
 export async function getFrequentCustomItems(threshold = 3) {
-  const company = await getCompany();
+  await requireUser();
   const rows = await prisma.invoiceItem.groupBy({
     by: ['name'],
-    where: { productId: null, invoice: { companyId: company.id } },
+    where: { productId: null },
     _count: { name: true },
     _max: { unit: true, rate: true },
+    having: { name: { _count: { gte: threshold } } },
   });
   return rows
-    .filter((r) => r._count.name >= threshold)
     .map((r) => ({ name: r.name, count: r._count.name, unit: r._max.unit ?? '', rate: Number(r._max.rate ?? 0) }))
     .sort((a, b) => b.count - a.count);
 }
 
 export async function toggleProductActive(id: string) {
-  const company = await getCompany();
-  const product = await prisma.product.findFirst({ where: { id, companyId: company.id } });
+  await requireUser();
+  const product = await prisma.product.findUnique({ where: { id }, select: { active: true } });
   if (!product) throw new Error('Product not found.');
   await prisma.product.update({ where: { id }, data: { active: !product.active } });
   revalidatePath('/products');
 }
 
 export async function deleteProduct(id: string) {
-  const company = await getCompany();
-  const product = await prisma.product.findFirst({ where: { id, companyId: company.id } });
+  await requireUser();
+  const product = await prisma.product.findUnique({ where: { id }, select: { images: true } });
   if (!product) throw new Error('Product not found.');
 
   // No cascade from InvoiceItem here on purpose: an invoice that already
   // billed this product keeps its line intact (name/rate are snapshotted
   // onto InvoiceItem — see schema.prisma). Deleting the catalog entry must
   // never rewrite history on a sent invoice.
-  const usedOnInvoice = await prisma.invoiceItem.findFirst({ where: { productId: id } });
+  const usedOnInvoice = await prisma.invoiceItem.findFirst({ where: { productId: id }, select: { id: true } });
   if (usedOnInvoice) {
     throw new Error('This product has been billed on at least one invoice and can\u2019t be deleted. Hide it instead.');
   }

@@ -1,4 +1,4 @@
-# Arctic Blocks — Billing & Invoicing
+# ASB — Billing & Invoicing
 
 A real Next.js 16 (App Router) + Server Actions + Prisma/PostgreSQL implementation of the
 Arctic Blocks GST billing app, built from `frontend-documentation.md`, `backend-documentation.md`,
@@ -21,8 +21,8 @@ and `end-to-end-flow.md`.
 
 ## What's intentionally out of scope for this pass
 
-- **Auth / multi-tenancy** — single-company assumption throughout, matching the prototype. See
-  backend-documentation.md §7.
+- **Multi-tenancy / signup** — this deployment bills for exactly one company. There is no signup page
+  or admin panel; the company and its logins are created by `npm run setup` (see below).
 - **Mobile nav** — the sidebar hides below `md:`, but there's no bottom tab bar replacement yet.
 - **Command palette / right-side sheet dialogs** — the HTML prototype's `⌘K` palette and slide-in sheets
   aren't rebuilt here; forms are plain pages/panels. Worth adding if you want that exact feel back.
@@ -36,30 +36,33 @@ and `end-to-end-flow.md`.
 npm install
 ```
 
-**2. Point at a Postgres database.** Either a local Postgres or a free [Neon](https://neon.tech) project
-works — copy its connection string into a `.env` file:
+**2. Point at the database.** Set `DATABASE_URL` in `.env` (see `.env.example`) — a Neon pooled
+connection string works as-is.
+
+**3. Create the schema:**
 ```bash
-cp .env.example .env
-# then edit .env and set DATABASE_URL
+npm run db:deploy
 ```
 
-**3. Generate the Prisma client and create the schema:**
+**4. Create the company and its login.** Fill in the `COMPANY` block at the top of
+`scripts/setup-company.ts` (only `name` and `state` are required — everything else can also be filled
+in later from the Company page), then:
 ```bash
-npm run db:generate
-npm run db:migrate
+npm run setup -- --email owner@yourcompany.com
 ```
-(`db:migrate` will prompt you to name the migration — anything like `init` is fine.)
-
-**4. Seed sample data** (Arctic Blocks Ice Co., a product catalog, a few customers, one invoice):
-```bash
-npm run db:seed
-```
+It prompts for the password (or pass `--password '...'`). Re-running is safe: the company is left as-is
+unless you add `--update-company`, an existing email gets its password reset (use this if you're ever
+locked out), and a new email adds another login.
 
 **5. Run it:**
 ```bash
 npm run dev
 ```
-Open http://localhost:3000 — it redirects straight to `/dashboard`.
+Open http://localhost:3000 and log in.
+
+**Deploying on Vercel:** `vercel.json` pins functions to `sin1` (Singapore) — the same region as the
+Neon database. Keep the two in the same region; every page makes several queries, and each one pays
+the round trip between the function and the database.
 
 ## A note on how this was built
 
@@ -93,21 +96,27 @@ src/
   lib/
     gst.ts          The authoritative billing math — read this first
     prisma.ts       Prisma client singleton
-    get-company.ts  Single-tenant company lookup
+    get-company.ts  The company row (singleton, id "main")
+    session.ts      requireUser() — the auth check every Server Action runs first
+    invoice-totals.ts  Stored invoice totals (see below)
     number-to-words.ts
 prisma/
   schema.prisma
-  seed.ts
+scripts/
+  setup-company.ts  Creates the company + logins
 ```
+
+## Stored invoice totals
+
+Each invoice stores its computed `taxable`/`cgst`/`sgst`/`igst`/`total`/`interState` and its running
+`amountPaid`, so the dashboard, reports, invoice list (amount sort/filter, GST-type filter), and
+customer ledgers are SQL aggregates rather than loading every invoice into memory.
+`computeTotals()` in `src/lib/gst.ts` is still the only place the math lives — every action that changes
+an invoice writes its result via `src/lib/invoice-totals.ts`, and changing the company's or a
+customer's state (which decides IGST vs CGST+SGST) re-derives the affected invoices.
 
 ## Suggested next steps
 
-1. Run through backend-documentation.md §7's open items (multi-tenancy, soft-delete policy) before
-   this handles a second real company.
-2. Add the command palette and right-side sheet pattern from the original prototype if you want that
+1. Add the command palette and right-side sheet pattern from the original prototype if you want that
    interaction model back — end-to-end-flow.md documents how they're supposed to behave.
-3. Add a mobile nav (bottom tab bar) — the prototype had one; this scaffold doesn't yet.
-4. Consider caching computed invoice totals (a `total` column, refreshed on write) once invoice volume
-   grows — right now Reports and the customer ledger recompute GST for every invoice on every request,
-   which is correct but not free.
-# invozy
+2. Add a mobile nav (bottom tab bar) — the prototype had one; this scaffold doesn't yet.

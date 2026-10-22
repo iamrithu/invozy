@@ -35,7 +35,7 @@ type Invoice = {
   amountPaid: number;
   balanceDue: number;
   isOverdue: boolean;
-  items: any[];
+  itemCount: number;
   payments: { amount: number; date: string; mode: string | null }[];
 };
 
@@ -439,7 +439,7 @@ function InvoiceDetail({
           <Stat label="Total" value={fmtInr(invoice.computedTotal)} />
           <Stat label="Paid" value={fmtInr(invoice.amountPaid)} good={invoice.amountPaid > 0} />
           <Stat label="Balance due" value={fmtInr(invoice.balanceDue)} warn={invoice.balanceDue > 0} />
-          <Stat label="Line items" value={String(invoice.items.length)} />
+          <Stat label="Line items" value={String(invoice.itemCount)} />
         </div>
 
         <div className="space-y-1.5 text-[12.5px]">

@@ -1,6 +1,5 @@
 'use client';
 
-import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect } from 'react';
@@ -8,6 +7,8 @@ import clsx from 'clsx';
 import { LayoutDashboard, Package, Users, Receipt, BarChart3, Building2, ChevronLeft } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/lib/redux/hooks';
 import { sidebarHydrated, toggleSidebar } from '@/lib/redux/ui-slice';
+import { BrandMark } from '@/components/shell/brand-mark';
+import { APP_NAME } from '@/lib/brand';
 
 const NAV = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, tour: 'nav-dashboard' },
@@ -57,11 +58,9 @@ export function Sidebar() {
         })}
       </nav>
       <div className="mt-2 flex flex-col gap-2.5 border-t border-line pt-3">
-        <div className={clsx('flex items-center gap-2 overflow-hidden whitespace-nowrap px-1', collapsed && 'justify-center px-0')} title="Invozy">
-          <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-sm2 bg-white ring-1 ring-black/5">
-            <Image src="/brand/mark.png" alt="" width={64} height={64} className="h-4 w-4 object-contain" />
-          </span>
-          {!collapsed && <span className="truncate text-[11px] font-extrabold uppercase tracking-wide text-ink-faint">Invozy</span>}
+        <div className={clsx('flex items-center gap-2 overflow-hidden whitespace-nowrap px-1', collapsed && 'justify-center px-0')} title={APP_NAME}>
+          <BrandMark decorative className="h-6 w-6 text-[8px]" />
+          {!collapsed && <span className="truncate text-[11px] font-extrabold uppercase tracking-wide text-ink-faint">{APP_NAME}</span>}
         </div>
         <button
           onClick={() => dispatch(toggleSidebar())}

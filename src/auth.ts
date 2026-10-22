@@ -16,10 +16,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   session: { strategy: 'jwt' },
   providers: [
-    // Tenant business owners — logged in by email or phone, whichever they signed up with.
+    // The company's logins — created by `npm run setup` (scripts/setup-company.ts),
+    // signed in by email or phone.
     Credentials({
-      id: 'tenant',
-      name: 'Tenant',
+      id: 'credentials',
+      name: 'Credentials',
       credentials: { identifier: {}, password: {} },
       async authorize(credentials) {
         const identifier = String(credentials?.identifier ?? '').trim();
@@ -33,10 +34,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         }
 
         const user = await prisma.user.findFirst({
-          where: {
-            role: 'OWNER',
-            OR: [{ email: identifier }, { phone: identifier }],
-          },
+          where: { OR: [{ email: { equals: identifier, mode: 'insensitive' } }, { phone: identifier }] },
         });
         const valid = user ? await bcrypt.compare(password, user.passwordHash) : false;
         if (!user || !valid) {
@@ -45,40 +43,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         }
         await clearFailedLogins(identifier);
 
-        return { id: user.id, companyId: user.companyId, role: user.role, email: user.email ?? undefined };
-      },
-    }),
-    // The platform owner — a single fixed identity from env vars, never a DB row.
-    Credentials({
-      id: 'admin',
-      name: 'Admin',
-      credentials: { email: {}, password: {} },
-      async authorize(credentials) {
-        const email = String(credentials?.email ?? '').trim();
-        const password = String(credentials?.password ?? '');
-        const adminEmail = process.env.ADMIN_EMAIL;
-        // Some hosts' env-var UIs (e.g. Vercel's dashboard) don't unescape a
-        // shell-escaped "\$" the way Next's local .env loader does, so a hash
-        // copy-pasted verbatim from .env can arrive here with literal
-        // backslashes and never match. A real bcrypt hash never contains a
-        // backslash, so stripping them is always safe.
-        const adminHash = process.env.ADMIN_PASSWORD_HASH?.replace(/\\\$/g, '$');
-        if (!email || !password || !adminEmail || !adminHash) return null;
-
-        try {
-          await assertNotLockedOut(email);
-        } catch {
-          throw new TooManyAttempts();
-        }
-
-        const valid = email.toLowerCase() === adminEmail.toLowerCase() && (await bcrypt.compare(password, adminHash));
-        if (!valid) {
-          await recordFailedLogin(email);
-          return null;
-        }
-        await clearFailedLogins(email);
-
-        return { id: 'super-admin', role: 'SUPER_ADMIN', email: adminEmail };
+        return { id: user.id, email: user.email ?? undefined };
       },
     }),
   ],

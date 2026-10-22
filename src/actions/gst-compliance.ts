@@ -46,8 +46,8 @@ export async function generateEinvoice(invoiceId: string): Promise<GstCompliance
   const nic = resolveNicConfig(company);
   if (!nic.ok) return { error: nic.error };
 
-  const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { items: true, customer: true } });
-  if (invoice.companyId !== company.id) return { error: 'Invoice not found.' };
+  const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, include: { items: true, customer: true } });
+  if (!invoice) return { error: 'Invoice not found.' };
   if (invoice.irn) return { error: 'This invoice already has an IRN.' };
   if (!company.pincode) return { error: 'Add your company pincode in Company settings first.' };
   const missingHsn = invoice.items.find((it) => !it.hsn);
@@ -161,8 +161,8 @@ export async function generateEwaybillAction(invoiceId: string, transportDetails
   const nic = resolveNicConfig(company);
   if (!nic.ok) return { error: nic.error };
 
-  const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { items: true, customer: true } });
-  if (invoice.companyId !== company.id) return { error: 'Invoice not found.' };
+  const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, include: { items: true, customer: true } });
+  if (!invoice) return { error: 'Invoice not found.' };
   if (invoice.ewbNo) return { error: 'This invoice already has an e-Way Bill.' };
   if (!company.pincode) return { error: 'Add your company pincode in Company settings first.' };
   const missingHsn = invoice.items.find((it) => !it.hsn);
@@ -255,8 +255,8 @@ export async function cancelEinvoiceAction(invoiceId: string, input: { reasonCod
   const nic = resolveNicConfig(company);
   if (!nic.ok) return { error: nic.error };
 
-  const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
-  if (invoice.companyId !== company.id) return { error: 'Invoice not found.' };
+  const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId } });
+  if (!invoice) return { error: 'Invoice not found.' };
   if (!invoice.irn) return { error: 'This invoice has no IRN to cancel.' };
   if (invoice.einvoiceStatus !== 'GENERATED') return { error: 'Only a generated e-Invoice can be cancelled.' };
 
@@ -276,8 +276,8 @@ export async function cancelEwaybillAction(invoiceId: string, input: { reasonCod
   const nic = resolveNicConfig(company);
   if (!nic.ok) return { error: nic.error };
 
-  const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
-  if (invoice.companyId !== company.id) return { error: 'Invoice not found.' };
+  const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId } });
+  if (!invoice) return { error: 'Invoice not found.' };
   if (!invoice.ewbNo) return { error: 'This invoice has no e-Way Bill to cancel.' };
   if (invoice.ewaybillStatus !== 'GENERATED') return { error: 'Only a generated e-Way Bill can be cancelled.' };
 

@@ -1,17 +1,21 @@
+import { redirect } from 'next/navigation';
 import { Sidebar } from '@/components/shell/sidebar';
 import { TopBar } from '@/components/shell/top-bar';
 import { BottomNav } from '@/components/shell/bottom-nav';
 import { OnboardingTour } from '@/components/onboarding/onboarding-tour';
 import { WelcomeCard } from '@/components/onboarding/welcome-card';
 import { getCompany } from '@/lib/get-company';
+import { requireUser } from '@/lib/session';
 import { themeStyleTag } from '@/lib/theme-presets';
-import { auth } from '@/auth';
-import { prisma } from '@/lib/prisma';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const [company, session] = await Promise.all([getCompany(), auth()]);
-  const user = session?.user?.id ? await prisma.user.findUnique({ where: { id: session.user.id }, select: { onboardedAt: true } }) : null;
-  const isNewUser = !!user && !user.onboardedAt;
+  // The proxy only checks that the session cookie is validly signed;
+  // requireUser also confirms the user exists. A cookie that fails that goes
+  // back to the login screen (which doesn't bounce it here again — see
+  // src/app/login/page.tsx).
+  const [user, company] = await Promise.all([requireUser().catch(() => null), getCompany().catch(() => null)]);
+  if (!user || !company) redirect('/login');
+  const isNewUser = !user.onboardedAt;
 
   return (
     <div className="flex min-h-screen flex-col">

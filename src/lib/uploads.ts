@@ -25,7 +25,7 @@ const useBlob = !!process.env.BLOB_READ_WRITE_TOKEN;
  * URL in production, or a local /uploads/... path in dev). Throws a plain
  * Error with a user-facing message on invalid type/size — callers surface it
  * as a field error. */
-export async function saveUploadedImage(file: File, companyId: string, kind: UploadKind): Promise<string> {
+export async function saveUploadedImage(file: File, kind: UploadKind): Promise<string> {
   const ext = ALLOWED_TYPES[file.type];
   if (!ext) throw new Error('Only JPG, PNG, or WEBP images are allowed.');
   if (file.size > MAX_BYTES) throw new Error('Images must be 4MB or smaller.');
@@ -33,7 +33,7 @@ export async function saveUploadedImage(file: File, companyId: string, kind: Upl
   const filename = `${randomUUID()}.${ext}`;
 
   if (useBlob) {
-    const blob = await put(`${companyId}/${kind}/${filename}`, file, { access: 'public', contentType: file.type });
+    const blob = await put(`${kind}/${filename}`, file, { access: 'public', contentType: file.type });
     return blob.url;
   }
 
@@ -47,11 +47,11 @@ export async function saveUploadedImage(file: File, companyId: string, kind: Upl
     throw new Error('Image uploads need a Vercel Blob store connected to this project — ask an admin to connect one under Storage in the Vercel dashboard.');
   }
 
-  const dir = path.join(UPLOAD_ROOT, companyId, kind);
+  const dir = path.join(UPLOAD_ROOT, kind);
   await fs.mkdir(dir, { recursive: true });
   const buffer = Buffer.from(await file.arrayBuffer());
   await fs.writeFile(path.join(dir, filename), buffer);
-  return `/uploads/${companyId}/${kind}/${filename}`;
+  return `/uploads/${kind}/${filename}`;
 }
 
 /** Best-effort delete — never throws, since the file may already be gone

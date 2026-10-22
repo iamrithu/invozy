@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
+import { requireUser } from '@/lib/session';
 import { getSharedBrowser } from '@/lib/pdf-browser';
 
 export const dynamic = 'force-dynamic';
@@ -26,12 +26,12 @@ export const maxDuration = 60;
  * a serverless function's deployment bundle.
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user?.companyId) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+  const user = await requireUser().catch(() => null);
+  if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const { id } = await params;
-  const invoice = await prisma.invoice.findUnique({ where: { id }, select: { companyId: true, number: true } });
-  if (!invoice || invoice.companyId !== session.user.companyId) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
+  const invoice = await prisma.invoice.findUnique({ where: { id }, select: { number: true } });
+  if (!invoice) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
 
   const origin = req.nextUrl.origin;
   const cookieHeader = req.headers.get('cookie') ?? '';

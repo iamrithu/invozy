@@ -2,23 +2,29 @@ import { notFound, redirect } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
 import { getCompany } from '@/lib/get-company';
 import { listProducts } from '@/actions/products';
-import { getCompanyProfile } from '@/actions/company';
 import { BuilderClient } from './builder-client';
 
 export const dynamic = 'force-dynamic';
 
 export default async function NewInvoicePage({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
   const { edit } = await searchParams;
-  const [products, company] = await Promise.all([listProducts({ activeOnly: true }), getCompanyProfile()]);
+  // All three reads in parallel — the edit target doesn't depend on the
+  // other two. getCompany() also enforces sign-in, so the invoice read is
+  // discarded (Promise.all rejects) for an unauthenticated request.
+  const [products, company, invoice] = await Promise.all([
+    listProducts({ activeOnly: true }),
+    getCompany(),
+    edit
+      ? prisma.invoice.findUnique({
+          where: { id: edit },
+          include: { customer: true, items: { include: { product: { select: { packQty: true } } } } },
+        })
+      : null,
+  ]);
 
   let editInvoice = null;
   if (edit) {
-    const companyRow = await getCompany();
-    const invoice = await prisma.invoice.findUnique({
-      where: { id: edit },
-      include: { customer: true, items: { include: { product: { select: { packQty: true } } } } },
-    });
-    if (!invoice || invoice.companyId !== companyRow.id) notFound();
+    if (!invoice) notFound();
     // Editing in place is allowed any time up to (not including) PAID —
     // once fully paid it's treated as settled/closed (recordPayment /
     // duplicateInvoice are the supported paths after that point). A stale
