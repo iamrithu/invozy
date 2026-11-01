@@ -13,6 +13,7 @@ import { istDayRangeUtc } from '@/lib/dates';
 import { toActionError } from '@/lib/action-result';
 import { logActivity } from '@/lib/activity';
 import { invoiceHeld, lineStockQuantities, postStockChanges, sumByProduct } from '@/lib/stock';
+import { formatStock } from '@/lib/stock-units';
 import { schedulePdfBuild } from '@/lib/invoice-pdf';
 import { invoiceShareToken } from '@/lib/signed-token';
 import { deleteUploadedImage } from '@/lib/uploads';
@@ -651,12 +652,47 @@ export async function deletePayment(paymentId: string): Promise<{ error?: string
   }
 }
 
+export type HeldStockLine = { productId: string; name: string; qty: string; inStock: string };
+
+/** What a draft is holding out of stock, per tracked product — the delete
+ * dialog lists it so the owner can choose to put it back or not. Empty for
+ * a sent or paid invoice (deleting those never restocks) and for a draft
+ * that holds nothing. */
+export async function getHeldStock(invoiceId: string): Promise<{ error?: string; lines?: HeldStockLine[] }> {
+  try {
+    await requireUser();
+    return await prisma.$transaction(async (tx) => {
+      const inv = await tx.invoice.findUnique({
+        where: { id: invoiceId },
+        select: { status: true, stockTaken: true, items: { select: { productId: true, qty: true, unit: true, stockQty: true } } },
+      });
+      if (!inv) return { error: 'Invoice not found' };
+      if (inv.status !== 'DRAFT') return { lines: [] };
+      const held = invoiceHeld(inv.stockTaken, await withStockQty(tx, inv.items));
+      if (!held.size) return { lines: [] };
+      const products = await tx.product.findMany({
+        where: { id: { in: [...held.keys()] }, trackStock: true },
+        select: { id: true, name: true, unit: true, packQty: true, stockQty: true, priceTiers: { select: { unit: true, approxQty: true } } },
+        orderBy: { name: 'asc' },
+      });
+      return {
+        lines: products
+          .filter((p) => (held.get(p.id) ?? 0) > 1e-6)
+          .map((p) => ({ productId: p.id, name: p.name, qty: formatStock(held.get(p.id)!, p), inStock: formatStock(Number(p.stockQty), p) })),
+      };
+    }, TX_OPTIONS);
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
 /** Deletes an invoice with its items and payments (cascade). A draft puts
- * back the stock it took; a sent or paid invoice doesn't — its goods left
- * with the customer, and goods that come back are returned with a credit
- * note. The stock-history rows stay, keyed by the invoice number, so the
- * ledger still explains the movements. */
-export async function deleteInvoice(id: string): Promise<{ error?: string }> {
+ * back the stock it took unless `restock` is false (the goods went out
+ * anyway); a sent or paid invoice never does — its goods left with the
+ * customer, and goods that come back are returned with a credit note. The
+ * stock-history rows stay, keyed by the invoice number, so the ledger still
+ * explains the movements. */
+export async function deleteInvoice(id: string, opts?: { restock?: boolean }): Promise<{ error?: string }> {
   try {
     const user = await requireOwner();
     const invoice = await prisma.invoice.findUnique({
@@ -678,8 +714,9 @@ export async function deleteInvoice(id: string): Promise<{ error?: string }> {
     if (invoice.creditNotes.length) {
       return { error: `${invoice.number} has credit note${invoice.creditNotes.length > 1 ? 's' : ''} ${invoice.creditNotes.map((c) => c.number).join(', ')}. Delete ${invoice.creditNotes.length > 1 ? 'them' : 'it'} first, then delete the invoice.` };
     }
+    const restocked = invoice.status === 'DRAFT' && invoice.stockTaken && (opts?.restock ?? true);
     await prisma.$transaction(async (tx) => {
-      if (invoice.status === 'DRAFT') {
+      if (restocked) {
         await postStockChanges(tx, {
           direction: 'out',
           before: invoiceHeld(invoice.stockTaken, await withStockQty(tx, invoice.items)),
@@ -697,7 +734,9 @@ export async function deleteInvoice(id: string): Promise<{ error?: string }> {
       action: 'invoice.delete',
       entityType: 'invoice',
       entityId: id,
-      summary: `Deleted ${invoice.number} (${invoice.customer.shopName || invoice.customer.name}, ${fmtInr(Number(invoice.total))})`,
+      summary: `Deleted ${invoice.number} (${invoice.customer.shopName || invoice.customer.name}, ${fmtInr(Number(invoice.total))})${
+        invoice.status === 'DRAFT' && invoice.stockTaken ? (restocked ? ' — stock put back' : ' — stock not put back') : ''
+      }`,
     });
     revalidatePath('/invoices');
     revalidatePath('/dashboard');

@@ -10,7 +10,6 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Pagination } from '@/components/ui/pagination';
 import { SkeletonTable } from '@/components/ui/skeleton';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -21,7 +20,8 @@ import { fmtInr } from '@/lib/gst';
 import { customerDisplayName } from '@/lib/customer';
 import { resolveDateRange, type DateFilterMode } from '@/lib/dates';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
-import { useInvoicesPage, useInvoiceStatusCounts, useDeleteInvoice, useDuplicateInvoice, useWhatsAppShare } from '@/hooks/use-invoices';
+import { useInvoicesPage, useInvoiceStatusCounts, useDuplicateInvoice, useWhatsAppShare } from '@/hooks/use-invoices';
+import { DeleteInvoiceDialog } from '@/components/invoices/delete-invoice-dialog';
 import { useCustomersForFilter } from '@/hooks/use-customers';
 import type { InvoiceSort } from '@/actions/invoices';
 
@@ -70,7 +70,6 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
   const { isOwner } = useCurrentUser();
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [paymentTarget, setPaymentTarget] = useState<Invoice | null>(null);
-  const deleteInvoice = useDeleteInvoice();
   const duplicateInvoice = useDuplicateInvoice();
   const whatsApp = useWhatsAppShare();
   const { data: customerOptions } = useCustomersForFilter();
@@ -123,18 +122,6 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
   }, [pageItems, filter, total, statusCounts]);
 
   const deleteTarget = pageItems.find((i) => i.id === deleteTargetId) ?? null;
-
-  async function handleDelete() {
-    if (!deleteTargetId) return;
-    try {
-      await deleteInvoice.mutateAsync(deleteTargetId);
-      toast.success('Invoice deleted');
-    } catch (e: any) {
-      toast.error(e.message ?? 'Could not delete this invoice');
-    } finally {
-      setDeleteTargetId(null);
-    }
-  }
 
   async function handleDuplicate(id: string) {
     try {
@@ -415,22 +402,10 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
         />
       )}
 
-      <ConfirmDialog
-        open={deleteTargetId !== null}
+      <DeleteInvoiceDialog
+        invoice={deleteTarget}
+        open={deleteTargetId !== null && deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTargetId(null)}
-        title="Delete invoice"
-        description={
-          <>
-            Delete <b className="font-mono font-bold text-ink">{deleteTarget?.number}</b> with its items and payments?{' '}
-            {deleteTarget?.status === 'DRAFT'
-              ? 'Its stock goes back.'
-              : 'Its stock is not put back: if the goods never went out, open it, move it back to draft and then delete it; if they came back, raise a credit note instead.'}{' '}
-            This can&apos;t be undone.
-          </>
-        }
-        confirmLabel="Delete invoice"
-        pending={deleteInvoice.isPending}
-        onConfirm={handleDelete}
       />
     </div>
   );

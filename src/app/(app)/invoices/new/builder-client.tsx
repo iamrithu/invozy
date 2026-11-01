@@ -56,7 +56,8 @@ import { getCustomerPriceMap, listActiveSchemes } from '@/actions/pricing';
 import { getOldestBatches } from '@/actions/inventory';
 import { useCreateCustomer } from '@/hooks/use-customers';
 import { useCreateProduct } from '@/hooks/use-products';
-import { useDeleteInvoice, useDeletePayment, useDuplicateInvoice, useWhatsAppShare } from '@/hooks/use-invoices';
+import { useDeletePayment, useDuplicateInvoice, useWhatsAppShare } from '@/hooks/use-invoices';
+import { DeleteInvoiceDialog } from '@/components/invoices/delete-invoice-dialog';
 import { invalidateBusinessData } from '@/hooks/use-invalidate';
 import { computeTotals, fmtInr, formatUnit, type LineInput } from '@/lib/gst';
 import { upiQrDataUrl } from '@/lib/qr';
@@ -311,7 +312,6 @@ export function BuilderClient({
   });
   const [savingToCompany, startSavingToCompany] = useTransition();
   const hydratedDraftRef = useRef(false);
-  const deleteInvoice = useDeleteInvoice();
   const duplicateInvoice = useDuplicateInvoice();
   const deletePayment = useDeletePayment();
   const whatsApp = useWhatsAppShare();
@@ -880,7 +880,7 @@ export function BuilderClient({
       />
     );
 
-  const busy = saving || deleteInvoice.isPending;
+  const busy = saving;
   const overdue = !!editInvoice && status !== 'PAID' && editInvoice.due < todayIst();
 
   const moreMenu = (
@@ -1008,35 +1008,11 @@ export function BuilderClient({
               balanceDue={balanceDue}
               onRecorded={() => router.refresh()}
             />
-            <ConfirmDialog
+            <DeleteInvoiceDialog
+              invoice={{ id: savedId, number: editInvoice.number, status, irn: editInvoice.irn }}
               open={deleteOpen}
               onOpenChange={setDeleteOpen}
-              title={`Delete ${editInvoice.number}?`}
-              description={
-                <>
-                  This removes the invoice with its items and payments
-                  {status === 'DRAFT'
-                    ? ', and puts its stock back.'
-                    : '. Its stock is not put back: if the goods never went out, move it back to draft first and then delete it; if they came back, raise a credit note instead of deleting.'}{' '}
-                  It can&apos;t be undone.
-                  {editInvoice.irn ? ' Its e-Invoice stays filed with the GST portal — cancel it there within 24 hours if needed.' : ''}
-                </>
-              }
-              confirmLabel="Delete invoice"
-              pending={deleteInvoice.isPending}
-              onConfirm={() =>
-                deleteInvoice.mutate(savedId, {
-                  onSuccess: () => {
-                    toast.success(`${editInvoice.number} deleted`);
-                    setDeleteOpen(false);
-                    router.push('/invoices');
-                  },
-                  onError: (e: any) => {
-                    setDeleteOpen(false);
-                    toast.error(e?.message ?? 'Could not delete the invoice');
-                  },
-                })
-              }
+              onDeleted={() => router.push('/invoices')}
             />
           </>
         )}

@@ -46,7 +46,8 @@ export function useInvoicesPage(params: InvoiceListFilters, seed?: { items: any[
 export function useDeleteInvoice() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (invoiceId: string) => unwrap(await deleteInvoice(invoiceId)),
+    // `restock` only matters for a draft — see deleteInvoice.
+    mutationFn: async ({ invoiceId, restock }: { invoiceId: string; restock?: boolean }) => unwrap(await deleteInvoice(invoiceId, { restock })),
     onSuccess: () => invalidateBusinessData(queryClient),
   });
 }

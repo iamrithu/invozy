@@ -56,6 +56,7 @@ async function main() {
   await prisma.customer.create({ data: { id: 'c1', name: 'Shop', state: 'Tamil Nadu' } });
   await prisma.product.create({ data: { id: 'p1', name: 'Cassata', category: 'Ice', unit: 'Box', price: 100, trackStock: true, stockQty: 100 } });
   await prisma.product.create({ data: { id: 'p2', name: 'Kulfi', category: 'Ice', unit: 'Box', price: 50, trackStock: true, stockQty: 50 } });
+  await prisma.product.create({ data: { id: 'p3', name: 'Cone', category: 'Ice', unit: 'Box', price: 80, trackStock: true, stockQty: 20 } });
   await prisma.supplier.create({ data: { id: 's1', name: 'Supplier', state: 'Tamil Nadu' } });
 
   const bill = (qty: number, extra: Record<string, unknown> = {}, productId = 'p1') => ({
@@ -122,6 +123,19 @@ async function main() {
   check('moving a sent invoice back to draft moved nothing: 69', l.status === 'DRAFT' && (await stock()) === 69, l);
   await invoices.deleteInvoice(k.invoiceId!);
   check('…and deleting it as a draft restocked: 81', (await stock()) === 81, await stock());
+
+  // ---- deleting a draft: the owner picks restock or not
+  const keepGone = await invoices.createInvoice(bill(4, {}, 'p3'));
+  const heldNow = await invoices.getHeldStock(keepGone.invoiceId!);
+  check('held stock lists what the draft holds', heldNow.lines?.length === 1 && heldNow.lines[0].name === 'Cone' && /^4\b/.test(heldNow.lines[0].qty), heldNow);
+  await invoices.deleteInvoice(keepGone.invoiceId!, { restock: false });
+  check('delete without restock leaves stock out: 20 → 16', (await stock('p3')) === 16, await stock('p3'));
+  const putBack = await invoices.createInvoice(bill(2, {}, 'p3'));
+  await invoices.deleteInvoice(putBack.invoiceId!, { restock: true });
+  check('restock & delete puts it back: 16', (await stock('p3')) === 16, await stock('p3'));
+  const paidHeld = await invoices.createInvoice(bill(1, { markPaid: true, paymentMode: 'Cash' }, 'p3'));
+  check('a paid invoice lists nothing to restock', ((await invoices.getHeldStock(paidHeld.invoiceId!)).lines ?? []).length === 0);
+  check('an old draft holding nothing lists nothing', ((await invoices.getHeldStock((await legacyDraft('OLD-9', 1)).id)).lines ?? []).length === 0);
 
   // ---- drafts holding stock
   const held = await invoices.createInvoice(bill(1));
