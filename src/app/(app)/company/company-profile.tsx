@@ -68,7 +68,7 @@ const SECTIONS = [
   { id: 'brand', label: 'Theme & template', icon: Palette },
   { id: 'tax', label: 'GST & tax', icon: Percent },
   { id: 'bank', label: 'Bank & UPI', icon: Landmark },
-  { id: 'invoice', label: 'Numbering & terms', icon: Hash },
+  { id: 'invoice', label: 'Numbering & PDF', icon: Hash },
   { id: 'signature', label: 'Signature', icon: PenLine },
   { id: 'einvoice', label: 'e-Invoice API', icon: ShieldCheck },
 ] as const;
@@ -275,9 +275,9 @@ export function CompanyProfile({ company: co }: { company: PublicCompany }) {
           <Section
             {...sectionProps('invoice')}
             icon={Hash}
-            title="Invoice numbering & terms"
+            title="Invoice numbering & PDF"
             hint="The next number is taken by the next invoice you save."
-            fields={['invoicePrefix', 'invoiceFY', 'nextInvoiceNo', 'pdfShowHsnSummary', 'terms']}
+            fields={['invoicePrefix', 'invoiceFY', 'nextInvoiceNo', 'pdfShowHsnSummary', 'pdfShowItemDiscount', 'pdfShowBillDiscount', 'terms']}
             view={
               <div className="space-y-4">
                 <div className="rounded-lg2 border border-line bg-bg px-3.5 py-3">
@@ -292,6 +292,10 @@ export function CompanyProfile({ company: co }: { company: PublicCompany }) {
                   <Row label="HSN-wise tax summary on PDF" value={co.pdfShowHsnSummary ? 'Shown' : 'Hidden'} />
                   <Row label="Terms on every invoice" value={co.terms} wide multiline />
                 </Rows>
+                <div className="flex flex-wrap gap-1.5">
+                  <OnOff on={co.pdfShowItemDiscount} label="Item discount on PDF" />
+                  <OnOff on={co.pdfShowBillDiscount} label="Bill discount on PDF" />
+                </div>
               </div>
             }
             form={(errors) => (
@@ -303,6 +307,19 @@ export function CompanyProfile({ company: co }: { company: PublicCompany }) {
                 </div>
                 <Hint>Only change the next number when starting a new series — a number already used would print twice.</Hint>
                 <Field label="Terms printed on every invoice (unless changed on one)" name="terms" icon={FileText} as="textarea" defaultValue={co.terms ?? ''} />
+                <SwitchRow
+                  name="pdfShowItemDiscount"
+                  label="Show item discount on the invoice PDF"
+                  hint="Prints each item's Disc %. Off: the rate is printed with the discount already taken off."
+                  defaultChecked={co.pdfShowItemDiscount}
+                />
+                <SwitchRow
+                  name="pdfShowBillDiscount"
+                  label="Show overall (bill) discount on the invoice PDF"
+                  hint="Prints the Bill discount row. Off: it's spread into the item rates instead."
+                  defaultChecked={co.pdfShowBillDiscount}
+                />
+                <Hint>Hiding a discount only changes what's printed — the total is always worked out with every discount.</Hint>
                 <SwitchRow
                   name="pdfShowHsnSummary"
                   label="Show HSN-wise tax summary on the invoice PDF"

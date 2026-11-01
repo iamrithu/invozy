@@ -30,7 +30,7 @@ SheetOverlay.displayName = DialogPrimitive.Overlay.displayName;
 /** Slide-over panel from the right — the primary view/edit/create surface
  * for a list row (Invoices, Customers, Products), replacing the old
  * split master-detail column and the centered add/edit Dialog alike.
- * Full-screen on mobile, a fixed-width panel from sm: up. */
+ * Full-screen on mobile, 45% of the screen from sm: up. */
 const SheetContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { wide?: boolean }
@@ -41,7 +41,9 @@ const SheetContent = React.forwardRef<
       ref={ref}
       className={cn(
         'fixed inset-y-0 right-0 z-[100] flex h-full w-full max-w-full flex-col overflow-hidden border-l border-line bg-surface shadow-elevated duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right',
-        wide ? 'sm:w-1/2 sm:max-w-none sm:min-w-[560px]' : 'sm:max-w-[480px]',
+        // Every form sheet takes 45% of the screen on tablets and up, never
+        // narrower than its fields need; phones get the full width.
+        wide ? 'sm:w-[45vw] sm:min-w-[560px] sm:max-w-none' : 'sm:w-[45vw] sm:min-w-[480px] sm:max-w-none',
         className
       )}
       {...props}

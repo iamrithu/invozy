@@ -106,6 +106,9 @@ export default async function PrintInvoicePage({ params, searchParams }: { param
     igstEnabled: invoice.igstEnabled,
     pdfShowBankDetails: invoice.showBankDetails,
     pdfShowHsnSummary: invoice.showHsnSummary,
+    // Display-only, so read live like the template — not snapshotted.
+    pdfShowItemDiscount: company.pdfShowItemDiscount,
+    pdfShowBillDiscount: company.pdfShowBillDiscount,
   };
   const c = invoice.customer;
   const customer = {

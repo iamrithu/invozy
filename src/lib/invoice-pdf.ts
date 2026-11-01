@@ -37,7 +37,7 @@ import { getSharedPdfContext, PDF_PAGE } from './pdf-browser';
 
 /** Bump whenever the printed output changes for the same data (template
  * markup, CSS, footer, margins) so every stored PDF is rebuilt with it. */
-export const RENDER_VERSION = '2026-11-01.clean-6';
+export const RENDER_VERSION = '2026-11-01.clean-7';
 
 /** Everything after the browser is up — navigation, layout, pdf() — must
  * fit in this, leaving the rest of the function's 60s for a cold launch

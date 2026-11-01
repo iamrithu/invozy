@@ -112,6 +112,8 @@ type Product = {
   trackStock?: boolean;
   stockQty?: string | number;
   lowStockAt?: string | number | null;
+  /** Default line discount % (Product.discount). */
+  discount?: string | number;
 };
 
 /** Every pricing option for a product, oldest-field-compatible: falls back
@@ -143,6 +145,8 @@ type Company = {
   igstEnabled: boolean;
   pdfShowBankDetails: boolean;
   pdfShowHsnSummary: boolean;
+  pdfShowItemDiscount: boolean;
+  pdfShowBillDiscount: boolean;
   defaultHsn: string;
   invoiceTemplate: InvoiceTemplateName;
   fssaiNo?: string | null;
@@ -651,8 +655,9 @@ export function BuilderClient({
           unit,
           qty: 1,
           rate,
-          // New items start at the last "Set every item to __%" value.
-          discount: newLineDiscount,
+          // The product's own discount when it has one, otherwise the last
+          // "Set every item to __%" value.
+          discount: Number(p.discount) > 0 ? clampPct(Number(p.discount)) : newLineDiscount,
           packQty: isPrimary ? p.packQty : null,
           hsn: p.hsn || company.defaultHsn,
           batch: batchesQuery.data?.[p.id]?.batchNo ?? null,
@@ -1492,6 +1497,7 @@ export function BuilderClient({
               itemDiscount={lineDiscountTotal}
               billDiscount={totals.overallDiscountAmount}
               totals={totals}
+              hiddenOnPdf={[!company.pdfShowItemDiscount && 'item', !company.pdfShowBillDiscount && 'bill'].filter((x): x is string => !!x)}
             />
 
             {offers.length > 0 && (
@@ -1794,6 +1800,7 @@ function DiscountCard({
   itemDiscount,
   billDiscount,
   totals,
+  hiddenOnPdf,
 }: {
   hasItems: boolean;
   itemCount: number;
@@ -1808,12 +1815,23 @@ function DiscountCard({
   itemDiscount: number;
   billDiscount: number;
   totals: { taxable: number; cgst: number; sgst: number; igst: number; useIgst: boolean; total: number };
+  /** Which discounts Company settings keep off the PDF ('item', 'bill'). */
+  hiddenOnPdf: string[];
 }) {
   return (
     <div className="rounded-xl2 border border-line bg-surface p-2.5 shadow-card">
       <div className="mb-2 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-ink-faint">
         <Percent size={11} className="text-brand" /> Discount
       </div>
+      {hiddenOnPdf.length > 0 && (
+        <p className="mb-2 rounded-sm2 bg-surface-alt px-2 py-1.5 text-[10.5px] leading-snug text-ink-soft">
+          {hiddenOnPdf.length === 2 ? 'Item and bill discounts are' : hiddenOnPdf[0] === 'item' ? 'Item discounts are' : 'The bill discount is'} hidden on the PDF — still taken off the
+          total, printed inside the rates.{' '}
+          <Link href="/company#invoice" className="font-bold text-brand">
+            Change
+          </Link>
+        </p>
+      )}
       <div className="flex flex-wrap items-end gap-2">
         <label className="min-w-0 flex-1 text-[11px] font-semibold text-ink-soft">
           Set every item to
@@ -2002,7 +2020,7 @@ function ProductRow({
       const perPiece = approxQty > 0 ? price / approxQty : null;
       return `${fmtInr(price)}/${formatUnit(t.unit)}${perPiece != null ? ` (≈${fmtInr(perPiece)}/Piece)` : ''}`;
     })
-    .join(' · ');
+    .join(' · ') + (Number(product.discount) > 0 ? ` · ${Number(product.discount)}% off` : '');
   return (
     <div className={`flex items-start gap-2 rounded-lg2 px-1.5 py-1.5 transition-colors hover:bg-bg ${active ? 'bg-brand-light' : ''}`}>
       <span className={`mt-0.5 flex h-[26px] w-[26px] flex-shrink-0 items-center justify-center rounded-sm2 ${categoryTile(product.category)}`}>

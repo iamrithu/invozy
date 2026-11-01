@@ -42,6 +42,7 @@ type Product = {
   trackStock: boolean;
   stockQty: string | number;
   lowStockAt: string | number | null;
+  discount?: string | number;
 };
 
 /** Every pricing option for a product — falls back to a single synthetic
@@ -438,6 +439,16 @@ function ProductViewSheet({
           </div>
 
           <div className="space-y-2 rounded-lg2 border border-dashed border-line p-3.5 text-[12.5px]">
+            <div className="flex justify-between gap-3">
+              <span className="flex-shrink-0 text-ink-faint">Discount</span>
+              {Number(product.discount) > 0 ? (
+                <span className="text-right font-semibold text-ink-body">
+                  {Number(product.discount)}% <span className="font-normal text-ink-faint">· new invoice lines start at this</span>
+                </span>
+              ) : (
+                <span className="text-ink-faint">None</span>
+              )}
+            </div>
             {product.desc && (
               <div className="flex justify-between gap-3">
                 <span className="flex-shrink-0 text-ink-faint">Description</span>

@@ -28,6 +28,9 @@ export type InvoiceSheetCompany = {
   currency?: string;
   /** PDF section toggle from Company settings — undefined behaves as "off" (hidden). */
   pdfShowBankDetails?: boolean;
+  /** Whether the PDF prints discounts — undefined behaves as "on" (see printedLines). */
+  pdfShowItemDiscount?: boolean;
+  pdfShowBillDiscount?: boolean;
 };
 
 export type InvoiceSheetCustomer = {
@@ -54,14 +57,17 @@ export type InvoiceSheetLine = {
 // invoice-sheet-classic.tsx) so they all tell the same discount story:
 //
 //   Sub total → Bill discount → Taxable value → CGST/SGST or IGST →
-//   Round off → Total → "You saved ₹X"
+//   Round off → Total
 //
 // Item discounts aren't a row of their own: each line already prints its
 // Disc% and its discounted Amount, so the ladder starts from the sum of
 // those (the sub total), and only the bill discount — which no line shows —
 // gets a step. computeTotals() stays the single source of truth: every row
 // is read from the `totals` it produced, so the ladder always adds up to
-// the printed Total. "You saved" still counts both kinds of discount.
+// the printed Total.
+//
+// A company can hide either kind of discount on the PDF
+// (Company.pdfShowItemDiscount / pdfShowBillDiscount) — see printedLines.
 // ---------------------------------------------------------------------------
 
 const EPSILON = 0.005;
@@ -83,8 +89,6 @@ export type TotalsLadder = {
   gross: number;
   itemDiscount: number;
   billDiscount: number;
-  /** Item + bill discount — the "You saved" line; 0 means don't show it. */
-  saved: number;
 };
 
 function pct(n: number | string): string {
@@ -97,6 +101,7 @@ export function totalsLadder({
   discountType,
   discountValue,
   rates,
+  showBillDiscount = true,
 }: {
   lines: { qty: number; rate: number; discount: number }[];
   totals: TotalsResult;
@@ -104,16 +109,18 @@ export function totalsLadder({
   discountValue: number;
   /** The invoice's own (snapshotted) rates — only used for row labels. */
   rates: { cgstRate: number | string; sgstRate: number | string; igstRate: number | string };
+  /** False when the bill discount is hidden on the PDF — no Sub total /
+   * Bill discount rows; the lines already carry it (see printedLines). */
+  showBillDiscount?: boolean;
 }): TotalsLadder {
   const gross = lines.reduce((sum, l) => sum + l.qty * l.rate, 0);
   const itemDiscount = Math.max(0, gross - totals.subtotal);
   const billDiscount = totals.overallDiscountAmount;
-  const saved = itemDiscount + billDiscount >= EPSILON ? itemDiscount + billDiscount : 0;
 
   const rows: LadderRow[] = [];
   // Without a bill discount, sub total and taxable value are the same
   // number — one row.
-  const hasBillDiscount = billDiscount >= EPSILON;
+  const hasBillDiscount = showBillDiscount && billDiscount >= EPSILON;
   if (hasBillDiscount) {
     const label = discountType === 'PERCENT' && discountValue ? `Bill discount (${pct(discountValue)}%)` : 'Bill discount';
     rows.push({ key: 'subtotal', label: 'Sub total', amount: totals.subtotal });
@@ -129,7 +136,26 @@ export function totalsLadder({
   if (Math.abs(totals.roundOff) >= EPSILON) {
     rows.push({ key: 'round-off', label: 'Round off', amount: Math.abs(totals.roundOff), sign: totals.roundOff > 0 ? '+' : '−' });
   }
-  return { rows, total: totals.total, gross, itemDiscount, billDiscount, saved };
+  return { rows, total: totals.total, gross, itemDiscount, billDiscount };
+}
+
+/** The lines as the PDF prints them when the company hides a discount
+ * (Company.pdfShowItemDiscount / pdfShowBillDiscount). Hiding never changes
+ * the totals: the hidden discount is taken off the printed rate instead, so
+ * qty × rate (less any Disc% still shown) is still each row's amount, and
+ * the amounts still add up to the taxable value. */
+export function printedLines<L extends { qty: number; rate: number; discount: number }>(
+  lines: L[],
+  totals: TotalsResult,
+  show: { itemDiscount: boolean; billDiscount: boolean }
+): L[] {
+  const billShare = !show.billDiscount && totals.subtotal > 0 ? totals.taxable / totals.subtotal : 1;
+  if (show.itemDiscount && billShare === 1) return lines;
+  return lines.map((l) => ({
+    ...l,
+    rate: l.rate * billShare * (show.itemDiscount ? 1 : 1 - (l.discount || 0) / 100),
+    discount: show.itemDiscount ? l.discount : 0,
+  }));
 }
 
 /** Line-level discount % input value, clamped to 0–100 as it's typed. */
@@ -379,9 +405,9 @@ function ModernItemsTable({ company, lines, editable, showDisc, onUpdateLine, on
   );
 }
 
-function TotalsRow({ k, v, negative, good, rule }: { k: string; v: string; negative?: boolean; good?: boolean; rule?: boolean }) {
+function TotalsRow({ k, v, negative, rule }: { k: string; v: string; negative?: boolean; rule?: boolean }) {
   return (
-    <div className={`flex justify-between px-1.5 py-1 ${rule ? 'mt-0.5 border-t border-line pt-1.5' : ''} ${negative ? 'text-red' : good ? 'font-bold text-green' : 'text-ink-soft'}`}>
+    <div className={`flex justify-between px-1.5 py-1 ${rule ? 'mt-0.5 border-t border-line pt-1.5' : ''} ${negative ? 'text-red' : 'text-ink-soft'}`}>
       <span>{k}</span>
       <span className="font-mono">{v}</span>
     </div>
@@ -396,7 +422,7 @@ function TotalsRow({ k, v, negative, good, rule }: { k: string; v: string; negat
  * panel, not here — this only displays them. */
 function ModernClosing(props: SharedProps) {
   const { company, lines, totals, amountPaid, discountType, discountValue, editable } = props;
-  const ladder = totalsLadder({ lines, totals, discountType, discountValue, rates: company });
+  const ladder = totalsLadder({ lines, totals, discountType, discountValue, rates: company, showBillDiscount: editable || company.pdfShowBillDiscount !== false });
   const money = (row: LadderRow) => `${row.sign ?? ''}${fmtInr(row.amount, company.currency)}`;
 
   return (
@@ -412,7 +438,6 @@ function ModernClosing(props: SharedProps) {
               {fmtInr(totals.total, company.currency)}
             </span>
           </div>
-          {ladder.saved > 0 && <TotalsRow k="You saved" v={fmtInr(ladder.saved, company.currency)} good />}
           {!!amountPaid && amountPaid > 0 && (
             <>
               <TotalsRow k="Paid" v={`−${fmtInr(amountPaid, company.currency)}`} negative />
@@ -487,7 +512,7 @@ function ModernClosing(props: SharedProps) {
  * document, rendered editable or read-only. See the pagination note above
  * this file's helper functions for how the read-only path handles
  * multi-page invoices. */
-export function InvoiceSheet(props: {
+export function InvoiceSheet(rawProps: {
   company: InvoiceSheetCompany;
   customer: InvoiceSheetCustomer | null;
   date: string;
@@ -495,8 +520,8 @@ export function InvoiceSheet(props: {
   invoiceNumber?: string;
   lines: InvoiceSheetLine[];
   totals: ReturnType<typeof computeTotals>;
-  /** @deprecated Ignored — the "You saved" line is derived from `lines` and
-   * `totals` (see totalsLadder). Still accepted so existing callers compile. */
+  /** @deprecated Ignored — the PDF no longer prints a "You saved" line.
+   * Still accepted so existing callers compile. */
   totalSavings?: number;
   /** Sum of Payment rows recorded against this invoice — shown as a
    * Paid/Balance line right under the total when there's a partial or full
@@ -524,6 +549,17 @@ export function InvoiceSheet(props: {
   onUpdateLine?: (lineId: string, patch: Partial<InvoiceSheetLine>) => void;
   onRemoveLine?: (lineId: string) => void;
 }) {
+  // Printed, a discount the company hides is folded into the lines' rates
+  // (see printedLines); the builder always edits the real ones.
+  const props = rawProps.editable
+    ? rawProps
+    : {
+        ...rawProps,
+        lines: printedLines(rawProps.lines, rawProps.totals, {
+          itemDiscount: rawProps.company.pdfShowItemDiscount !== false,
+          billDiscount: rawProps.company.pdfShowBillDiscount !== false,
+        }),
+      };
   const { lines, editable } = props;
   // Print shows a Disc% column only when it has something to say; the
   // builder always has the input.

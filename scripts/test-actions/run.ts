@@ -335,6 +335,39 @@ async function main() {
   const legacy = await companyActions.updateCompany({}, form({ name: 'Only name' }));
   check('a save without a section list still needs every required field', !!legacy.error && (await coRow()).name === coBefore.name, legacy);
 
+  // ---- discounts: product default, and hiding them on the PDF
+  const productActions = await import('@/actions/products');
+  const { printedLines } = await import('@/components/invoices/invoice-sheet');
+  const { computeTotals } = await import('@/lib/gst');
+  const productForm = (discount: string) =>
+    form({ name: `Disc ${discount}`, category: 'Ice', unit: 'Box', price: '100', discount, tiers: JSON.stringify([{ unit: 'Box', price: 100 }]) });
+  const withDiscount = await productActions.createProduct({}, productForm('12.5'));
+  check('a product saves its default discount %', !withDiscount.error && Number((await prisma.product.findUniqueOrThrow({ where: { id: withDiscount.id! } })).discount) === 12.5, withDiscount);
+  const blankDiscount = await productActions.createProduct({}, productForm(''));
+  check('a blank discount saves as none', !blankDiscount.error && Number((await prisma.product.findUniqueOrThrow({ where: { id: blankDiscount.id! } })).discount) === 0, blankDiscount);
+  check('a discount over 100% is refused', !!(await productActions.createProduct({}, productForm('120'))).fieldErrors?.discount);
+
+  const dLines = [
+    { qty: 2, rate: 320, discount: 20 },
+    { qty: 1, rate: 180, discount: 0 },
+  ];
+  const rates = { cgstRate: 2.5, sgstRate: 2.5, igstRate: 5, cgstEnabled: true, sgstEnabled: true, igstEnabled: true };
+  const dTotals = computeTotals(dLines, { type: 'PERCENT', value: 10 }, rates, 'Tamil Nadu', 'Tamil Nadu');
+  const sum = (ls: { qty: number; rate: number; discount: number }[]) => ls.reduce((t, l) => t + l.qty * l.rate * (1 - l.discount / 100), 0);
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.005;
+  const shown = printedLines(dLines, dTotals, { itemDiscount: true, billDiscount: true });
+  check('both discounts shown: lines print as entered', shown === dLines);
+  const noItem = printedLines(dLines, dTotals, { itemDiscount: false, billDiscount: true });
+  check('item discount hidden: rate printed net, no Disc %, rows still add up', near(noItem[0].rate, 256) && noItem[0].discount === 0 && near(sum(noItem), dTotals.subtotal), noItem);
+  const noBill = printedLines(dLines, dTotals, { itemDiscount: true, billDiscount: false });
+  check('bill discount hidden: spread into the rates, rows add up to the taxable value', noBill[0].discount === 20 && near(sum(noBill), dTotals.taxable), { noBill, taxable: dTotals.taxable });
+  const neither = printedLines(dLines, dTotals, { itemDiscount: false, billDiscount: false });
+  check('both hidden: rows add up to the taxable value, total unchanged', neither.every((l) => l.discount === 0) && near(sum(neither), dTotals.taxable) && near(dTotals.total, computeTotals(dLines, { type: 'PERCENT', value: 10 }, rates, 'Tamil Nadu', 'Tamil Nadu').total), neither);
+
+  const pdfSave = await companyActions.updateCompany({}, form({ _fields: 'pdfShowItemDiscount,pdfShowBillDiscount', pdfShowBillDiscount: 'on' }));
+  const pdfRow = await coRow();
+  check('PDF discount switches save from the Company page', !pdfSave.error && !pdfRow.pdfShowItemDiscount && pdfRow.pdfShowBillDiscount && pdfRow.nextInvoiceNo === 42, { pdfSave, item: pdfRow.pdfShowItemDiscount, bill: pdfRow.pdfShowBillDiscount });
+
   await prisma.$disconnect();
   fs.rmSync(work, { recursive: true, force: true });
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');

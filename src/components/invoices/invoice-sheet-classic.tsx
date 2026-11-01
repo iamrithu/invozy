@@ -15,7 +15,7 @@ import {
 import { numberToWords, amountToWordsWithPaise } from '@/lib/number-to-words';
 import { gstStateCode } from '@/lib/gst-state-codes';
 import { computeCapacities, paginateLinesUniform, useMeasuredSections, FRAME_FILL_PX } from './print-pagination';
-import { clampDiscount, totalsLadder, type TotalsLadder } from './invoice-sheet';
+import { clampDiscount, printedLines, totalsLadder, type TotalsLadder } from './invoice-sheet';
 import { addressLine, CleanHeader, CLEAN_FILL, CLEAN_LABEL, CLEAN_ROW_RULE, CLEAN_RULE, CLEAN_SOFT, plainAmount } from './clean-header';
 
 export type ClassicCompany = {
@@ -49,6 +49,10 @@ export type ClassicCompany = {
   /** PDF section toggles from Company settings — undefined behaves as "off" (hidden). */
   pdfShowBankDetails?: boolean;
   pdfShowHsnSummary?: boolean;
+  /** Whether the PDF prints item / bill discounts — undefined behaves as
+   * "on". Hidden ones are folded into the printed rates (printedLines). */
+  pdfShowItemDiscount?: boolean;
+  pdfShowBillDiscount?: boolean;
   /** Fallback HSN/SAC for a line item that has neither its own nor its
    * product's own HSN set — see schema.prisma's Company.defaultHsn comment. */
   defaultHsn?: string | null;
@@ -132,7 +136,7 @@ export type InvoiceSheetClassicProps = {
    * payment on file. Omitted (or 0) shows nothing. */
   amountPaid?: number;
   /** Per-invoice remarks (distinct from Company.terms, which is identical on
-   * every invoice) — printed near the totals/declaration on the last page. */
+   * every invoice) — printed near the totals on the last page. */
   notes?: string | null;
   /** Buyer-facing delivery/dispatch note — shown in the buyer block. */
   deliveryInstructions?: string | null;
@@ -401,7 +405,7 @@ function RemoveButton({ line: l, onRemoveLine }: { line: ClassicLine; onRemoveLi
  * secondary-quantity column), the shared totals ladder (see
  * invoice-sheet.tsx's totalsLadder), HSN-wise tax summary with its own
  * "Tax Amount (in words)" line, Bank Details/Terms (from Company settings),
- * declaration, and a Customer's Sign / Authorised Signatory row. See
+ * and a Customer's Sign / Authorised Signatory row. See
  * invoice-eway-bill-sheet.tsx for the companion printed e-Way Bill page.
  *
  * `editable` never gets printed directly (the builder's preview and the
@@ -410,8 +414,15 @@ function RemoveButton({ line: l, onRemoveLine }: { line: ClassicLine; onRemoveLi
  * tricks, just the plain editing UI. Only the editable={false} render path
  * below deals with physical pages at all. */
 export function InvoiceSheetClassic(props: InvoiceSheetClassicProps) {
-  const { company, customer, lines, totals, discountType, discountValue, editable } = props;
+  const { company, customer, totals, discountType, discountValue, editable } = props;
   const variant: ClassicVariant = props.variant ?? 'classic';
+  // Printed, a discount the company hides is folded into the lines' rates
+  // (see printedLines); the builder always edits the real ones. Totals,
+  // and the HSN split below, always come from the real lines.
+  const showBillDiscount = editable || company.pdfShowBillDiscount !== false;
+  const lines = editable
+    ? props.lines
+    : printedLines(props.lines, totals, { itemDiscount: company.pdfShowItemDiscount !== false, billDiscount: showBillDiscount });
   const isClean = variant === 'clean';
 
   // The bill discount is handed to the HSN split as the exact amount
@@ -420,7 +431,7 @@ export function InvoiceSheetClassic(props: InvoiceSheetClassicProps) {
   // a % on top of already-discounted lines is how it used to double-count.
   const hsnRows = customer
     ? computeHsnSummary(
-        lines.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount, hsn: l.hsn })),
+        props.lines.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount, hsn: l.hsn })),
         { type: 'FLAT', value: totals.overallDiscountAmount },
         {
           cgstRate: Number(company.cgstRate),
@@ -456,9 +467,9 @@ export function InvoiceSheetClassic(props: InvoiceSheetClassicProps) {
   // ₹0.00 reads as broken rather than as "no tax applies here".
   const gstEnabled = totals.cgst > 0 || totals.sgst > 0 || totals.igst > 0;
   const showHsn = !!(company.pdfShowHsnSummary && gstEnabled && hsnRows.length > 0);
-  const ladder = totalsLadder({ lines, totals, discountType, discountValue, rates: company });
+  const ladder = totalsLadder({ lines, totals, discountType, discountValue, rates: company, showBillDiscount });
   const cols: ColumnCfg = { variant, editable, hasAltQty, altUnitLabel, showDisc: editable || anyLineDiscount };
-  const shared: SharedProps = { ...props, variant, hsnRows, hsnTotal, unitSummary, hasAltQty, altUnitLabel, showHsn, gstEnabled, ladder, cols };
+  const shared: SharedProps = { ...props, lines, variant, hsnRows, hsnTotal, unitSummary, hasAltQty, altUnitLabel, showHsn, gstEnabled, ladder, cols };
 
   const Header = isClean ? CleanHeaderSection : ClassicHeader;
   const Buyer = isClean ? CleanParties : ClassicBuyerRow;
@@ -561,7 +572,7 @@ export function InvoiceSheetClassic(props: InvoiceSheetClassicProps) {
               <Header {...shared} />
               {showBuyer && <Buyer {...shared} />}
               {pageLines.length > 0 && <Items {...shared} lines={pageLines} startSerial={startSerial} fillPx={fillPx > 12 ? fillPx : 0} />}
-              {/* The closing block (totals/HSN/bank/declaration/signature)
+              {/* The closing block (totals/HSN/bank/signature)
                   on the true last page flows in normal document order right
                   after the item table. Every sub-section inside it has its
                   own `break-inside-avoid`, so if it doesn't all fit on this
@@ -887,8 +898,8 @@ function ClassicItemsTable({ company, lines, editable, cols, onUpdateLine, onInc
   );
 }
 
-/** Totals ladder, amounts-in-words, HSN breakup, bank/terms, notes,
- * declaration and signatures — computed once from the *whole* invoice
+/** Totals ladder, quantity and amount in words, HSN breakup, bank/terms,
+ * notes and signatures — computed once from the *whole* invoice
  * (never a per-page slice) and rendered exactly once: inline after the
  * items table in editable mode, or on the final physical page in print
  * mode (the caller only mounts this on the last page — see
@@ -904,16 +915,16 @@ function ClassicClosing(props: SharedProps) {
           keeps the signature row on the page as often as before. */}
       <div className="grid grid-cols-[minmax(0,1fr)_290px] border-t border-ink break-inside-avoid">
         <div className="border-r border-line">
-          <div className="p-1.5">
-            <span className="font-bold">Amount Chargeable (in words) : </span>
-            INR {numberToWords(totals.total)} Only
-          </div>
           {lines.length > 0 && (
-            <div className="border-t border-line p-1.5">
+            <div className="border-b border-line p-1.5">
               <span className="font-bold">Total Quantity : </span>
               {unitSummary.map((r) => `${r.qty.toLocaleString('en-IN')} ${formatUnit(r.unit)}`).join(', ')}
             </div>
           )}
+          <div className="p-1.5">
+            <span className="font-bold">Amount Chargeable (in words) : </span>
+            INR {numberToWords(totals.total)} Only
+          </div>
         </div>
         <table className="w-full self-start border-collapse text-[11px]">
           <tbody>
@@ -930,13 +941,6 @@ function ClassicClosing(props: SharedProps) {
               <td className="px-2.5 py-1.5 text-right text-[13px] font-extrabold">Total</td>
               <td className="px-2.5 py-1.5 text-right font-mono font-tabular text-[13px] font-extrabold">{fmtInr(totals.total, company.currency)}</td>
             </tr>
-            {ladder.saved > 0 && (
-              <tr>
-                <td colSpan={2} className="px-2.5 py-1 text-right text-[10.5px] font-semibold">
-                  You saved {fmtInr(ladder.saved, company.currency)} on this bill
-                </td>
-              </tr>
-            )}
           </tbody>
         </table>
       </div>
@@ -1083,11 +1087,6 @@ function ClassicClosing(props: SharedProps) {
         </div>
       )}
 
-      <div className="border-t border-line p-1.5 text-[10.5px] leading-snug text-ink-soft break-inside-avoid">
-        <div className="mb-0.5 font-bold text-ink">Declaration</div>
-        {DECLARATION}
-      </div>
-
       <div className="border-t border-line p-1.5 break-inside-avoid">
         <div className="mt-1 grid grid-cols-2 gap-8 text-center text-[10.5px]">
           <div className="flex flex-col">
@@ -1120,9 +1119,6 @@ function ClassicClosing(props: SharedProps) {
     </div>
   );
 }
-
-const DECLARATION =
-  'We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct. We hereby certify that the goods mentioned in this invoice are warranted to be of the nature and quality purported to be.';
 
 function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
@@ -1264,7 +1260,7 @@ function CleanField({ label, children }: { label: string; children: React.ReactN
   );
 }
 
-/** Words/bank/terms/notes/declaration (left) beside the totals ladder
+/** Quantity/words/bank/terms/notes (left) beside the totals ladder
  * (right), then the optional HSN breakup and the signature row. Each part
  * is `break-inside-avoid`, same overflow behaviour as CLASSIC. */
 function CleanClosing(props: SharedProps) {
@@ -1278,8 +1274,8 @@ function CleanClosing(props: SharedProps) {
     <div className="flex-none">
       <div className={`grid grid-cols-[minmax(0,1fr)_270px] border-t ${CLEAN_RULE} break-inside-avoid`}>
         <div className={`grid content-start gap-2 border-r ${CLEAN_RULE} px-2.5 py-2`}>
-          <CleanField label="Amount in words">Rupees {numberToWords(totals.total)} Only</CleanField>
           {lines.length > 0 && <CleanField label="Total quantity">{unitSummary.map((r) => `${r.qty.toLocaleString('en-IN')} ${formatUnit(r.unit)}`).join(', ')}</CleanField>}
+          <CleanField label="Amount in words">Rupees {numberToWords(totals.total)} Only</CleanField>
           {showBank && <CleanField label="Bank details">{bank}</CleanField>}
           {company.terms && (
             <CleanField label="Terms">
@@ -1287,7 +1283,6 @@ function CleanClosing(props: SharedProps) {
             </CleanField>
           )}
           {(editable || notes) && <CleanField label="Notes">{editable ? <NotesInput {...props} /> : <span className="whitespace-pre-line">{notes}</span>}</CleanField>}
-          <CleanField label="Declaration">We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.</CleanField>
         </div>
 
         <table className="w-full self-start border-collapse text-[11px]">
@@ -1303,20 +1298,13 @@ function CleanClosing(props: SharedProps) {
             ))}
             {/* Bottom rule only when something follows — otherwise the
                 section below draws that edge. */}
-            <tr className={`${CLEAN_FILL} border-t ${CLEAN_RULE} ${ladder.saved > 0 || paid ? `border-b ${CLEAN_RULE}` : ''} text-[14px]`}>
+            <tr className={`${CLEAN_FILL} border-t ${CLEAN_RULE} ${paid ? `border-b ${CLEAN_RULE}` : ''} text-[14px]`}>
               <td className="px-2.5 py-[7px]">Total</td>
               <td className="px-2.5 py-[7px] text-right">{fmtInr(totals.total, currency)}</td>
             </tr>
-            {ladder.saved > 0 && (
-              <tr>
-                <td colSpan={2} className={`${CLEAN_SOFT} px-2.5 py-1.5 text-right text-[10px]`}>
-                  You saved {fmtInr(ladder.saved, currency)} on this bill
-                </td>
-              </tr>
-            )}
             {paid > 0 && (
               <>
-                <tr className={ladder.saved > 0 ? `border-t ${CLEAN_ROW_RULE}` : ''}>
+                <tr>
                   <td className="px-2.5 py-1">Paid</td>
                   <td className="px-2.5 py-1 text-right">−{plainAmount(paid, currency)}</td>
                 </tr>

@@ -297,9 +297,9 @@ main:has(> .invoice-builder-root) {
 /* CLEAN template (invoice-sheet-classic.tsx variant="clean"): one weight
    and one family for every piece of text, hierarchy by size alone — so no
    utility class inside it (font-bold, font-mono…) can reintroduce a
-   second weight or the monospace face. The company name is the one
-   exception: `.clean-strong` (higher specificity, so it wins over the
-   rule above). */
+   second weight or the monospace face. The company name and invoice
+   number are the exceptions: `.clean-strong` (higher specificity, so it
+   wins over the rule above). */
 .invoice-clean,
 .invoice-clean * {
   font-family: var(--font-plex-sans), 'IBM Plex Sans', system-ui, sans-serif !important;

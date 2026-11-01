@@ -17,97 +17,102 @@ datasource db {
 model Company {
   // Fixed id — the primary-key constraint is what keeps this a singleton.
   // Must match COMPANY_ID in src/lib/company-id.ts.
-  id                 String          @id @default("main")
-  name               String
-  domain             String?
+  id                  String          @id @default("main")
+  name                String
+  domain              String?
   // Nullable — the setup script only requires name + state; the rest is
   // filled in later via the Company settings page. Every reader already
   // null-guards these.
-  address            String?
-  state              String
-  district           String?
-  gstin              String?
-  pan                String?
-  phone              String?
-  altPhone           String?
-  email              String?
-  bankName           String?
-  bankAcc            String?
-  ifsc               String?
-  branch             String?
-  upi                String?
+  address             String?
+  state               String
+  district            String?
+  gstin               String?
+  pan                 String?
+  phone               String?
+  altPhone            String?
+  email               String?
+  bankName            String?
+  bankAcc             String?
+  ifsc                String?
+  branch              String?
+  upi                 String?
   // Two independent opt-ins for the payment block near the Authorised
   // Signatory section on the invoice PDF — a company can show neither, just
   // one, or both together: a scannable UPI QR generated from `upi` (see
   // src/lib/qr.ts's upiQrDataUrl), and/or this company's own `phone` printed
   // as a GPay-reachable number.
-  showUpiQr          Boolean         @default(false)
-  showGpayNumber     Boolean         @default(false)
-  cgstRate           Decimal         @default(9)
-  sgstRate           Decimal         @default(9)
-  igstRate           Decimal         @default(18)
-  cgstEnabled        Boolean         @default(true)
-  sgstEnabled        Boolean         @default(true)
-  igstEnabled        Boolean         @default(true)
-  invoicePrefix      String          @default("INV")
-  invoiceFY          String
-  nextInvoiceNo      Int             @default(1)
-  terms              String?
-  logoUrl            String?
-  themeColor         String          @default("red")
+  showUpiQr           Boolean         @default(false)
+  showGpayNumber      Boolean         @default(false)
+  cgstRate            Decimal         @default(9)
+  sgstRate            Decimal         @default(9)
+  igstRate            Decimal         @default(18)
+  cgstEnabled         Boolean         @default(true)
+  sgstEnabled         Boolean         @default(true)
+  igstEnabled         Boolean         @default(true)
+  invoicePrefix       String          @default("INV")
+  invoiceFY           String
+  nextInvoiceNo       Int             @default(1)
+  terms               String?
+  logoUrl             String?
+  themeColor          String          @default("red")
   // Symbol-only — what prints on invoices/amounts (fmtInr in src/lib/gst.ts).
   // GST math (CGST/SGST/IGST) always stays India-specific regardless of this.
-  currency           String          @default("INR")
+  currency            String          @default("INR")
   // PDF-handling toggles — what shows on the generated invoice PDF, read by
   // both invoice-sheet.tsx (MODERN) and invoice-sheet-classic.tsx (CLASSIC).
-  pdfShowBankDetails Boolean         @default(true)
+  pdfShowBankDetails  Boolean         @default(true)
   // Per-HSN-code tax breakdown table (CLASSIC only) — off by default since
   // most businesses don't need this granularity on the printed invoice;
   // the calculation (computeHsnSummary in src/lib/gst.ts) stays available.
-  pdfShowHsnSummary  Boolean         @default(false)
+  pdfShowHsnSummary   Boolean         @default(false)
+  // Whether the PDF prints discounts. Off only hides them — totals are
+  // still worked out with every discount, and the printed rates/amounts
+  // already have the hidden discount taken off so each row still adds up.
+  pdfShowItemDiscount Boolean         @default(true)
+  pdfShowBillDiscount Boolean         @default(true)
   // Fallback HSN/SAC code used whenever a line item has neither its own nor
   // its product's own HSN set — replaces src/lib/gst.ts's old hardcoded
   // '21050000' constant with a per-company value, since not every business
   // on this app sells edible ice. A product's own Product.hsn (or a line's
   // own override) always wins over this; this only fills the gap when
   // neither is set.
-  defaultHsn         String          @default("21050000")
-  createdAt          DateTime        @default(now())
+  defaultHsn          String          @default("21050000")
+  createdAt           DateTime        @default(now())
   // GST-compliance seller details — needed to render/generate a CLASSIC
   // (Tally-style) invoice and to populate SellerDtls in the e-Invoice/e-Way
   // Bill NIC API payloads.
-  fssaiNo            String?
-  pincode            String?
-  invoiceTemplate    InvoiceTemplate @default(MODERN)
+  fssaiNo             String?
+  pincode             String?
+  invoiceTemplate     InvoiceTemplate @default(MODERN)
   // Printed on the CLASSIC template's Authorised Signatory row — optional,
   // so it stays blank (for physical signing) until the owner sets these.
-  signatoryName      String?
-  signatureUrl       String?
+  signatoryName       String?
+  signatureUrl        String?
   // NIC e-Invoice / e-Way Bill sandbox (or production) API credentials —
   // GST filing happens under this company's own GSTIN. Password/secret are encrypted at rest via src/lib/secret.ts, never the
   // raw value — see src/actions/company.ts.
-  nicSandbox         Boolean         @default(true)
-  nicUsername        String?
-  nicPasswordEnc     String?
-  nicClientId        String?
-  nicClientSecretEnc String?
+  nicSandbox          Boolean         @default(true)
+  nicUsername         String?
+  nicPasswordEnc      String?
+  nicClientId         String?
+  nicClientSecretEnc  String?
   // Bumped on every profile/branding/template change — part of each stored
   // invoice PDF's cache key (see src/lib/invoice-pdf.ts), so a new logo or
   // template makes every cached PDF stale without touching the invoices.
-  updatedAt          DateTime        @default(now()) @updatedAt
+  updatedAt           DateTime        @default(now()) @updatedAt
   // Credit notes and payment receipts get their own sequential numbers,
   // claimed the same way as invoice numbers (claimInvoiceNumber).
-  creditNotePrefix   String          @default("CN")
-  nextCreditNoteNo   Int             @default(1)
-  receiptPrefix      String          @default("RCPT")
-  nextReceiptNo      Int             @default(1)
+  creditNotePrefix    String          @default("CN")
+  nextCreditNoteNo    Int             @default(1)
+  receiptPrefix       String          @default("RCPT")
+  nextReceiptNo       Int             @default(1)
   // Inventory tuning — how many days of sales a reorder should cover, and
   // how far ahead a batch's expiry date starts showing as "expiring soon".
-  reorderLeadDays    Int             @default(7)
-  expiryAlertDays    Int             @default(30)
+  reorderLeadDays     Int             @default(7)
+  expiryAlertDays     Int             @default(30)
   // Ledger names the Tally XML export posts to — must match the ledgers in
   // the accountant's Tally company. Null = the defaults in src/lib/tally.ts.
-  tallyLedgers       Json?
+  tallyLedgers        Json?
 }
 
 /// A login for the company — created only by `npm run setup` (there is no
@@ -175,6 +180,9 @@ model Product {
   // a secondary unit of measure.
   altUnit       String?
   altQtyPerUnit Decimal?
+  // Default line discount % — a new invoice line for this product starts
+  // at it (still editable per line). 0 = no discount.
+  discount      Decimal            @default(0)
   invoiceItems  InvoiceItem[]
   // Additional unit+price pricing options for this same product (e.g. sold
   // as a Box at one price with a minimum order quantity, and as a loose

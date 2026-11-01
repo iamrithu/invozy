@@ -11,8 +11,8 @@ import { gstStateCode } from '@/lib/gst-state-codes';
 // (row separators inside tables use the same 1px in a lighter grey), never
 // two borders meeting (every section draws only its *top* edge, so nothing
 // stacks into a 2–3px line), ONE font weight and family (enforced by
-// `.invoice-clean` in globals.css) — the company name alone is bold
-// (CLEAN_STRONG) — hierarchy otherwise by size alone: 20 · 14 · 12 · 11 ·
+// `.invoice-clean` in globals.css) — only the company name and invoice
+// number are bold (CLEAN_STRONG) — hierarchy otherwise by size alone: 20 · 14 · 12 · 11 ·
 // 10.5 · 9px.
 // ---------------------------------------------------------------------------
 
@@ -25,7 +25,7 @@ export const CLEAN_FILL = 'bg-[#f3f4f6]';
 /** Secondary text. `clean-soft` (not a text-colour utility) so it survives
  * the force-black rule invoice sheets get in print — see globals.css. */
 export const CLEAN_SOFT = 'clean-soft';
-/** The one bold piece of text on a CLEAN sheet: the company name. A class
+/** The bold text on a CLEAN sheet: the company name and invoice number. A class
  * (see globals.css), since `.invoice-clean` overrides every font-weight
  * utility. */
 export const CLEAN_STRONG = 'clean-strong';
@@ -91,7 +91,7 @@ export type CleanHeaderProps = {
   placeOfSupply?: string | null;
   /** Overrides the default Invoice No. / date / due / place-of-supply cells
    * (e.g. a credit note's own reference fields). */
-  meta?: { label: string; value: string }[];
+  meta?: { label: string; value: string; strong?: boolean }[];
   /** Payment UPI QR, top-right, the same 88px as the logo. */
   upiQrDataUrl?: string | null;
   /** The company's GPay number — printed right under the UPI QR (or alone
@@ -137,10 +137,10 @@ export function CleanHeader({
     contact && `Contact: ${contact}`,
     company.email && `Email: ${company.email}`,
   ].filter((l): l is string => !!l);
-  const cells = meta ?? [
+  const cells: { label: string; value: string; strong?: boolean }[] = meta ?? [
     // No number exists yet for a brand-new, unsaved invoice — it's claimed
     // from the sequence on save — hence the dash rather than "Draft".
-    { label: 'Invoice No.', value: invoiceNumber ?? '—' },
+    { label: 'Invoice No.', value: invoiceNumber ?? '—', strong: true },
     { label: 'Invoice date', value: formatInvoiceDate(date) },
     ...(due ? [{ label: 'Due date', value: formatInvoiceDate(due) }] : []),
     { label: 'Place of supply', value: placeOfSupply ? `${placeOfSupply} (${gstStateCode(placeOfSupply)})` : '—' },
@@ -200,7 +200,7 @@ export function CleanHeader({
         {cells.map((c, i) => (
           <div key={c.label} className={`grid gap-px px-2.5 py-1.5 ${i > 0 ? `border-l ${CLEAN_RULE}` : ''}`}>
             <span className={CLEAN_LABEL}>{c.label}</span>
-            <span className="text-[11px]">{c.value}</span>
+            <span className={`text-[11px] ${c.strong ? CLEAN_STRONG : ''}`}>{c.value}</span>
           </div>
         ))}
       </div>

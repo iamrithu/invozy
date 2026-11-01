@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Package, Ruler, FileText, Eye, EyeOff, Trash2, Check, Sparkles, Hash, Plus, Tag, ImagePlus, Boxes, History } from 'lucide-react';
+import { Package, Ruler, FileText, Eye, EyeOff, Trash2, Check, Sparkles, Hash, Plus, Tag, ImagePlus, Boxes, History, Percent } from 'lucide-react';
 import { toast } from 'sonner';
 import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
@@ -35,6 +35,7 @@ type Product = {
   trackStock?: boolean;
   stockQty?: string | number;
   lowStockAt?: string | number | null;
+  discount?: string | number;
 };
 
 type TierRow = { unit: string; price: string; approxQty: string };
@@ -377,6 +378,27 @@ export function ProductFormDialog({
                   <Plus size={13} /> Add another pricing option
                 </button>
                 {fieldErrors.tiers && <p className="mt-1.5 text-[11px] font-semibold text-destructive">{fieldErrors.tiers}</p>}
+                <div className="mt-4 sm:max-w-[50%]">
+                  <label htmlFor="product-discount" className="mb-1 flex items-center gap-1.5 text-[11px] font-bold text-ink-faint">
+                    <Percent size={12} className="flex-shrink-0" /> Discount % (optional)
+                  </label>
+                  <input
+                    id="product-discount"
+                    name="discount"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="any"
+                    inputMode="decimal"
+                    placeholder="0"
+                    defaultValue={product && Number(product.discount) > 0 ? String(Number(product.discount)) : ''}
+                    className={`w-full rounded-sm2 border bg-surface px-2.5 py-2 font-mono text-[13px] text-ink outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+                      fieldErrors.discount ? 'border-destructive' : 'border-line'
+                    }`}
+                  />
+                  {fieldErrors.discount && <p className="mt-1 text-[11px] font-semibold text-destructive">{fieldErrors.discount}</p>}
+                  <p className="mt-1 text-[11px] text-ink-faint">Each new invoice line for this product starts at this discount — you can still change it on the invoice.</p>
+                </div>
               </section>
 
               <StockSection

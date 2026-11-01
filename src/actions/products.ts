@@ -22,6 +22,8 @@ const ProductSchema = z.object({
   hsn: z.string().optional().nullable(),
   altUnit: z.string().optional().nullable(),
   altQtyPerUnit: z.coerce.number().min(0).optional().nullable(),
+  // Default line discount % — blank means none.
+  discount: z.coerce.number().min(0, 'Discount can’t be negative').max(100, 'Discount can’t be over 100%').optional(),
 });
 
 /** Additional unit+price pricing options for the same product (e.g. sold as

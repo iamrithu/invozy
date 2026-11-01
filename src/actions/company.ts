@@ -54,6 +54,9 @@ const CompanySchema = z.object({
   currency: z.string().min(1).optional(),
   pdfShowBankDetails: z.coerce.boolean().optional(),
   pdfShowHsnSummary: z.coerce.boolean().optional(),
+  // Display only — see schema.prisma's comment on Company.pdfShowItemDiscount.
+  pdfShowItemDiscount: z.coerce.boolean().optional(),
+  pdfShowBillDiscount: z.coerce.boolean().optional(),
   // See schema.prisma's comment on Company.defaultHsn.
   defaultHsn: z.string().trim().min(1, 'Required').optional(),
   // See schema.prisma's comment on Company.showUpiQr/showGpayNumber —
@@ -81,7 +84,18 @@ export async function getCompanyProfile() {
   return toPublicCompany(await getCompany());
 }
 
-const SWITCHES = ['cgstEnabled', 'sgstEnabled', 'igstEnabled', 'nicSandbox', 'pdfShowBankDetails', 'pdfShowHsnSummary', 'showUpiQr', 'showGpayNumber'] as const;
+const SWITCHES = [
+  'cgstEnabled',
+  'sgstEnabled',
+  'igstEnabled',
+  'nicSandbox',
+  'pdfShowBankDetails',
+  'pdfShowHsnSummary',
+  'pdfShowItemDiscount',
+  'pdfShowBillDiscount',
+  'showUpiQr',
+  'showGpayNumber',
+] as const;
 
 type CompanyField = keyof typeof CompanySchema.shape;
 
