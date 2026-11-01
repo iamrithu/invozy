@@ -1,9 +1,11 @@
-import type { Company } from '@prisma/client';
+import type { PublicCompany } from './company-form';
 import { Building2, Phone, Mail, MapPin, IdCard, Percent, Landmark, Hash, AlertTriangle } from 'lucide-react';
 import { ZoomableImage } from '@/components/ui/image-lightbox';
 import { isThemePresetKey, THEME_PRESETS, themePreviewColor, type ThemePresetKey } from '@/lib/theme-presets';
 
-export function CompanyView({ company: co }: { company: Company }) {
+const TEMPLATE_LABEL: Record<PublicCompany['invoiceTemplate'], string> = { MODERN: 'Modern', CLASSIC: 'Classic', CLEAN: 'Clean' };
+
+export function CompanyView({ company: co }: { company: PublicCompany }) {
   const themeLabel = isThemePresetKey(co.themeColor) ? THEME_PRESETS[co.themeColor as ThemePresetKey].label : 'Custom';
   const profileIncomplete = !co.gstin || !co.bankAcc;
 
@@ -80,8 +82,9 @@ export function CompanyView({ company: co }: { company: Company }) {
         {co.upi && <InfoRow k="UPI" v={co.upi} mono />}
       </InfoCard>
 
-      <InfoCard icon={<Hash size={13} />} title="Invoice numbering" className="lg:col-span-5">
+      <InfoCard icon={<Hash size={13} />} title="Invoices" className="lg:col-span-5">
         <InfoRow k="Next invoice" v={`${co.invoicePrefix}/${co.invoiceFY}/${String(co.nextInvoiceNo).padStart(4, '0')}`} mono />
+        <InfoRow k="Template" v={TEMPLATE_LABEL[co.invoiceTemplate]} />
       </InfoCard>
     </div>
   );

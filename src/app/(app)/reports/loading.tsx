@@ -2,7 +2,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 
 // Next.js wraps this in a Suspense boundary at the route level automatically
 // — no client-side Suspense/query changes needed. Mirrors page.tsx's layout
-// (5 stat cards, a two-column chart row, a top-customers table) so there's
+// (5 stat cards, two two-column card rows, a top-customers table) so there's
 // no layout shift once the real data replaces it.
 export default function ReportsLoading() {
   return (
@@ -35,6 +35,32 @@ export default function ReportsLoading() {
               <Skeleton className="h-3 w-full" />
               <Skeleton className="h-3 w-full" />
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* GST summary + profit estimate row. */}
+      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[7fr_5fr]">
+        <div className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
+          <Skeleton className="mb-3 h-3.5 w-32" />
+          <Skeleton className="mb-3 h-9 w-full" />
+          <div className="space-y-2">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-3 w-full" />
+            ))}
+          </div>
+        </div>
+        <div className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
+          <Skeleton className="mb-3 h-3.5 w-32" />
+          <div className="grid grid-cols-3 gap-2">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-[46px] w-full" />
+            ))}
+          </div>
+          <div className="mt-3 space-y-2.5">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-4 w-full" />
+            ))}
           </div>
         </div>
       </div>

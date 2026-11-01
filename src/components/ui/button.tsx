@@ -16,11 +16,12 @@ const buttonVariants = cva(
         ghost: 'text-ink-soft hover:bg-surface-alt hover:text-ink',
         link: 'text-primary underline-offset-4 hover:underline',
       },
+      // A step smaller on phones (below sm) so action rows fit the width.
       size: {
-        default: 'h-9 px-4 py-2',
+        default: 'h-8 px-3 py-1.5 text-[12.5px] sm:h-9 sm:px-4 sm:py-2 sm:text-[13px]',
         sm: 'h-8 rounded-sm2 px-3 text-[12.5px]',
-        lg: 'h-10 rounded-sm2 px-6',
-        icon: 'h-9 w-9 rounded-sm2',
+        lg: 'h-9 rounded-sm2 px-5 sm:h-10 sm:px-6',
+        icon: 'h-8 w-8 rounded-sm2 sm:h-9 sm:w-9',
       },
     },
     defaultVariants: {

@@ -2,21 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Search,
   Plus,
   Minus,
-  Trash2,
   ArrowLeft,
   Eye,
   FileText,
   CheckCircle2,
   ShoppingCart,
-  ArrowRight,
-  Share2,
-  Printer,
-  Mail,
-  MessageCircle,
   Pencil,
   Package,
   Users,
@@ -39,37 +35,62 @@ import {
   RotateCcw,
   Check,
   Truck,
+  Download,
+  MoreHorizontal,
+  ChevronDown,
+  MessageCircle,
+  Copy,
+  Trash2,
+  Gift,
+  ReceiptText,
+  FileMinus,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { searchCustomersForBilling, getCustomerLedger } from '@/actions/customers';
-import { createInvoice, updateInvoice } from '@/actions/invoices';
+import { createInvoice, updateInvoice, type InvoiceInput } from '@/actions/invoices';
+import { listCustomersForBilling, getCustomerBalance } from '@/actions/billing';
 import { updateCompanyGstDefaults } from '@/actions/company';
 import { frequentProductIdsForCustomer } from '@/actions/products';
+import { getCustomerPriceMap, listActiveSchemes } from '@/actions/pricing';
+import { getOldestBatches } from '@/actions/inventory';
 import { useCreateCustomer } from '@/hooks/use-customers';
 import { useCreateProduct } from '@/hooks/use-products';
+import { useDeleteInvoice, useDeletePayment, useDuplicateInvoice, useWhatsAppShare } from '@/hooks/use-invoices';
+import { invalidateBusinessData } from '@/hooks/use-invalidate';
 import { computeTotals, fmtInr, formatUnit, type LineInput } from '@/lib/gst';
 import { upiQrDataUrl } from '@/lib/qr';
-import { numberToWords } from '@/lib/number-to-words';
+import { todayIst } from '@/lib/dates';
+import { formatStock, round6, unitFactor } from '@/lib/stock-units';
+import { isGstLayout, type InvoiceTemplateName } from '@/lib/invoice-template';
+import type { EditorInvoice } from '@/lib/invoice-editor-data';
 import { CustomerFormDialog } from '@/components/customers/customer-form-dialog';
 import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetIcon, SheetBody, SheetFooter, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
 import { StateSelect } from '@/components/ui/location-field';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Pagination } from '@/components/ui/pagination';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { StatusBadge } from '@/components/ui/status-badge';
 import { InvoiceSheet } from '@/components/invoices/invoice-sheet';
 import { InvoiceSheetClassic } from '@/components/invoices/invoice-sheet-classic';
 import { InvoiceCompletenessChecklist } from '@/components/invoices/invoice-completeness-checklist';
 import { ResponsiveSheetScale } from '@/components/invoices/responsive-sheet-scale';
+import { RecordPaymentDialog } from '@/components/invoices/record-payment-dialog';
+import { GenerateEinvoiceButton } from '@/components/invoices/compliance/generate-einvoice-button';
+import { GenerateEwaybillButton } from '@/components/invoices/compliance/generate-ewaybill-button';
+import { ActivityTimeline } from '@/components/activity/activity-timeline';
+import { useCurrentUser } from '@/components/current-user';
+import { PdfDownloadButton } from '@/components/print/pdf-download-button';
+import { pdfFileName } from '@/components/print/format';
 import { hashColor, initials } from '@/lib/avatar';
 import { customerDisplayName } from '@/lib/customer';
 import { UNITS } from '@/lib/units';
 import { PAPER_STYLE } from '@/lib/paper-theme';
-import { StatusBadge } from '@/components/ui/status-badge';
 
 type PriceTier = { id?: string; unit: string; price: string | number; approxQty: string | number | null };
 type Product = {
@@ -83,12 +104,14 @@ type Product = {
   altUnit?: string | null;
   altQtyPerUnit?: string | number | null;
   priceTiers?: PriceTier[];
+  trackStock?: boolean;
+  stockQty?: string | number;
+  lowStockAt?: string | number | null;
 };
 
 /** Every pricing option for a product, oldest-field-compatible: falls back
  * to a single synthetic tier built from unit/price/packQty if a product
- * somehow has none (shouldn't happen once the backfill migration has run,
- * but keeps this screen working regardless). */
+ * somehow has none. */
 function tiersFor(p: Product): PriceTier[] {
   if (p.priceTiers && p.priceTiers.length > 0) return p.priceTiers;
   return [{ unit: p.unit, price: p.price, approxQty: p.packQty ?? null }];
@@ -116,7 +139,7 @@ type Company = {
   pdfShowBankDetails: boolean;
   pdfShowHsnSummary: boolean;
   defaultHsn: string;
-  invoiceTemplate: 'MODERN' | 'CLASSIC';
+  invoiceTemplate: InvoiceTemplateName;
   fssaiNo?: string | null;
   pincode?: string | null;
   pan?: string | null;
@@ -125,6 +148,7 @@ type Company = {
   email?: string | null;
   signatoryName?: string | null;
   signatureUrl?: string | null;
+  nicUsername?: string | null;
 };
 type Customer = {
   id: string;
@@ -145,6 +169,9 @@ type Customer = {
 // productId is null for an ad-hoc/custom line item not backed by a catalog
 // Product — lineId (stable, client-generated) is the real key everywhere
 // since multiple custom lines would otherwise collide on a shared `null`.
+// `free` marks the zero-rate line an offer ("buy 10, get 1 free") adds; it
+// shares its product+unit with the paid line, so lookups that find "the"
+// line for a product+unit skip it.
 type Line = {
   lineId: string;
   productId: string | null;
@@ -158,7 +185,11 @@ type Line = {
   batch?: string | null;
   altUnit?: string | null;
   altQtyPerUnit?: number | null;
+  stockQty?: number | null;
+  free?: boolean;
 };
+
+type Scheme = { id: string; productId: string; unit: string; buyQty: number; freeQty: number; name: string | null };
 
 const CATEGORY_TILE: Record<string, string> = {
   'Block ice': 'bg-chrome text-white',
@@ -173,50 +204,12 @@ const CATEGORY_ICON: Record<string, React.ComponentType<{ size?: number }>> = {
   'Dry ice': CloudFog,
 };
 
-// Recovery-only local draft — the invoice itself is never persisted until
-// it's actually saved server-side; this just survives an accidental
-// refresh/close of this one tab.
+// Recovery-only local draft for a brand-new invoice — survives an accidental
+// refresh/close of the tab until it's actually saved.
 const DRAFT_KEY = 'invozy_invoice_draft';
 
-// Pre-fill shape for editing an existing invoice in place, any time up to
-// (not including) PAID (see src/app/(app)/invoices/new/page.tsx's
-// `?edit=<id>` handling) — everything the builder needs to resume it as if
-// it were being built for the first time, plus the id/number/status so
-// save() knows to update rather than create and the header badge reflects
-// the invoice's real current state rather than always saying "Draft".
-type EditInvoice = {
-  id: string;
-  number: string;
-  status: 'DRAFT' | 'SENT' | 'PARTIALLY_PAID' | 'PAID';
-  customer: Customer;
-  date: string;
-  due: string;
-  overallDiscountType: 'PERCENT' | 'FLAT';
-  overallDiscountValue: number;
-  notes: string;
-  deliveryInstructions: string;
-  showTransportDetails: boolean;
-  transportVehicleNo: string;
-  transportDriverName: string;
-  transportDriverPhone: string;
-  lines: Line[];
-  // The invoice's own frozen NIC e-Invoice IRN, if one has been filed — once
-  // set, GST settings are locked (see the Settings sheet below) since NIC
-  // has no amend API for a filed e-Invoice's tax amounts.
-  irn?: string | null;
-  // The invoice's own frozen GST snapshot — see schema.prisma's
-  // Invoice.cgstRate comment for why this is never re-derived from Company.
-  cgstRate: number;
-  sgstRate: number;
-  igstRate: number;
-  cgstEnabled: boolean;
-  sgstEnabled: boolean;
-  igstEnabled: boolean;
-  showBankDetails: boolean;
-  showHsnSummary: boolean;
-  showUpiQr: boolean;
-  showGpayNumber: boolean;
-};
+const sameUnit = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+const clampPct = (v: number) => Math.min(Math.max(Number.isFinite(v) ? v : 0, 0), 100);
 
 function categoryTile(cat: string) {
   return CATEGORY_TILE[cat] ?? 'bg-surface-alt text-ink-soft';
@@ -226,54 +219,64 @@ function CategoryIcon({ category, size = 15 }: { category: string; size?: number
   return <Icon size={size} />;
 }
 
-export function BuilderClient({ products, company, editInvoice }: { products: Product[]; company: Company; editInvoice?: EditInvoice | null }) {
+type SaveMode = 'draft' | 'send' | 'keep' | 'paid';
+
+export function BuilderClient({
+  products,
+  company,
+  editInvoice,
+  initialMode = 'edit',
+}: {
+  products: Product[];
+  company: Company;
+  editInvoice?: EditorInvoice | null;
+  initialMode?: 'edit' | 'preview';
+}) {
   const router = useRouter();
-  const [customer, setCustomer] = useState<Customer | null>(editInvoice?.customer ?? null);
+  const queryClient = useQueryClient();
+  // Deletes are owner-only on the server; staff don't see the buttons.
+  const { isOwner } = useCurrentUser();
+  const [mode, setMode] = useState<'edit' | 'preview'>(initialMode);
+  const [customer, setCustomer] = useState<Customer | null>((editInvoice?.customer as Customer) ?? null);
   const [custQuery, setCustQuery] = useState('');
-  const [custResults, setCustResults] = useState<Customer[]>([]);
-  const [custLoading, setCustLoading] = useState(false);
+  const [custCursor, setCustCursor] = useState(0);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showCustomItemForm, setShowCustomItemForm] = useState(false);
   const [lines, setLines] = useState<Line[]>(editInvoice?.lines ?? []);
   const [productQuery, setProductQuery] = useState('');
   const [frequentIds, setFrequentIds] = useState<string[]>([]);
+  // Bill-level discount, applied after every line's own Disc %. Its own
+  // labelled field in the left pane — never mixed with the per-line % (the
+  // old "apply this % to every line" checkbox that switched between the two
+  // was the source of the 500%-discount and double-discount bugs).
   const [discountType, setDiscountType] = useState<'PERCENT' | 'FLAT'>(editInvoice?.overallDiscountType ?? 'PERCENT');
   const [discountValue, setDiscountValue] = useState(editInvoice?.overallDiscountValue ?? 0);
-  // When true, the % typed above broadcasts to every line's own `discount`
-  // field (so it prints per-item) instead of being one reduction applied
-  // once at invoice level — the two are mutually exclusive: computeTotals
-  // below is fed a zeroed-out overall discount whenever this is on, since
-  // the reduction is already fully baked into each line's own subtotal.
-  const [applyDiscountPerItem, setApplyDiscountPerItem] = useState(false);
+  // "Set every item to __%" — a one-shot action, not a mode. Remembered so
+  // items added afterwards start at the same %.
+  const [setAllPct, setSetAllPct] = useState(() => {
+    const ds = (editInvoice?.lines ?? []).filter((l) => !l.free).map((l) => l.discount);
+    return ds.length && ds.every((d) => d === ds[0]) && ds[0] > 0 ? String(ds[0]) : '';
+  });
+  const [newLineDiscount, setNewLineDiscount] = useState(0);
   const [notes, setNotes] = useState(editInvoice?.notes ?? '');
   const [deliveryInstructions, setDeliveryInstructions] = useState(editInvoice?.deliveryInstructions ?? '');
   const [showTransportDetails, setShowTransportDetails] = useState(editInvoice?.showTransportDetails ?? false);
   const [transportVehicleNo, setTransportVehicleNo] = useState(editInvoice?.transportVehicleNo ?? '');
   const [transportDriverName, setTransportDriverName] = useState(editInvoice?.transportDriverName ?? '');
   const [transportDriverPhone, setTransportDriverPhone] = useState(editInvoice?.transportDriverPhone ?? '');
-  const [date, setDate] = useState(() => editInvoice?.date ?? new Date().toISOString().slice(0, 10));
-  const [due, setDue] = useState(() => editInvoice?.due ?? new Date().toISOString().slice(0, 10));
+  // India-time "today" — the old UTC date was yesterday's before 5:30 AM IST.
+  const [date, setDate] = useState(() => editInvoice?.date ?? todayIst());
+  const [due, setDue] = useState(() => editInvoice?.due ?? todayIst());
   const [saving, startSaving] = useTransition();
-  // The id of the DRAFT row backing "Download / print" (see downloadPdf
-  // below) — starts as editInvoice's own id when editing an existing draft,
-  // stays null for a brand-new invoice until the first PDF download claims
-  // one. Kept distinct from actually clicking Save: the user can preview a
-  // PDF repeatedly while still editing without that creating a fresh draft
-  // (and a fresh invoice number) on every click — only the first click
-  // claims one; every click after that updates the same row in place.
-  const [draftInvoiceId, setDraftInvoiceId] = useState<string | null>(editInvoice?.id ?? null);
-  const [downloadingPdf, startDownloadingPdf] = useTransition();
   const [error, setError] = useState<string | undefined>();
   const [outstandingElsewhere, setOutstandingElsewhere] = useState(0);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [shareOpen, setShareOpen] = useState(false);
   const [editCustomerOpen, setEditCustomerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // Per-invoice GST/section-visibility override — pre-filled from the
-  // invoice's own already-stored snapshot when editing (never silently
-  // reset to Company's current live values just because something else is
-  // being edited), or from Company's current defaults when creating new.
-  // See schema.prisma's Invoice.cgstRate comment for the bug this fixes.
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  // Owner's "save anyway" when stock is short: the save it confirms.
+  const [forceSaveMode, setForceSaveMode] = useState<SaveMode | null>(null);
   const [gstSettings, setGstSettings] = useState(() => ({
     cgstRate: editInvoice ? editInvoice.cgstRate : Number(company.cgstRate),
     sgstRate: editInvoice ? editInvoice.sgstRate : Number(company.sgstRate),
@@ -287,24 +290,13 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
     showGpayNumber: editInvoice ? editInvoice.showGpayNumber : company.showGpayNumber,
   }));
   // Once an e-Invoice IRN is filed, its tax amounts are locked with NIC (no
-  // amend API, only cancel-within-24h) — the settings sheet goes read-only
-  // so a later edit here can't desync from what was actually filed. The
-  // server enforces this independently too (updateInvoice ignores GST-field
-  // changes once existing.irn is set), this is just the matching UI state.
+  // amend API, only cancel-within-24h) — the settings sheet goes read-only.
+  // The server enforces this independently too.
   const gstLocked = !!editInvoice?.irn;
-  // The Settings sheet edits this draft, not `gstSettings` itself — nothing
-  // takes effect (the live preview, the save payload) until "Apply" commits
-  // it. Re-synced from `gstSettings` every time the sheet opens, so it
-  // always starts from whatever's currently applied, not last time's
-  // abandoned edits.
   const [draftSettings, setDraftSettings] = useState(gstSettings);
   useEffect(() => {
     if (settingsOpen) setDraftSettings(gstSettings);
   }, [settingsOpen, gstSettings]);
-  // What "Reset to company defaults" resets the draft to — starts as
-  // Company's own current values, and is kept in sync locally after a
-  // successful "Save as company default" (see below) so Reset immediately
-  // reflects it without needing a full page reload.
   const [companyDefaults, setCompanyDefaults] = useState({
     cgstRate: Number(company.cgstRate),
     sgstRate: Number(company.sgstRate),
@@ -319,11 +311,17 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
   });
   const [savingToCompany, startSavingToCompany] = useTransition();
   const hydratedDraftRef = useRef(false);
+  const deleteInvoice = useDeleteInvoice();
+  const duplicateInvoice = useDuplicateInvoice();
+  const deletePayment = useDeletePayment();
+  const whatsApp = useWhatsAppShare();
 
-  // Live-preview-only UPI QR — the `qrcode` package's toDataURL runs fine in
-  // the browser too, so the preview can show the real thing instead of a
-  // placeholder. The saved/PDF path generates its own copy server-side
-  // (src/app/(app)/invoices/[id]/page.tsx) rather than trusting this value.
+  const isGst = isGstLayout(company.invoiceTemplate);
+  const savedId = editInvoice?.id ?? null;
+  const status = editInvoice?.status ?? 'DRAFT';
+  const balanceDue = editInvoice ? Math.max(editInvoice.total - editInvoice.amountPaid, 0) : 0;
+
+  // Live-preview-only UPI QR — the saved PDF generates its own server-side.
   const [upiQrPreview, setUpiQrPreview] = useState<string | null>(null);
   useEffect(() => {
     if (!gstSettings.showUpiQr || !company.upi) {
@@ -338,15 +336,10 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
       cancelled = true;
     };
   }, [gstSettings.showUpiQr, company.upi, company.name]);
-
-  // Live-preview-only GPay number, mirroring the QR preview above — plain
-  // string, no async encoding needed.
   const gpayNumberPreview = gstSettings.showGpayNumber ? company.phone || company.altPhone || null : null;
 
-  // Restore an unsaved draft left over from a refresh/accidental close, once
-  // — never when editing an existing DRAFT invoice, since that's already
-  // hydrated from the server and this localStorage draft is for an unrelated
-  // "new invoice" attempt (overwriting it here would lose that instead).
+  // Restore an unsaved new-invoice draft left over from a refresh/accidental
+  // close, once — never when editing a saved invoice.
   useEffect(() => {
     if (editInvoice) {
       hydratedDraftRef.current = true;
@@ -359,8 +352,11 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
         if (draft && ((draft.lines?.length ?? 0) > 0 || draft.customer)) {
           if (draft.customer) setCustomer(draft.customer);
           if (draft.lines) setLines(draft.lines);
+          // Drafts saved by the old builder may carry its "apply % to every
+          // line" flag; those lines already hold the %, so the bill-level
+          // value is dropped instead of being applied a second time.
           if (draft.discountType) setDiscountType(draft.discountType);
-          if (typeof draft.discountValue === 'number') setDiscountValue(draft.discountValue);
+          if (typeof draft.discountValue === 'number' && !draft.applyDiscountPerItem && draft.v === 2) setDiscountValue(draft.discountValue);
           if (draft.date) setDate(draft.date);
           if (draft.due) setDue(draft.due);
           if (typeof draft.notes === 'string') setNotes(draft.notes);
@@ -374,6 +370,10 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
                 setLines([]);
                 setDiscountType('PERCENT');
                 setDiscountValue(0);
+                setDate(todayIst());
+                setDue(todayIst());
+                setNotes('');
+                setDeliveryInstructions('');
               },
             },
           });
@@ -386,30 +386,45 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep the draft in sync so a refresh/accidental close never loses it.
   useEffect(() => {
     if (!hydratedDraftRef.current || editInvoice) return;
     try {
-      if (!customer && lines.length === 0) {
-        localStorage.removeItem(DRAFT_KEY);
-      } else {
-        localStorage.setItem(DRAFT_KEY, JSON.stringify({ customer, lines, discountType, discountValue, date, due, notes, deliveryInstructions }));
-      }
+      if (!customer && lines.length === 0) localStorage.removeItem(DRAFT_KEY);
+      else localStorage.setItem(DRAFT_KEY, JSON.stringify({ v: 2, customer, lines, discountType, discountValue, date, due, notes, deliveryInstructions }));
     } catch {
       // best-effort only
     }
-  }, [customer, lines, discountType, discountValue, date, due, notes, deliveryInstructions]);
+  }, [customer, lines, discountType, discountValue, date, due, notes, deliveryInstructions, editInvoice]);
 
-  useEffect(() => {
-    if (customer) return;
-    setCustLoading(true);
-    const t = setTimeout(() => {
-      searchCustomersForBilling(custQuery)
-        .then(setCustResults)
-        .finally(() => setCustLoading(false));
-    }, 200);
-    return () => clearTimeout(t);
-  }, [custQuery, customer]);
+  // Unsaved changes = the savable state differs from what was last loaded or
+  // saved. Decides whether Download PDF can stream the stored PDF instantly
+  // or must save first. A snapshot comparison rather than "did any effect
+  // fire", which would misfire under React's double-invoked dev effects.
+  const snapshot = JSON.stringify([customer?.id, lines, discountType, discountValue, date, due, notes, deliveryInstructions, showTransportDetails, transportVehicleNo, transportDriverName, transportDriverPhone, gstSettings]);
+  const [savedSnapshot, setSavedSnapshot] = useState(snapshot);
+  const dirty = !editInvoice || snapshot !== savedSnapshot;
+
+  // Bill To: the whole active directory, loaded once and filtered locally —
+  // instant, and no out-of-order search responses (see listCustomersForBilling).
+  const customersQuery = useQuery({ queryKey: ['customers', 'billing'], queryFn: () => listCustomersForBilling(), staleTime: 5 * 60_000 });
+  const customerMatches = useMemo(() => {
+    const all = (customersQuery.data ?? []) as Customer[];
+    const term = custQuery.trim().toLowerCase();
+    const digits = term.replace(/\D/g, '');
+    return all
+      .filter((c) => {
+        if (!term) return !c.guest;
+        return (
+          c.name.toLowerCase().includes(term) ||
+          (c.shopName ?? '').toLowerCase().includes(term) ||
+          (c.contact ?? '').toLowerCase().includes(term) ||
+          (digits.length >= 3 && ((c.phone ?? '').replace(/\D/g, '').includes(digits) || (c.altPhone ?? '').replace(/\D/g, '').includes(digits)))
+        );
+      })
+      .sort((a, b) => customerDisplayName(a).localeCompare(customerDisplayName(b)));
+  }, [customersQuery.data, custQuery]);
+  const directorySize = (customersQuery.data ?? []).filter((c) => !c.guest).length;
+  useEffect(() => setCustCursor(0), [custQuery]);
 
   useEffect(() => {
     if (!customer) {
@@ -417,60 +432,137 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
       setOutstandingElsewhere(0);
       return;
     }
-    frequentProductIdsForCustomer(customer.id).then(setFrequentIds);
-    getCustomerLedger(customer.id).then((l) => setOutstandingElsewhere(l.outstanding));
-  }, [customer]);
+    let cancelled = false;
+    frequentProductIdsForCustomer(customer.id)
+      .then((ids) => !cancelled && setFrequentIds(ids))
+      .catch(() => {});
+    // Leaves out this invoice itself — the old ledger figure counted it too.
+    getCustomerBalance(customer.id, savedId ?? undefined)
+      .then((r) => !cancelled && setOutstandingElsewhere(r.outstanding))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [customer, savedId]);
 
-  const filteredProducts = useMemo(() => {
-    const active = products.filter((p) => p.name.toLowerCase().includes(productQuery.toLowerCase()));
-    return active;
-  }, [products, productQuery]);
+  // Customer-specific prices replace the catalog price when a product is
+  // added for this customer; offers ("buy 10, get 1 free") are suggested in
+  // the left pane once a line qualifies.
+  const pricesQuery = useQuery({
+    queryKey: ['pricing', 'customer', customer?.id],
+    queryFn: () => getCustomerPriceMap(customer!.id),
+    enabled: !!customer,
+    staleTime: 60_000,
+  });
+  const specialPrices = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of pricesQuery.data ?? []) m.set(`${p.productId}|${p.unit.trim().toLowerCase()}`, Number(p.price));
+    return m;
+  }, [pricesQuery.data]);
+  const schemesQuery = useQuery({ queryKey: ['pricing', 'schemes'], queryFn: () => listActiveSchemes(), staleTime: 5 * 60_000 });
 
+  const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  // Oldest batch still on hand per tracked product — pre-filled on new
+  // lines so the oldest stock goes out first and the batch prints on the
+  // invoice (FSSAI traceability). One request for the whole catalog.
+  const trackedIds = useMemo(() => products.filter((p) => p.trackStock).map((p) => p.id), [products]);
+  const batchesQuery = useQuery({
+    queryKey: ['inventory', 'oldest-batches', trackedIds],
+    queryFn: () => getOldestBatches(trackedIds),
+    enabled: trackedIds.length > 0,
+    staleTime: 60_000,
+  });
+
+  const filteredProducts = useMemo(() => products.filter((p) => p.name.toLowerCase().includes(productQuery.toLowerCase())), [products, productQuery]);
   const frequentProducts = useMemo(() => {
     if (productQuery.trim() || frequentIds.length === 0) return [];
-    return frequentIds.map((id) => products.find((p) => p.id === id)).filter((p): p is Product => !!p);
-  }, [frequentIds, products, productQuery]);
+    return frequentIds.map((id) => productById.get(id)).filter((p): p is Product => !!p);
+  }, [frequentIds, productById, productQuery]);
+  // The frequent shortlist isn't repeated in the full list below it.
+  const listProducts = useMemo(() => {
+    if (!frequentProducts.length) return filteredProducts;
+    const shown = new Set(frequentProducts.map((p) => p.id));
+    return filteredProducts.filter((p) => !shown.has(p.id));
+  }, [filteredProducts, frequentProducts]);
 
-  // Real pagination (not an infinite scroll list) for the catalog picker —
-  // resets to page 1 whenever the search narrows/widens the result set.
-  // 20 rather than the old 6: this panel has no fixed/scroll-clamped height
-  // of its own (the whole builder page scrolls together), so a low count
-  // just meant more clicks through pagination pages for a normal-sized
-  // catalog instead of actually using the available page height.
   const PRODUCTS_PER_PAGE = 20;
   const [productPage, setProductPage] = useState(1);
   useEffect(() => setProductPage(1), [productQuery]);
-  const pagedProducts = useMemo(
-    () => filteredProducts.slice((productPage - 1) * PRODUCTS_PER_PAGE, productPage * PRODUCTS_PER_PAGE),
-    [filteredProducts, productPage]
-  );
+  const pagedProducts = useMemo(() => listProducts.slice((productPage - 1) * PRODUCTS_PER_PAGE, productPage * PRODUCTS_PER_PAGE), [listProducts, productPage]);
+
+  // ---- Stock --------------------------------------------------------------
+  // What this invoice had already taken out of stock when it was loaded —
+  // every saved invoice holds its lines, drafts included (except a draft
+  // saved before drafts took stock) — that stock is "ours" again while
+  // editing, so re-saving an unchanged invoice never reports a false shortage.
+  const alreadyTaken = useMemo(() => {
+    const m = new Map<string, number>();
+    if (!editInvoice?.stockTaken) return m;
+    for (const l of editInvoice.lines) {
+      if (!l.productId) continue;
+      const p = productById.get(l.productId);
+      const q = l.stockQty ?? (p ? l.qty * unitFactor(p, l.unit) : 0);
+      m.set(l.productId, round6((m.get(l.productId) ?? 0) + q));
+    }
+    return m;
+  }, [editInvoice, productById]);
+  const needed = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of lines) {
+      if (!l.productId) continue;
+      const p = productById.get(l.productId);
+      if (!p) continue;
+      m.set(l.productId, round6((m.get(l.productId) ?? 0) + l.qty * unitFactor(p, l.unit)));
+    }
+    return m;
+  }, [lines, productById]);
+  /** Main-unit stock still free for this invoice to use, or null when the
+   * product isn't tracked. */
+  function remainingFor(p: Product): number | null {
+    if (!p.trackStock) return null;
+    return round6(Number(p.stockQty ?? 0) + (alreadyTaken.get(p.id) ?? 0) - (needed.get(p.id) ?? 0));
+  }
+  const shortages = useMemo(() => {
+    const out: { name: string; have: string; need: string }[] = [];
+    for (const [id, need] of needed) {
+      const p = productById.get(id);
+      if (!p?.trackStock) continue;
+      const have = Number(p.stockQty ?? 0) + (alreadyTaken.get(id) ?? 0);
+      if (need > have + 1e-6) out.push({ name: p.name, have: formatStock(have, p), need: formatStock(need, p) });
+    }
+    return out;
+  }, [needed, alreadyTaken, productById]);
+  const blocked = shortages.length > 0;
+
+  // ---- Offers -------------------------------------------------------------
+  const offers = useMemo(() => {
+    const out: { scheme: Scheme; line: Line; eligible: number; given: number }[] = [];
+    for (const s of (schemesQuery.data ?? []) as Scheme[]) {
+      const line = lines.find((l) => !l.free && l.productId === s.productId && sameUnit(l.unit, s.unit));
+      if (!line || line.qty < Number(s.buyQty)) continue;
+      const eligible = Math.floor(line.qty / Number(s.buyQty)) * Number(s.freeQty);
+      const given = lines.find((l) => l.free && l.productId === s.productId && sameUnit(l.unit, s.unit))?.qty ?? 0;
+      out.push({ scheme: s, line, eligible, given });
+    }
+    return out;
+  }, [schemesQuery.data, lines]);
+  function applyOffer(o: { scheme: Scheme; line: Line; eligible: number }) {
+    setLines((prev) => {
+      const free = prev.find((l) => l.free && l.productId === o.scheme.productId && sameUnit(l.unit, o.scheme.unit));
+      if (free) return prev.map((l) => (l === free ? { ...l, qty: o.eligible } : l));
+      return [
+        ...prev,
+        { ...o.line, lineId: crypto.randomUUID(), name: `${o.line.name} (Free)`, qty: o.eligible, rate: 0, discount: 0, stockQty: null, free: true },
+      ];
+    });
+    toast.success(`Added ${o.eligible} free ${formatUnit(o.scheme.unit)}`);
+  }
 
   const totals = useMemo(() => {
     const lineInputs: LineInput[] = lines.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount }));
-    return computeTotals(
-      lineInputs,
-      // Per-item mode's reduction is already inside each line's own qty*rate
-      // math (see lineInputs above) — feeding the same % in here too would
-      // double-discount, so the "overall" side is forced to zero instead.
-      applyDiscountPerItem ? { type: 'PERCENT', value: 0 } : { type: discountType, value: discountValue },
-      {
-        cgstRate: gstSettings.cgstRate,
-        sgstRate: gstSettings.sgstRate,
-        igstRate: gstSettings.igstRate,
-        cgstEnabled: gstSettings.cgstEnabled,
-        sgstEnabled: gstSettings.sgstEnabled,
-        igstEnabled: gstSettings.igstEnabled,
-      },
-      company.state,
-      customer?.state ?? company.state
-    );
-  }, [lines, discountType, discountValue, applyDiscountPerItem, company.state, customer, gstSettings]);
+    return computeTotals(lineInputs, { type: discountType, value: discountValue }, gstSettings, company.state, customer?.state ?? company.state);
+  }, [lines, discountType, discountValue, company.state, customer, gstSettings]);
 
-  // Everywhere the live preview reads GST config or section-visibility, it
-  // reads this (the current override) instead of raw `company` — a single
-  // derived object so every InvoiceSheet/InvoiceSheetClassic render call
-  // site stays in sync with the Settings sheet without threading 8 separate
-  // props through each one.
   const previewCompany = useMemo(
     () => ({
       ...company,
@@ -486,25 +578,21 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
     [company, gstSettings]
   );
 
+  const grossAmount = lines.reduce((s, l) => s + l.qty * l.rate, 0);
   const lineDiscountTotal = lines.reduce((s, l) => s + l.qty * l.rate * (l.discount / 100), 0);
-  const totalSavings = lineDiscountTotal + totals.overallDiscountAmount;
   const totalUnits = lines.reduce((s, l) => s + l.qty, 0);
 
-  // A product can have multiple pricing tiers (e.g. "Box" at one price and a
-  // loose "Piece" at a plain price) — each becomes an independent line item,
-  // keyed by (productId, unit) so a box-line and a piece-line for the same
-  // product never collide and increment independently. See ProductPriceTier
-  // (prisma/schema.prisma). A tier's approxQty (e.g. "1 Box ≈ 40 Piece") is
-  // purely informational — never a purchase minimum — so every tier always
-  // starts at qty 1 here, regardless of approxQty.
+  // A product can have multiple pricing tiers (e.g. "Box" and a loose
+  // "Piece") — each becomes an independent line keyed by (productId, unit).
   function addProductTier(p: Product, tier: PriceTier) {
     const unit = tier.unit;
-    const rate = Number(tier.price);
+    const special = specialPrices.get(`${p.id}|${unit.trim().toLowerCase()}`);
+    const rate = special ?? Number(tier.price);
     setLines((prev) => {
-      const existing = prev.find((l) => l.productId === p.id && l.unit === unit);
+      const existing = prev.find((l) => !l.free && l.productId === p.id && l.unit === unit);
       if (existing) return prev.map((l) => (l === existing ? { ...l, qty: l.qty + 1 } : l));
       const isPrimary = unit === p.unit;
-      toast.success(`${p.name} added${isPrimary ? '' : ` (${formatUnit(unit)})`}`);
+      toast.success(`${p.name} added${isPrimary ? '' : ` (${formatUnit(unit)})`}${special != null ? ' at special price' : ''}`);
       return [
         ...prev,
         {
@@ -514,9 +602,11 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
           unit,
           qty: 1,
           rate,
-          discount: 0,
+          // New items start at the last "Set every item to __%" value.
+          discount: newLineDiscount,
           packQty: isPrimary ? p.packQty : null,
           hsn: p.hsn || company.defaultHsn,
+          batch: batchesQuery.data?.[p.id]?.batchNo ?? null,
           altUnit: isPrimary ? p.altUnit : null,
           altQtyPerUnit: isPrimary && p.altQtyPerUnit ? Number(p.altQtyPerUnit) : null,
         },
@@ -525,7 +615,7 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
   }
   function decrementProductTier(productId: string, unit: string) {
     setLines((prev) => {
-      const l = prev.find((x) => x.productId === productId && x.unit === unit);
+      const l = prev.find((x) => !x.free && x.productId === productId && x.unit === unit);
       if (!l) return prev;
       if (l.qty <= 1) return prev.filter((x) => x !== l);
       return prev.map((x) => (x === l ? { ...x, qty: x.qty - 1 } : x));
@@ -541,7 +631,7 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
         unit: data.unit,
         qty: data.qty,
         rate: data.rate,
-        discount: 0,
+        discount: newLineDiscount,
         packQty: data.packQty ?? null,
         hsn: company.defaultHsn,
       },
@@ -560,149 +650,163 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
     });
   }
   function updateLine(lineId: string, patch: Partial<Line>) {
-    setLines((prev) => prev.map((l) => (l.lineId === lineId ? { ...l, ...patch } : l)));
+    const safe = patch.discount !== undefined ? { ...patch, discount: clampPct(Number(patch.discount)) } : patch;
+    setLines((prev) => prev.map((l) => (l.lineId === lineId ? { ...l, ...safe } : l)));
   }
   function removeLine(lineId: string) {
     setLines((prev) => prev.filter((l) => l.lineId !== lineId));
   }
-  function changeDiscountValue(v: number) {
-    setDiscountValue(v);
-    // Per-item mode: the box's number IS every line's discount — keep them
-    // in lockstep on every keystroke instead of a separate "apply" step.
-    if (applyDiscountPerItem) setLines((prev) => prev.map((l) => ({ ...l, discount: v })));
+  function applyDiscountToAll() {
+    const raw = parseFloat(setAllPct);
+    const pct = clampPct(raw);
+    if (Number.isFinite(raw) && raw !== pct) toast.info(`Discounts are kept between 0 and 100% — set to ${pct}%`);
+    setSetAllPct(String(pct));
+    setNewLineDiscount(pct);
+    setLines((prev) => prev.map((l) => (l.free ? l : { ...l, discount: pct })));
+    if (lines.length) toast.success(`Every item set to ${pct}% discount`);
   }
-  function toggleApplyDiscountPerItem(checked: boolean) {
-    setApplyDiscountPerItem(checked);
-    if (checked) {
-      // Per-line discounts are percent-only — switch the box to match, and
-      // broadcast its current value to every line right away.
-      setDiscountType('PERCENT');
-      setLines((prev) => prev.map((l) => ({ ...l, discount: discountValue })));
-    } else {
-      // Back to a single overall reduction — clear what was broadcast so
-      // the two modes never silently combine into a double discount.
-      setLines((prev) => prev.map((l) => ({ ...l, discount: 0 })));
-    }
+  function changeBillDiscount(v: string) {
+    const n = Math.max(parseFloat(v) || 0, 0);
+    setDiscountValue(discountType === 'PERCENT' ? Math.min(n, 100) : n);
   }
 
-  function save(mode: 'draft' | 'sent' | 'paid') {
+  function buildPayload(saveMode: SaveMode, allowNegativeStock = false): InvoiceInput {
+    return {
+      customerId: customer!.id,
+      date,
+      due,
+      items: lines,
+      overallDiscountType: discountType,
+      overallDiscountValue: discountType === 'FLAT' ? Math.min(discountValue, grossAmount - lineDiscountTotal) : discountValue,
+      notes,
+      deliveryInstructions,
+      showTransportDetails,
+      transportVehicleNo,
+      transportDriverName,
+      transportDriverPhone,
+      // "keep" (plain Save) preserves the invoice's current sent-ness; the
+      // server derives the final status from payments either way.
+      markSent: saveMode === 'send' || saveMode === 'paid' || (saveMode === 'keep' && status !== 'DRAFT'),
+      markPaid: saveMode === 'paid',
+      allowNegativeStock,
+      ...gstSettings,
+    };
+  }
+
+  function validate(allowNegativeStock = false): boolean {
     if (!customer) {
       setError('Select a customer first');
       toast.error('Select a customer first');
-      return;
+      return false;
     }
     if (lines.length === 0) {
       setError('Add at least one product');
       toast.error('Add at least one product');
-      return;
+      return false;
+    }
+    // Every save takes stock, drafts included.
+    if (blocked && !allowNegativeStock) {
+      const msg = `Not enough stock for ${shortages.length === 1 ? shortages[0].name : `${shortages.length} items`} — reduce the quantity or add stock.`;
+      setError(msg);
+      toast.error(msg);
+      return false;
     }
     setError(undefined);
-    startSaving(async () => {
-      const payload = {
-        customerId: customer.id,
-        date,
-        due,
-        items: lines,
-        // Per-item mode already baked its % into every line's own discount
-        // (see toggleApplyDiscountPerItem/changeDiscountValue above) — the
-        // overall figure must persist as inert (0) or the server would
-        // recompute the same reduction a second time on top of that.
-        overallDiscountType: applyDiscountPerItem ? 'PERCENT' : discountType,
-        overallDiscountValue: applyDiscountPerItem ? 0 : discountValue,
-        notes,
-        deliveryInstructions,
-        showTransportDetails,
-        transportVehicleNo,
-        transportDriverName,
-        transportDriverPhone,
-        markSent: mode !== 'draft',
-        markPaid: mode === 'paid',
-        ...gstSettings,
-      };
-      const result = editInvoice ? await updateInvoice(editInvoice.id, payload) : await createInvoice(payload);
+    return true;
+  }
+
+  /** Saves (creating or updating — a brand-new invoice that was already
+   * saved once, e.g. by Download PDF, is updated, never duplicated) and
+   * resolves to the saved id, or null on failure. */
+  async function persist(saveMode: SaveMode, allowNegativeStock = false): Promise<string | null> {
+    const savingSnapshot = snapshot;
+    try {
+      const payload = buildPayload(saveMode, allowNegativeStock);
+      const result = savedId ? await updateInvoice(savedId, payload) : await createInvoice(payload);
       if (result.error) {
         setError(result.error);
         toast.error(result.error);
-        return;
+        return null;
       }
       if (result.warning) toast.warning(result.warning);
-      toast.success(mode === 'paid' ? 'Invoice saved as paid in full' : mode === 'sent' ? 'Invoice sent' : 'Saved as draft');
-      if (result.invoiceId) {
-        try {
-          localStorage.removeItem(DRAFT_KEY);
-        } catch {
-          // best-effort only
-        }
-        router.push(`/invoices/${result.invoiceId}`);
+      try {
+        localStorage.removeItem(DRAFT_KEY);
+      } catch {
+        // best-effort only
       }
+      setSavedSnapshot(savingSnapshot);
+      invalidateBusinessData(queryClient);
+      return result.invoiceId ?? null;
+    } catch (e: any) {
+      const msg = e?.message ?? 'Could not save the invoice. Check your connection and try again.';
+      setError(msg);
+      toast.error(msg);
+      return null;
+    }
+  }
+
+  function save(saveMode: SaveMode, allowNegativeStock = false) {
+    if (!validate(allowNegativeStock)) return;
+    startSaving(async () => {
+      const id = await persist(saveMode, allowNegativeStock);
+      if (!id) return;
+      toast.success(
+        saveMode === 'paid' ? 'Saved and marked paid' : saveMode === 'send' ? 'Saved and marked sent' : saveMode === 'draft' ? 'Saved as draft' : 'Invoice saved'
+      );
+      // A new invoice moves to its own URL (the editor of the saved invoice);
+      // a saved one just reloads its server data in place.
+      if (!savedId) router.replace(`/invoices/${id}`);
+      else router.refresh();
     });
   }
 
-  /** Generates a real, server-rendered A4 PDF of the current draft and opens
-   * it in a new tab — the same headless Playwright route the invoice detail
-   * page's PrintButton already uses, instead of `window.print()`. That
-   * matters because `window.print()` hands control to the *browser's own*
-   * print dialog, which (depending on the user's "Headers and footers"
-   * checkbox) stamps its own page URL/number chrome over every page and
-   * positions its own footer — neither of which this app's CSS can reach or
-   * override, since it isn't part of the printed document at all. The real
-   * PDF route has no such dialog in the loop: it's Playwright printing
-   * headlessly with our own custom footer template, so what comes out is
-   * pixel-identical to the invoice detail page's PDF.
-   *
-   * This does need somewhere to render *from* — Playwright navigates to a
-   * real page and needs a real invoice id, so the first click here saves
-   * the current form as a DRAFT (exactly what "Save as draft" already does)
-   * and remembers its id; every click after that updates the same draft
-   * row in place via `draftInvoiceId` rather than creating another one. */
+  /** Download PDF — an already-saved, unchanged invoice streams its stored
+   * PDF straight away; otherwise it's saved first (keeping its status — the
+   * old builder turned a sent invoice back into a draft here) and then
+   * downloaded. */
   function downloadPdf() {
-    if (!customer) {
-      setError('Select a customer first');
-      toast.error('Select a customer first');
+    if (savedId && !dirty) {
+      window.location.href = `/api/invoices/${savedId}/pdf`;
       return;
     }
-    if (lines.length === 0) {
-      setError('Add at least one product');
-      toast.error('Add at least one product');
-      return;
-    }
-    setError(undefined);
-    // Opened synchronously, right here inside the click handler — a tab
-    // opened *after* the `await` below would no longer read as caused by
-    // the user's click to the browser's popup blocker, and get silently
-    // swallowed (an about:blank tab that never navigates, no error either).
-    // Pointing this blank tab at the real URL once the save resolves avoids
-    // that entirely.
-    const pdfWindow = window.open('', '_blank');
-    startDownloadingPdf(async () => {
-      const payload = {
-        customerId: customer.id,
-        date,
-        due,
-        items: lines,
-        overallDiscountType: applyDiscountPerItem ? ('PERCENT' as const) : discountType,
-        overallDiscountValue: applyDiscountPerItem ? 0 : discountValue,
-        notes,
-        deliveryInstructions,
-        showTransportDetails,
-        transportVehicleNo,
-        transportDriverName,
-        transportDriverPhone,
-        markSent: false,
-        markPaid: false,
-        ...gstSettings,
-      };
-      const result = draftInvoiceId ? await updateInvoice(draftInvoiceId, payload) : await createInvoice(payload);
-      if (result.error) {
-        toast.error(result.error);
-        pdfWindow?.close();
-        return;
-      }
-      const id = draftInvoiceId ?? result.invoiceId;
-      if (id) {
-        setDraftInvoiceId(id);
-        if (pdfWindow) pdfWindow.location.href = `/api/invoices/${id}/pdf?inline=1`;
-      }
+    if (!validate()) return;
+    startSaving(async () => {
+      const id = await persist('keep');
+      if (!id) return;
+      toast.success('Saved — preparing your PDF…');
+      window.location.href = `/api/invoices/${id}/pdf`;
+      if (!savedId) router.replace(`/invoices/${id}`);
+      else router.refresh();
+    });
+  }
+
+  function shareOnWhatsApp(reminder = false) {
+    if (!savedId || !customer) return;
+    const win = window.open('', '_blank');
+    const amount = reminder ? balanceDue : totals.total;
+    whatsApp.mutate(
+      {
+        invoiceId: savedId,
+        phone: customer.phone,
+        win,
+        reminder,
+        buildMessage: (url) =>
+          reminder
+            ? `Hello ${customerDisplayName(customer)}, a gentle reminder from ${company.name}: invoice ${editInvoice?.number} has ${fmtInr(amount)} due${due ? ` (due ${due})` : ''}.\n\nView invoice: ${url}\n\nThank you!`
+            : `Hello ${customerDisplayName(customer)}, here is your invoice ${editInvoice?.number} from ${company.name} for ${fmtInr(amount)}.\n\nView / download: ${url}\n\nThank you for your business!`,
+      },
+      { onError: (e: any) => toast.error(e?.message ?? 'Could not create the share link') }
+    );
+  }
+
+  function duplicate() {
+    if (!savedId) return;
+    duplicateInvoice.mutate(savedId, {
+      onSuccess: (r) => {
+        toast.success('Duplicated as a new draft');
+        if (r.invoiceId) router.push(`/invoices/${r.invoiceId}`);
+      },
+      onError: (e: any) => toast.error(e?.message ?? 'Could not duplicate'),
     });
   }
 
@@ -711,451 +815,238 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
   const creditLimit = Number(customer?.creditLimit ?? 0);
   const overLimit = creditLimit > 0 && projectedBalance >= creditLimit;
 
-  const isClassic = company.invoiceTemplate === 'CLASSIC';
-
   const checklistItems = [
     { label: 'Company GSTIN', done: !!company.gstin, href: '/company' },
-    { label: 'Company PAN', done: !!company.pan, href: '/company' },
     { label: 'Company FSSAI license no.', done: !!company.fssaiNo, href: '/company' },
     { label: 'Company logo', done: !!company.logoUrl, href: '/company' },
     { label: 'Bank details', done: !!(company.bankName && company.bankAcc && company.ifsc), href: '/company' },
     { label: 'Terms', done: !!company.terms, href: '/company' },
     { label: 'Authorised signatory (name or e-signature)', done: !!(company.signatoryName || company.signatureUrl), href: '/company' },
-    ...(customer
-      ? [
-          { label: `${customerDisplayName(customer)}'s GSTIN`, done: !!customer.gstin, href: '/customers' },
-          { label: `${customerDisplayName(customer)}'s contact / phone`, done: !!(customer.contact || customer.phone), href: '/customers' },
-        ]
-      : []),
-    ...(lines.length > 0 ? [{ label: 'HSN/SAC code on every line item', done: lines.every((l) => !!l.hsn) }] : []),
+    ...(customer ? [{ label: `${customerDisplayName(customer)}'s contact / phone`, done: !!(customer.contact || customer.phone), href: '/customers' }] : []),
+    // A blank HSN is filled with the company default on save.
+    ...(lines.length > 0 ? [{ label: 'HSN/SAC code on every line item', done: lines.every((l) => !!(l.hsn || company.defaultHsn)) }] : []),
   ];
 
-  const sheet = isClassic ? (
-    <InvoiceSheetClassic
-      company={previewCompany}
-      upiQrDataUrl={upiQrPreview}
-      gpayNumber={gpayNumberPreview}
-      customer={customer}
-      date={date}
-      lines={lines}
-      totals={totals}
-      discountType={discountType}
-      discountValue={discountValue}
-      applyPerItem={applyDiscountPerItem}
-      notes={notes}
-      deliveryInstructions={deliveryInstructions}
-      showTransportDetails={showTransportDetails}
-      transportVehicleNo={transportVehicleNo}
-      transportDriverName={transportDriverName}
-      transportDriverPhone={transportDriverPhone}
-      editable
-      onDiscountTypeChange={setDiscountType}
-      onDiscountValueChange={changeDiscountValue}
-      onApplyPerItemChange={toggleApplyDiscountPerItem}
-      onIncrement={incrementLineQty}
-      onDecrement={decrementLineQty}
-      onUpdateLine={updateLine}
-      onRemoveLine={removeLine}
-      onNotesChange={setNotes}
-      onDeliveryInstructionsChange={setDeliveryInstructions}
-      onTransportVehicleNoChange={setTransportVehicleNo}
-      onTransportDriverNameChange={setTransportDriverName}
-      onTransportDriverPhoneChange={setTransportDriverPhone}
-    />
-  ) : (
-    <InvoiceSheet
-      company={previewCompany}
-      upiQrDataUrl={upiQrPreview}
-      gpayNumber={gpayNumberPreview}
-      customer={customer}
-      date={date}
-      due={due}
-      lines={lines}
-      totals={totals}
-      totalSavings={totalSavings}
-      discountType={discountType}
-      discountValue={discountValue}
-      applyPerItem={applyDiscountPerItem}
-      editable
-      onDiscountTypeChange={setDiscountType}
-      onDiscountValueChange={changeDiscountValue}
-      onApplyPerItemChange={toggleApplyDiscountPerItem}
-      onIncrement={incrementLineQty}
-      onDecrement={decrementLineQty}
-      onUpdateLine={updateLine}
-      onRemoveLine={removeLine}
-    />
+  const sheetProps = {
+    company: previewCompany,
+    upiQrDataUrl: upiQrPreview,
+    gpayNumber: gpayNumberPreview,
+    customer,
+    date,
+    invoiceNumber: editInvoice?.number,
+    lines,
+    totals,
+    discountType,
+    discountValue,
+  };
+  const renderSheet = (editable: boolean) =>
+    isGst ? (
+      <InvoiceSheetClassic
+        {...sheetProps}
+        variant={company.invoiceTemplate === 'CLEAN' ? 'clean' : 'classic'}
+        due={due}
+        irn={editInvoice?.irn}
+        ackNo={editInvoice?.ackNo}
+        ackDate={editInvoice?.ackDate}
+        amountPaid={editInvoice?.amountPaid}
+        notes={notes}
+        deliveryInstructions={deliveryInstructions}
+        showTransportDetails={showTransportDetails}
+        transportVehicleNo={transportVehicleNo}
+        transportDriverName={transportDriverName}
+        transportDriverPhone={transportDriverPhone}
+        editable={editable}
+        {...(editable
+          ? {
+              onIncrement: incrementLineQty,
+              onDecrement: decrementLineQty,
+              onUpdateLine: updateLine,
+              onRemoveLine: removeLine,
+              onNotesChange: setNotes,
+              onDeliveryInstructionsChange: setDeliveryInstructions,
+              onTransportVehicleNoChange: setTransportVehicleNo,
+              onTransportDriverNameChange: setTransportDriverName,
+              onTransportDriverPhoneChange: setTransportDriverPhone,
+            }
+          : {})}
+      />
+    ) : (
+      <InvoiceSheet
+        {...sheetProps}
+        due={due}
+        amountPaid={editInvoice?.amountPaid}
+        editable={editable}
+        {...(editable ? { onIncrement: incrementLineQty, onDecrement: decrementLineQty, onUpdateLine: updateLine, onRemoveLine: removeLine } : {})}
+      />
+    );
+
+  const busy = saving || deleteInvoice.isPending;
+  const overdue = !!editInvoice && status !== 'PAID' && editInvoice.due < todayIst();
+
+  const moreMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" aria-label="More actions" className="w-8 px-0 sm:w-auto sm:px-3">
+          <MoreHorizontal size={14} /> <span className="hidden sm:inline">More</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-[220px]">
+        {mode === 'edit' && (
+          <DropdownMenuItem className="lg:hidden" onClick={() => setPreviewOpen(true)}>
+            <Eye size={14} /> Preview
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
+          {gstLocked ? <Lock size={14} /> : <Settings size={14} />} Invoice settings
+        </DropdownMenuItem>
+        {savedId && (
+          <>
+            {status !== 'PAID' && (
+              <DropdownMenuItem onClick={() => setPaymentOpen(true)}>
+                <IndianRupee size={14} /> Record payment
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={() => shareOnWhatsApp(false)}>
+              <MessageCircle size={14} /> Share on WhatsApp
+            </DropdownMenuItem>
+            {balanceDue > 0.004 && status !== 'DRAFT' && (
+              <DropdownMenuItem onClick={() => shareOnWhatsApp(true)}>
+                <Clock size={14} /> Send payment reminder
+              </DropdownMenuItem>
+            )}
+            {status !== 'DRAFT' && (
+              <DropdownMenuItem onClick={() => router.push(`/credit-notes/new?invoice=${savedId}`)}>
+                <FileMinus size={14} /> Credit note / return
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={duplicate}>
+              <Copy size={14} /> Duplicate
+            </DropdownMenuItem>
+            {isOwner && (
+              <DropdownMenuItem className="text-red focus:text-red" onClick={() => setDeleteOpen(true)}>
+                <Trash2 size={14} /> Delete invoice
+              </DropdownMenuItem>
+            )}
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 
-  return (
-    <>
-      {/* Everything below is the interactive builder UI — collapsed to
-          display:none at print time (not just visibility:hidden) so its
-          height doesn't produce blank trailing pages; the dedicated
-          print-only sheet is a sibling further down.
-          `invoice-builder-root` opts this page out of the shared app
-          shell's max-w-[1220px] centering (see globals.css) — the builder
-          needs the full content width so the left panel can stay narrow
-          while the invoice sheet gets real room, unlike every other page
-          under (app)/layout.tsx which keeps the centered constraint. */}
-      <div className="invoice-builder-root print:hidden">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2.5">
-        <div className="flex flex-wrap items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => router.push(editInvoice ? `/invoices/${editInvoice.id}` : '/invoices')}>
-            <ArrowLeft size={13} /> Back
+  const downloadButton = (
+    <Button variant="outline" size="sm" onClick={downloadPdf} disabled={busy} aria-label="Download PDF" className="w-8 px-0 sm:w-auto sm:px-3">
+      <Download size={13} /> <span className="hidden sm:inline">Download PDF</span>
+    </Button>
+  );
+
+  // ---------------------------------------------------------------- PREVIEW
+  if (mode === 'preview' && editInvoice) {
+    return (
+      <div className="mx-auto max-w-[900px] space-y-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <Button variant="ghost" size="sm" onClick={() => router.push('/invoices')}>
+            <ArrowLeft size={13} /> Invoices
           </Button>
-          <span className="font-mono text-[13px] font-semibold text-ink-soft">{editInvoice ? `Editing ${editInvoice.number}` : 'New invoice'}</span>
-          {editInvoice ? <StatusBadge status={editInvoice.status} /> : <span className="rounded-sm2 bg-surface-alt px-2.5 py-1 text-[11px] font-bold text-ink-soft">Draft</span>}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 rounded-sm2 border border-line bg-surface px-3 py-1.5 text-[11.5px] text-ink-soft">
-            <Clock size={12} /> Date
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="border-none bg-transparent font-mono text-[11.5px] text-ink-body outline-none" />
-          </div>
-          <div className="flex items-center gap-1.5 rounded-sm2 border border-line bg-surface px-3 py-1.5 text-[11.5px] text-ink-soft">
-            <Clock size={12} /> Due
-            <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="border-none bg-transparent font-mono text-[11.5px] text-ink-body outline-none" />
+          <span className="font-mono text-[14px] font-semibold text-ink">{editInvoice.number}</span>
+          <StatusBadge status={status} overdue={overdue} />
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={() => setMode('edit')}>
+              <Pencil size={13} /> Edit
+            </Button>
+            {downloadButton}
+            {moreMenu}
           </div>
         </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 pb-24 lg:grid-cols-[40fr_60fr] lg:pb-4">
-        {/* LEFT 40% — every action/input control, kept as compact as
-            possible so the right column (the live, real-time PDF preview —
-            re-renders on every state change, no separate "preview" step)
-            gets the most room. */}
-        <div className="flex flex-col gap-2.5">
-          {isClassic && <InvoiceCompletenessChecklist items={checklistItems} compact />}
-          <div data-tour="bill-to" className="rounded-xl2 border border-line bg-surface p-2.5 shadow-card">
-            <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-ink-faint">
-              <Users size={11} className="text-brand" /> Bill to
-            </div>
-            {customer ? (
-              <div className="flex items-center gap-2 rounded-lg2 border border-line bg-bg px-2.5 py-2">
-                <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-sm2 text-[11px] font-extrabold text-white" style={{ background: hashColor(customerDisplayName(customer)) }}>
-                  {initials(customerDisplayName(customer))}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[12px] font-bold text-ink">
-                    {customerDisplayName(customer)}
-                    {customer.guest && <span className="ml-1.5 rounded-sm2 bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold text-ink-faint">Guest</span>}
-                  </div>
-                  <div className="truncate text-[10.5px] text-ink-faint">
-                    {customer.shopName ? customer.name + ' · ' : ''}
-                    {customer.phone ? customer.phone + ' · ' : ''}
-                    {customer.state}
-                  </div>
-                </div>
-                <Button variant="link" size="sm" className="flex-shrink-0 px-0" onClick={() => setEditCustomerOpen(true)}>
-                  Edit
-                </Button>
-                <Button variant="link" size="sm" className="flex-shrink-0 px-0" onClick={() => setCustomer(null)}>
-                  Change
-                </Button>
-              </div>
-            ) : showQuickAdd ? (
-              <QuickAddCustomer
-                query={custQuery}
-                onCreated={(c) => {
-                  setCustomer(c);
-                  setShowQuickAdd(false);
-                }}
-                onCancel={() => setShowQuickAdd(false)}
-              />
-            ) : (
-              <div className="relative">
-                <div className="flex items-center gap-2 rounded-sm2 border border-line bg-surface px-2.5 py-1.5 focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-light">
-                  <Search size={12} className="flex-shrink-0 text-ink-faint" />
-                  <input
-                    value={custQuery}
-                    onChange={(e) => setCustQuery(e.target.value)}
-                    placeholder="Name or mobile number…"
-                    autoComplete="off"
-                    className="w-full bg-transparent text-[12px] outline-none"
-                  />
-                </div>
-                <div className="mt-1.5 max-h-44 overflow-y-auto rounded-lg2 border border-line bg-surface shadow-elevated">
-                  {custLoading ? (
-                    <div className="space-y-1.5 p-2">
-                      {Array.from({ length: 3 }).map((_, i) => (
-                        <div key={i} className="flex items-center gap-2.5 px-1 py-1.5">
-                          <Skeleton className="h-[26px] w-[26px] flex-shrink-0 rounded-sm2" />
-                          <Skeleton className="h-3 flex-1" />
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    custResults.map((c) => (
-                      <button
-                        key={c.id}
-                        onClick={() => setCustomer(c)}
-                        className="flex w-full items-center gap-2 border-b border-line px-2.5 py-1.5 text-left last:border-0 hover:bg-brand-light"
-                      >
-                        <span className="flex h-[26px] w-[26px] flex-shrink-0 items-center justify-center rounded-sm2 text-[10.5px] font-extrabold text-white" style={{ background: hashColor(customerDisplayName(c)) }}>
-                          {initials(customerDisplayName(c))}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <div className="truncate text-[12px] font-bold text-ink">{c.shopName || c.name}</div>
-                          <div className="truncate text-[10.5px] text-ink-faint">{c.shopName ? `${c.name}${c.phone ? ` · ${c.phone}` : ''}` : c.phone || c.state}</div>
-                        </span>
-                      </button>
-                    ))
-                  )}
-                  <button onClick={() => setShowQuickAdd(true)} className="flex w-full items-center gap-1.5 border-t border-line px-2.5 py-1.5 text-left text-[11.5px] font-bold text-brand hover:bg-brand-light">
-                    <Plus size={12} /> Add &quot;{custQuery || 'someone new'}&quot; as a new customer
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {customer && (
-              <div className="mt-1.5 rounded-md2 bg-bg p-2 text-[11px] leading-relaxed text-ink-soft">
-                {customer.address && <div className="truncate">{customer.address}</div>}
-                <div>
-                  {customer.state} {customer.gstin ? `· GSTIN ${customer.gstin}` : '· unregistered'}
-                </div>
-                {(totals.useIgst ? gstSettings.igstEnabled : gstSettings.cgstEnabled || gstSettings.sgstEnabled) && (
-                  <div className="mt-0.5 flex items-center gap-1.5 font-bold text-ink">
-                    {totals.useIgst
-                      ? `IGST ${gstSettings.igstRate}%`
-                      : [gstSettings.cgstEnabled && `CGST ${gstSettings.cgstRate}%`, gstSettings.sgstEnabled && `SGST ${gstSettings.sgstRate}%`].filter(Boolean).join(' + ')}
-                  </div>
-                )}
-                {overLimit ? (
-                  <div className="mt-1 flex items-start gap-1.5 border-t border-dashed border-line pt-1 font-bold text-red">
-                    <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" /> Puts them at {fmtInr(projectedBalance)} — over their {fmtInr(creditLimit)} credit limit
-                  </div>
-                ) : (
-                  outstandingElsewhere > 0.004 && (
-                    <div className="mt-1 flex items-start gap-1.5 border-t border-dashed border-line pt-1 font-bold text-gold">
-                      <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" /> Already owes {fmtInr(outstandingElsewhere)} from other invoices
-                    </div>
-                  )
-                )}
-              </div>
-            )}
-          </div>
-
-          {customer && (
-            <CustomerFormDialog
-              open={editCustomerOpen}
-              onOpenChange={setEditCustomerOpen}
-              mode="edit"
-              customer={customer}
-              onSaved={(c) => setCustomer({ ...c, phone: c.phone ?? null, guest: c.guest ?? false })}
-            />
-          )}
-
-          <div data-tour="add-products" className="rounded-xl2 border border-line bg-surface p-2.5 shadow-card">
-            <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-ink-faint">
-              <Package size={11} className="text-brand" /> Add products
-            </div>
-            <div className="flex items-center gap-2 rounded-sm2 border border-line bg-bg px-2.5 py-1.5 focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-light">
-              <Search size={12} className="flex-shrink-0 text-ink-faint" />
-              <input
-                value={productQuery}
-                onChange={(e) => setProductQuery(e.target.value)}
-                placeholder="Search catalog to add…"
-                autoComplete="off"
-                className="w-full bg-transparent text-[12px] outline-none"
-              />
-            </div>
-            <div className="mt-1">
-              {frequentProducts.length > 0 && (
-                <>
-                  <div className="px-1.5 pb-0.5 pt-1 text-[10px] font-bold text-brand-dark">
-                    <Sparkles size={10} className="mr-1 inline" /> Frequently ordered by this customer
-                  </div>
-                  {frequentProducts.map((p) => (
-                    <ProductRow
-                      key={p.id}
-                      product={p}
-                      lines={lines}
-                      onAddTier={(tier) => addProductTier(p, tier)}
-                      onDecrementTier={(unit) => decrementProductTier(p.id, unit)}
-                    />
-                  ))}
-                  <div className="mt-1 border-t border-line px-1.5 pb-0.5 pt-1.5 text-[10px] text-ink-faint">All products (A–Z)</div>
-                </>
-              )}
-              {pagedProducts.length === 0 ? (
-                <p className="py-6 text-center text-[12px] text-ink-faint">No active products found.</p>
-              ) : (
-                pagedProducts.map((p) => (
-                  <ProductRow
-                    key={p.id}
-                    product={p}
-                    lines={lines}
-                    onAddTier={(tier) => addProductTier(p, tier)}
-                    onDecrementTier={(unit) => decrementProductTier(p.id, unit)}
-                  />
-                ))
-              )}
-            </div>
-            {filteredProducts.length > PRODUCTS_PER_PAGE && (
-              <Pagination page={productPage} pageSize={PRODUCTS_PER_PAGE} total={filteredProducts.length} onPageChange={setProductPage} className="border-t-0 px-0 py-1.5" />
-            )}
-            <div data-tour="custom-item">
-              {showCustomItemForm ? (
-                <AddCustomItemForm
-                  onAdd={addCustomLine}
-                  onCancel={() => setShowCustomItemForm(false)}
-                />
-              ) : (
-                <button
-                  onClick={() => setShowCustomItemForm(true)}
-                  className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg2 border border-dashed border-line py-1.5 text-[11px] font-bold text-ink-faint hover:border-brand hover:text-brand"
-                >
-                  <Tag size={11} /> Bill something not in your catalog
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* RIGHT 60% — the live, real-time PDF view only, nothing else. */}
-        <div data-tour="invoice-sheet" className="relative" style={PAPER_STYLE}>
-          <div className="h-[5px] rounded-t-lg2 bg-brand" />
-          <ResponsiveSheetScale>{sheet}</ResponsiveSheetScale>
-        </div>
-      </div>
-
-      {/* One consolidated footer bar, pinned to the bottom of the viewport
-          (above the mobile BottomNav, flush with it on desktop where
-          that's hidden) — breaks out of main's own side padding (see
-          (app)/layout.tsx) via matching negative margins so it spans the
-          whole content width edge-to-edge, regardless of which column the
-          click that triggered it came from. Replaces two previously
-          separate stacked bars (a cart-summary strip and a save-actions
-          bar) with a single row: running total on the left, every action
-          (Preview, Download, the three Save variants) on the right. */}
-      <div
-        data-tour="save-buttons"
-        className="sticky bottom-0 z-20 -mx-4 mt-3.5 flex flex-wrap items-center gap-2.5 border-t border-line bg-surface px-4 py-3 shadow-elevated md:-mx-6 md:px-6"
-      >
-        <div className="mr-auto flex min-w-0 flex-1 items-center">
-          {error ? (
-            <p className="flex items-center gap-1.5 text-[12px] font-bold text-destructive">
-              <AlertTriangle size={12} className="flex-shrink-0" /> {error}
-            </p>
-          ) : hasItems ? (
-            <div className="flex items-center gap-2 text-[12px] font-semibold leading-tight text-ink-soft">
-              <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-sm2 bg-brand-light text-brand-dark">
-                <ShoppingCart size={13} />
+        {editInvoice.payments.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg2 bg-green-soft px-3.5 py-2.5 text-[12.5px] text-ink-body">
+            <CheckCircle2 size={14} className="text-green" />
+            {editInvoice.payments.map((p) => (
+              <span key={p.id}>
+                <b className="font-mono text-ink">{fmtInr(p.amount)}</b> on {p.date}
+                {p.mode ? ` by ${p.mode}` : ''}
+                {p.receiptNo ? ` · ${p.receiptNo}` : ''}
               </span>
-              <span>
-                <b className="font-mono text-ink">{lines.length}</b> product{lines.length !== 1 ? 's' : ''} · <b className="font-mono text-ink">{Math.round(totalUnits * 100) / 100}</b> unit
-                {totalUnits !== 1 ? 's' : ''} &nbsp;·&nbsp; <b className="font-mono text-ink">{fmtInr(totals.total)}</b>
-              </span>
-            </div>
-          ) : (
-            <p className="hidden items-center gap-1.5 text-[10.5px] text-ink-faint sm:flex">
-              <Info size={11} className="flex-shrink-0" /> The invoice number is assigned the moment you save.
-            </p>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button data-tour="preview-btn" variant="secondary" size="sm" onClick={() => setPreviewOpen(true)}>
-            <Eye size={13} /> Preview
-          </Button>
-          <Button variant="outline" size="sm" onClick={downloadPdf} disabled={downloadingPdf}>
-            <Printer size={13} /> {downloadingPdf ? 'Generating…' : 'Download PDF'}
-          </Button>
-          <Button variant="outline" onClick={() => save('draft')} disabled={saving}>
-            <FileText size={13} /> Save as draft
-          </Button>
-          <Button variant="secondary" onClick={() => save('paid')} disabled={saving}>
-            <IndianRupee size={13} /> {saving ? 'Saving…' : 'Save & mark as paid'}
-          </Button>
-          <Button onClick={() => save('sent')} disabled={saving}>
-            <CheckCircle2 size={13} /> {saving ? 'Saving…' : 'Save & mark as sent'}
-          </Button>
-        </div>
-      </div>
-
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-[720px]" mobileFullScreen>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Eye size={16} className="text-brand" /> Invoice preview
-            </DialogTitle>
-          </DialogHeader>
-          <div className="max-h-[70vh] overflow-y-auto invoice-sheet-mono" style={PAPER_STYLE}>
-            <ResponsiveSheetScale>
-              {isClassic ? (
-                <InvoiceSheetClassic
-                  company={previewCompany}
-      upiQrDataUrl={upiQrPreview}
-      gpayNumber={gpayNumberPreview}
-                  customer={customer}
-                  date={date}
-                  lines={lines}
-                  totals={totals}
-                  discountType={discountType}
-                  discountValue={discountValue}
-                  notes={notes}
-                  deliveryInstructions={deliveryInstructions}
-                  showTransportDetails={showTransportDetails}
-                  transportVehicleNo={transportVehicleNo}
-                  transportDriverName={transportDriverName}
-                  transportDriverPhone={transportDriverPhone}
-                  editable={false}
-                />
-              ) : (
-                <InvoiceSheet
-                  company={previewCompany}
-      upiQrDataUrl={upiQrPreview}
-      gpayNumber={gpayNumberPreview}
-                  customer={customer}
-                  date={date}
-                  due={due}
-                  lines={lines}
-                  totals={totals}
-                  totalSavings={totalSavings}
-                  discountType={discountType}
-                  discountValue={discountValue}
-                  editable={false}
-                />
-              )}
-            </ResponsiveSheetScale>
+            ))}
           </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setPreviewOpen(false)}>
-              <Pencil size={12} /> Back to edit
-            </Button>
-            <Button variant="secondary" onClick={() => setShareOpen(true)} disabled={!customer}>
-              <Share2 size={13} /> Share
-            </Button>
-            <Button onClick={downloadPdf} disabled={downloadingPdf}>
-              <Printer size={13} /> {downloadingPdf ? 'Generating…' : 'Download / print'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        )}
+        <p className="text-[12px] text-ink-faint">This invoice is paid, so it opens read-only. Edit it if something needs correcting — the status updates from the new total.</p>
+        <div className="invoice-sheet-mono rounded-lg2 bg-surface-alt p-3 sm:p-5" style={PAPER_STYLE}>
+          <ResponsiveSheetScale>{renderSheet(false)}</ResponsiveSheetScale>
+        </div>
+        {dialogs()}
+      </div>
+    );
+  }
 
-      {customer && (
-        <ShareDialog
-          open={shareOpen}
-          onOpenChange={setShareOpen}
-          company={company}
-          customer={customer}
-          due={due}
-          amountDue={totals.total}
+  function dialogs() {
+    return (
+      <>
+        <ConfirmDialog
+          open={forceSaveMode !== null}
+          onOpenChange={(open) => !open && setForceSaveMode(null)}
+          title="Save with stock below zero?"
+          description={
+            <>
+              {shortages.map((s) => `${s.name} (have ${s.have}, need ${s.need})`).join('; ')} will show negative stock until you add stock or recount it on the
+              Inventory screen. Only do this when the goods really are there.
+            </>
+          }
+          confirmLabel="Save anyway"
+          onConfirm={() => {
+            if (forceSaveMode) save(forceSaveMode, true);
+            setForceSaveMode(null);
+          }}
         />
-      )}
+        {savedId && editInvoice && (
+          <>
+            <RecordPaymentDialog
+              open={paymentOpen}
+              onOpenChange={setPaymentOpen}
+              invoiceId={savedId}
+              invoiceNumber={editInvoice.number}
+              balanceDue={balanceDue}
+              onRecorded={() => router.refresh()}
+            />
+            <ConfirmDialog
+              open={deleteOpen}
+              onOpenChange={setDeleteOpen}
+              title={`Delete ${editInvoice.number}?`}
+              description={
+                <>
+                  This removes the invoice with its items and payments
+                  {status === 'DRAFT'
+                    ? ', and puts its stock back.'
+                    : '. Its stock is not put back: if the goods never went out, move it back to draft first and then delete it; if they came back, raise a credit note instead of deleting.'}{' '}
+                  It can&apos;t be undone.
+                  {editInvoice.irn ? ' Its e-Invoice stays filed with the GST portal — cancel it there within 24 hours if needed.' : ''}
+                </>
+              }
+              confirmLabel="Delete invoice"
+              pending={deleteInvoice.isPending}
+              onConfirm={() =>
+                deleteInvoice.mutate(savedId, {
+                  onSuccess: () => {
+                    toast.success(`${editInvoice.number} deleted`);
+                    setDeleteOpen(false);
+                    router.push('/invoices');
+                  },
+                  onError: (e: any) => {
+                    setDeleteOpen(false);
+                    toast.error(e?.message ?? 'Could not delete the invoice');
+                  },
+                })
+              }
+            />
+          </>
+        )}
+        {settingsSheet()}
+      </>
+    );
+  }
 
-      {/* Fixed above both sticky bottom bars (the cart summary and the save
-          bar) so it never gets covered on mobile, where the two of them
-          stack up to ~190px tall together. */}
-      <button
-        type="button"
-        onClick={() => setSettingsOpen(true)}
-        aria-label="Invoice settings"
-        className="fixed bottom-56 right-4 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-chrome text-white shadow-elevated transition-transform hover:scale-105 md:bottom-28 md:right-6"
-      >
-        {gstLocked ? <Lock size={18} /> : <Settings size={18} />}
-      </button>
-
+  function settingsSheet() {
+    return (
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
         <SheetContent>
           <SheetHeader>
@@ -1174,7 +1065,6 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
                 GST settings are locked — this invoice has a filed e-Invoice (IRN). Cancel the e-Invoice first if these need to change.
               </div>
             )}
-
             <SettingsSection icon={Percent} title="GST">
               <SettingsRateRow
                 label="CGST"
@@ -1201,65 +1091,31 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
                 onEnabledChange={(v) => setDraftSettings((s) => ({ ...s, igstEnabled: v }))}
               />
             </SettingsSection>
-
             <SettingsSection icon={FileText} title="PDF sections">
-              <SettingsToggleRow
-                label="Bank details"
-                checked={draftSettings.showBankDetails}
-                disabled={gstLocked}
-                onChange={(v) => setDraftSettings((s) => ({ ...s, showBankDetails: v }))}
-              />
-              {isClassic && (
-                <SettingsToggleRow
-                  label="HSN-wise tax summary"
-                  checked={draftSettings.showHsnSummary}
-                  disabled={gstLocked}
-                  onChange={(v) => setDraftSettings((s) => ({ ...s, showHsnSummary: v }))}
-                />
+              <SettingsToggleRow label="Bank details" checked={draftSettings.showBankDetails} disabled={gstLocked} onChange={(v) => setDraftSettings((s) => ({ ...s, showBankDetails: v }))} />
+              {isGst && (
+                <SettingsToggleRow label="HSN-wise tax summary" checked={draftSettings.showHsnSummary} disabled={gstLocked} onChange={(v) => setDraftSettings((s) => ({ ...s, showHsnSummary: v }))} />
               )}
             </SettingsSection>
-
             <SettingsSection icon={QrCode} title="Payment info">
               <SettingsToggleRow label="UPI QR" checked={draftSettings.showUpiQr} disabled={gstLocked} onChange={(v) => setDraftSettings((s) => ({ ...s, showUpiQr: v }))} />
-              <SettingsToggleRow
-                label="GPay number"
-                checked={draftSettings.showGpayNumber}
-                disabled={gstLocked}
-                onChange={(v) => setDraftSettings((s) => ({ ...s, showGpayNumber: v }))}
-              />
+              <SettingsToggleRow label="GPay number" checked={draftSettings.showGpayNumber} disabled={gstLocked} onChange={(v) => setDraftSettings((s) => ({ ...s, showGpayNumber: v }))} />
               {!company.upi && !company.phone && (
                 <p className="flex items-start gap-1.5 pt-1 text-[11px] text-ink-faint">
                   <Info size={11} className="mt-0.5 flex-shrink-0" /> Add a UPI ID or phone number in Company settings first — there&apos;s nothing to show yet.
                 </p>
               )}
             </SettingsSection>
-
-            {isClassic && (
+            {isGst && (
               <SettingsSection icon={Truck} title="Transport details">
                 <SettingsToggleRow label="Show on invoice PDF" checked={showTransportDetails} onChange={setShowTransportDetails} />
                 {showTransportDetails && (
                   <div className="space-y-2 bg-surface px-3 py-2.5">
-                    <input
-                      value={transportVehicleNo}
-                      onChange={(e) => setTransportVehicleNo(e.target.value)}
-                      placeholder="Vehicle number"
-                      className="w-full rounded-sm2 border border-line bg-bg px-2.5 py-1.5 text-[12px] focus:border-brand focus:outline-none"
-                    />
-                    <input
-                      value={transportDriverName}
-                      onChange={(e) => setTransportDriverName(e.target.value)}
-                      placeholder="Driver name"
-                      className="w-full rounded-sm2 border border-line bg-bg px-2.5 py-1.5 text-[12px] focus:border-brand focus:outline-none"
-                    />
-                    <input
-                      value={transportDriverPhone}
-                      onChange={(e) => setTransportDriverPhone(e.target.value)}
-                      placeholder="Driver contact number"
-                      className="w-full rounded-sm2 border border-line bg-bg px-2.5 py-1.5 text-[12px] focus:border-brand focus:outline-none"
-                    />
+                    <input value={transportVehicleNo} onChange={(e) => setTransportVehicleNo(e.target.value)} placeholder="Vehicle number" className="w-full rounded-sm2 border border-line bg-bg px-2.5 py-1.5 text-[12px] focus:border-brand focus:outline-none" />
+                    <input value={transportDriverName} onChange={(e) => setTransportDriverName(e.target.value)} placeholder="Driver name" className="w-full rounded-sm2 border border-line bg-bg px-2.5 py-1.5 text-[12px] focus:border-brand focus:outline-none" />
+                    <input value={transportDriverPhone} onChange={(e) => setTransportDriverPhone(e.target.value)} placeholder="Driver contact number" className="w-full rounded-sm2 border border-line bg-bg px-2.5 py-1.5 text-[12px] focus:border-brand focus:outline-none" />
                     <p className="flex items-start gap-1.5 text-[11px] text-ink-faint">
-                      <Info size={11} className="mt-0.5 flex-shrink-0" /> Prints in a box before Delivery Instructions — left blank fields just don&apos;t show, and leaving all three empty hides the
-                      whole box even with this switched on.
+                      <Info size={11} className="mt-0.5 flex-shrink-0" /> Prints in a box before Delivery Instructions — blank fields don&apos;t show. The vehicle number also groups the daily loading sheet.
                     </p>
                   </div>
                 )}
@@ -1314,65 +1170,651 @@ export function BuilderClient({ products, company, editInvoice }: { products: Pr
           </SheetFooter>
         </SheetContent>
       </Sheet>
-      </div>
+    );
+  }
 
-      {/* Print/PDF source of truth — invisible on screen, shown only by the
-          @media print rules in globals.css. A sibling of the print:hidden
-          wrapper above (not inside the Dialog, which is `position: fixed`
-          and breaks print pagination — fixed-position elements are
-          repositioned per-page by the browser's print engine, which was
-          producing garbled multi-page output). Always reflects live state,
-          so "Download / print" from the dialog just calls window.print().
-          Collapsed to zero height with clipped overflow (not
-          `display:none`): a `display:none` ancestor forces every
-          descendant's layout to zero, which would make the self-measuring
-          pagination in InvoiceSheet/InvoiceSheetClassic (see
-          print-pagination.tsx) always read zero-height sections and
-          silently fall back to "everything fits on one page" — height-0 +
-          overflow-hidden keeps this invisible and footprint-free while
-          still letting the browser compute real layout for anything
-          inside it. */}
-      <div className="h-0 overflow-hidden print:h-auto print:overflow-visible">
-        <div className="invoice-print" style={PAPER_STYLE}>
-          {isClassic ? (
-            <InvoiceSheetClassic
-              company={previewCompany}
-      upiQrDataUrl={upiQrPreview}
-      gpayNumber={gpayNumberPreview}
-              customer={customer}
-              date={date}
-              lines={lines}
-              totals={totals}
+  const primarySave: { mode: SaveMode; label: string } = !savedId || status === 'DRAFT' ? { mode: 'send', label: 'Save & send' } : { mode: 'keep', label: 'Save' };
+
+  // ------------------------------------------------------------------- EDIT
+  return (
+    <>
+      {/* `invoice-builder-root` opts this page out of the app shell's
+          max-w-[1220px] centering (see globals.css). On large screens the
+          builder fills exactly the viewport below the top bar, and each
+          column scrolls on its own — so the customer and catalog stay in
+          reach while you scroll the invoice, and vice versa. */}
+      <div className="invoice-builder-root flex flex-col lg:h-[calc(100dvh-101px)]">
+        <div className="mb-3 flex flex-none flex-wrap items-center justify-between gap-2.5">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={() => router.push('/invoices')}>
+              <ArrowLeft size={13} /> Invoices
+            </Button>
+            <span className="font-mono text-[13px] font-semibold text-ink-soft">{editInvoice ? editInvoice.number : 'New invoice'}</span>
+            {editInvoice ? <StatusBadge status={status} overdue={overdue} /> : <span className="rounded-sm2 bg-surface-alt px-2.5 py-1 text-[11px] font-bold text-ink-soft">Not saved yet</span>}
+            {status === 'PAID' && (
+              <Button variant="ghost" size="sm" onClick={() => setMode('preview')}>
+                <Eye size={13} /> Preview
+              </Button>
+            )}
+          </div>
+          {/* Side by side on a phone too — each field shrinks to half the row. */}
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+            <div className="flex min-w-0 items-center gap-1.5 rounded-sm2 border border-line bg-surface px-2.5 py-1.5 text-[11.5px] text-ink-soft sm:px-3">
+              <Clock size={12} className="hidden flex-shrink-0 sm:block" /> Date
+              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full min-w-0 border-none bg-transparent font-mono text-[11.5px] text-ink-body outline-none sm:w-auto" />
+            </div>
+            <div className="flex min-w-0 items-center gap-1.5 rounded-sm2 border border-line bg-surface px-2.5 py-1.5 text-[11.5px] text-ink-soft sm:px-3">
+              <Clock size={12} className="hidden flex-shrink-0 sm:block" /> Due
+              <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="w-full min-w-0 border-none bg-transparent font-mono text-[11.5px] text-ink-body outline-none sm:w-auto" />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 pb-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[40fr_60fr] lg:pb-0">
+          {/* LEFT — every input control. Scrolls independently on lg+. */}
+          <div className="flex flex-col gap-2.5 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain lg:pb-3 lg:pr-1">
+            {isGst && <InvoiceCompletenessChecklist items={checklistItems} compact />}
+
+            {editInvoice && (editInvoice.einvoiceStatus === 'FAILED' || editInvoice.ewaybillStatus === 'FAILED') && (
+              <div className="space-y-1.5">
+                {editInvoice.einvoiceStatus === 'FAILED' && editInvoice.einvoiceError && (
+                  <p className="rounded-lg2 border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11.5px] font-semibold text-destructive">e-Invoice failed: {editInvoice.einvoiceError}</p>
+                )}
+                {editInvoice.ewaybillStatus === 'FAILED' && editInvoice.ewbError && (
+                  <p className="rounded-lg2 border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11.5px] font-semibold text-destructive">e-Way Bill failed: {editInvoice.ewbError}</p>
+                )}
+              </div>
+            )}
+
+            <div data-tour="bill-to" className="rounded-xl2 border border-line bg-surface p-2.5 shadow-card">
+              <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-ink-faint">
+                <Users size={11} className="text-brand" /> Bill to
+              </div>
+              {customer ? (
+                <div className="flex items-center gap-2 rounded-lg2 border border-line bg-bg px-2.5 py-2">
+                  <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-sm2 text-[11px] font-extrabold text-white" style={{ background: hashColor(customerDisplayName(customer)) }}>
+                    {initials(customerDisplayName(customer))}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[12px] font-bold text-ink">
+                      {customerDisplayName(customer)}
+                      {customer.guest && <span className="ml-1.5 rounded-sm2 bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold text-ink-faint">Guest</span>}
+                    </div>
+                    <div className="truncate text-[10.5px] text-ink-faint">
+                      {customer.shopName ? customer.name + ' · ' : ''}
+                      {customer.phone ? customer.phone + ' · ' : ''}
+                      {customer.state}
+                    </div>
+                  </div>
+                  <Button variant="link" size="sm" className="flex-shrink-0 px-0" onClick={() => setEditCustomerOpen(true)}>
+                    Edit
+                  </Button>
+                  <Button variant="link" size="sm" className="flex-shrink-0 px-0" onClick={() => setCustomer(null)}>
+                    Change
+                  </Button>
+                </div>
+              ) : showQuickAdd ? (
+                <QuickAddCustomer
+                  query={custQuery}
+                  defaultState={company.state}
+                  onCreated={(c) => {
+                    setCustomer(c);
+                    setShowQuickAdd(false);
+                    queryClient.invalidateQueries({ queryKey: ['customers', 'billing'] });
+                  }}
+                  onCancel={() => setShowQuickAdd(false)}
+                />
+              ) : (
+                <div>
+                  <div className="flex items-center gap-2 rounded-sm2 border border-line bg-surface px-2.5 py-1.5 focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-light">
+                    <Search size={12} className="flex-shrink-0 text-ink-faint" />
+                    <input
+                      value={custQuery}
+                      onChange={(e) => setCustQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          setCustCursor((c) => Math.min(c + 1, customerMatches.length - 1));
+                        } else if (e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          setCustCursor((c) => Math.max(c - 1, 0));
+                        } else if (e.key === 'Enter' && customerMatches[custCursor]) {
+                          e.preventDefault();
+                          setCustomer(customerMatches[custCursor]);
+                        }
+                      }}
+                      placeholder="Name, shop or mobile number…"
+                      autoComplete="off"
+                      aria-label="Search customers"
+                      className="w-full bg-transparent text-[12px] outline-none"
+                    />
+                  </div>
+                  <div className="mt-1.5 overflow-hidden rounded-lg2 border border-line bg-surface shadow-elevated">
+                    <div className="flex items-center justify-between border-b border-line px-2.5 py-1 text-[10.5px] text-ink-faint">
+                      <span>{custQuery.trim() ? `${customerMatches.length} of ${directorySize} customers` : `${directorySize} customers`}</span>
+                      <span className="hidden sm:inline">↑ ↓ to move · Enter to pick</span>
+                    </div>
+                    <div className="max-h-[min(55vh,420px)] overflow-y-auto [scrollbar-width:auto]">
+                      {customersQuery.isLoading ? (
+                        <div className="space-y-1.5 p-2">
+                          {Array.from({ length: 4 }).map((_, i) => (
+                            <div key={i} className="flex items-center gap-2.5 px-1 py-1.5">
+                              <Skeleton className="h-[26px] w-[26px] flex-shrink-0 rounded-sm2" />
+                              <Skeleton className="h-3 flex-1" />
+                            </div>
+                          ))}
+                        </div>
+                      ) : customerMatches.length === 0 ? (
+                        <p className="px-3 py-4 text-center text-[11.5px] text-ink-faint">{custQuery.trim() ? 'No customer matches that.' : 'No customers yet.'}</p>
+                      ) : (
+                        customerMatches.map((c, i) => (
+                          <button
+                            key={c.id}
+                            onClick={() => setCustomer(c)}
+                            onMouseEnter={() => setCustCursor(i)}
+                            className={`flex w-full items-center gap-2 border-b border-line px-2.5 py-1.5 text-left last:border-0 ${i === custCursor ? 'bg-brand-light' : 'hover:bg-brand-light'}`}
+                          >
+                            <span className="flex h-[26px] w-[26px] flex-shrink-0 items-center justify-center rounded-sm2 text-[10.5px] font-extrabold text-white" style={{ background: hashColor(customerDisplayName(c)) }}>
+                              {initials(customerDisplayName(c))}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <div className="truncate text-[12px] font-bold text-ink">
+                                {customerDisplayName(c)}
+                                {c.guest && <span className="ml-1.5 rounded-sm2 bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold text-ink-faint">Guest</span>}
+                              </div>
+                              <div className="truncate text-[10.5px] text-ink-faint">{[c.shopName ? c.name : null, c.phone, c.state].filter(Boolean).join(' · ')}</div>
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                    <button onClick={() => setShowQuickAdd(true)} className="flex w-full items-center gap-1.5 border-t border-line px-2.5 py-2 text-left text-[11.5px] font-bold text-brand hover:bg-brand-light">
+                      <Plus size={12} /> Add &quot;{custQuery || 'someone new'}&quot; as a new customer
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {customer && (
+                <div className="mt-1.5 rounded-md2 bg-bg p-2 text-[11px] leading-relaxed text-ink-soft">
+                  {customer.address && <div className="truncate">{customer.address}</div>}
+                  <div>
+                    {customer.state} {customer.gstin ? `· GSTIN ${customer.gstin}` : '· unregistered'}
+                  </div>
+                  {(totals.useIgst ? gstSettings.igstEnabled : gstSettings.cgstEnabled || gstSettings.sgstEnabled) && (
+                    <div className="mt-0.5 flex items-center gap-1.5 font-bold text-ink">
+                      {totals.useIgst
+                        ? `IGST ${gstSettings.igstRate}%`
+                        : [gstSettings.cgstEnabled && `CGST ${gstSettings.cgstRate}%`, gstSettings.sgstEnabled && `SGST ${gstSettings.sgstRate}%`].filter(Boolean).join(' + ')}
+                    </div>
+                  )}
+                  {overLimit ? (
+                    <div className="mt-1 flex items-start gap-1.5 border-t border-dashed border-line pt-1 font-bold text-red">
+                      <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" /> Puts them at {fmtInr(projectedBalance)} — over their {fmtInr(creditLimit)} credit limit
+                    </div>
+                  ) : (
+                    outstandingElsewhere > 0.004 && (
+                      <div className="mt-1 flex items-start gap-1.5 border-t border-dashed border-line pt-1 font-bold text-gold">
+                        <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" /> Already owes {fmtInr(outstandingElsewhere)} on other invoices
+                      </div>
+                    )
+                  )}
+                  {specialPrices.size > 0 && (
+                    <div className="mt-1 flex items-center gap-1.5 text-[10.5px] font-bold text-brand-dark">
+                      <Tag size={10} /> {specialPrices.size} special price{specialPrices.size === 1 ? '' : 's'} apply to this customer
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {customer && (
+              <CustomerFormDialog
+                open={editCustomerOpen}
+                onOpenChange={setEditCustomerOpen}
+                mode="edit"
+                customer={customer}
+                onSaved={(c) => {
+                  setCustomer({ ...c, phone: c.phone ?? null, guest: c.guest ?? false });
+                  queryClient.invalidateQueries({ queryKey: ['customers', 'billing'] });
+                }}
+              />
+            )}
+
+            {blocked && (
+              <div className="flex items-start gap-2 rounded-lg2 bg-red-soft px-3 py-2.5 text-[11.5px] text-ink-body">
+                <AlertTriangle size={13} className="mt-0.5 flex-shrink-0 text-red" />
+                <div>
+                  <b className="text-ink">Not enough stock for {shortages.length === 1 ? '1 item' : `${shortages.length} items`}.</b>{' '}
+                  {shortages.map((s) => `${s.name}: need ${s.need}, have ${s.have}`).join('; ')}. Reduce the quantity or add stock in Inventory.
+                  {isOwner ? (
+                    <Button type="button" variant="outline" size="sm" className="mt-2 h-7 bg-surface px-2.5 text-[11.5px]" onClick={() => setForceSaveMode(primarySave.mode)} disabled={busy}>
+                      Save anyway
+                    </Button>
+                  ) : (
+                    <span> If the stock count is wrong, ask the owner to save it.</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <DiscountCard
+              hasItems={hasItems}
+              itemCount={lines.filter((l) => !l.free).length}
+              setAllPct={setAllPct}
+              onSetAllPctChange={setSetAllPct}
+              onApplyAll={applyDiscountToAll}
               discountType={discountType}
+              onDiscountTypeChange={(t) => {
+                setDiscountType(t);
+                if (t === 'PERCENT') setDiscountValue((v) => Math.min(v, 100));
+              }}
               discountValue={discountValue}
-              notes={notes}
-              deliveryInstructions={deliveryInstructions}
-              showTransportDetails={showTransportDetails}
-              transportVehicleNo={transportVehicleNo}
-              transportDriverName={transportDriverName}
-              transportDriverPhone={transportDriverPhone}
-              editable={false}
-            />
-          ) : (
-            <InvoiceSheet
-              company={previewCompany}
-      upiQrDataUrl={upiQrPreview}
-      gpayNumber={gpayNumberPreview}
-              customer={customer}
-              date={date}
-              due={due}
-              lines={lines}
+              onDiscountValueChange={changeBillDiscount}
+              gross={grossAmount}
+              itemDiscount={lineDiscountTotal}
+              billDiscount={totals.overallDiscountAmount}
               totals={totals}
-              totalSavings={totalSavings}
-              discountType={discountType}
-              discountValue={discountValue}
-              editable={false}
             />
-          )}
+
+            {offers.length > 0 && (
+              <div className="rounded-xl2 border border-line bg-surface p-2.5 shadow-card">
+                <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-ink-faint">
+                  <Gift size={11} className="text-brand" /> Offers on this invoice
+                </div>
+                {offers.map((o) => (
+                  <div key={o.scheme.id} className="flex items-center gap-2 py-1 text-[11.5px]">
+                    <span className="min-w-0 flex-1 truncate">
+                      <b className="text-ink">{o.scheme.name || `Buy ${o.scheme.buyQty} get ${o.scheme.freeQty} free`}</b> · {o.line.name}
+                    </span>
+                    {o.given === o.eligible ? (
+                      <span className="flex items-center gap-1 text-[11px] font-bold text-green">
+                        <Check size={11} /> {o.eligible} free added
+                      </span>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => applyOffer(o)}>
+                        <Plus size={11} /> Add {o.eligible} free {formatUnit(o.scheme.unit)}
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div data-tour="add-products" className="rounded-xl2 border border-line bg-surface p-2.5 shadow-card">
+              <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-ink-faint">
+                <Package size={11} className="text-brand" /> Add products
+              </div>
+              <div className="flex items-center gap-2 rounded-sm2 border border-line bg-bg px-2.5 py-1.5 focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-light">
+                <Search size={12} className="flex-shrink-0 text-ink-faint" />
+                <input value={productQuery} onChange={(e) => setProductQuery(e.target.value)} placeholder="Search catalog to add…" autoComplete="off" aria-label="Search catalog" className="w-full bg-transparent text-[12px] outline-none" />
+              </div>
+              <div className="mt-1">
+                {frequentProducts.length > 0 && (
+                  <>
+                    <div className="px-1.5 pb-0.5 pt-1 text-[10px] font-bold text-brand-dark">
+                      <Sparkles size={10} className="mr-1 inline" /> Frequently ordered by this customer
+                    </div>
+                    {frequentProducts.map((p) => (
+                      <ProductRow
+                        key={p.id}
+                        product={p}
+                        lines={lines}
+                        remaining={remainingFor(p)}
+                        specialPrices={specialPrices}
+                        onAddTier={(tier) => addProductTier(p, tier)}
+                        onDecrementTier={(unit) => decrementProductTier(p.id, unit)}
+                      />
+                    ))}
+                    <div className="mt-1 border-t border-line px-1.5 pb-0.5 pt-1.5 text-[10px] text-ink-faint">All products</div>
+                  </>
+                )}
+                {pagedProducts.length === 0 ? (
+                  <p className="py-6 text-center text-[12px] text-ink-faint">No active products found.</p>
+                ) : (
+                  pagedProducts.map((p) => (
+                    <ProductRow
+                      key={p.id}
+                      product={p}
+                      lines={lines}
+                      remaining={remainingFor(p)}
+                      specialPrices={specialPrices}
+                      onAddTier={(tier) => addProductTier(p, tier)}
+                      onDecrementTier={(unit) => decrementProductTier(p.id, unit)}
+                    />
+                  ))
+                )}
+              </div>
+              {listProducts.length > PRODUCTS_PER_PAGE && (
+                <Pagination page={productPage} pageSize={PRODUCTS_PER_PAGE} total={listProducts.length} onPageChange={setProductPage} className="border-t-0 px-0 py-1.5" />
+              )}
+              <div data-tour="custom-item">
+                {showCustomItemForm ? (
+                  <AddCustomItemForm onAdd={addCustomLine} onCancel={() => setShowCustomItemForm(false)} />
+                ) : (
+                  <button
+                    onClick={() => setShowCustomItemForm(true)}
+                    className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg2 border border-dashed border-line py-1.5 text-[11px] font-bold text-ink-faint hover:border-brand hover:text-brand"
+                  >
+                    <Tag size={11} /> Bill something not in your catalog
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {editInvoice && editInvoice.payments.length > 0 && (
+              <div className="rounded-xl2 border border-line bg-surface p-2.5 shadow-card">
+                <div className="mb-1.5 flex items-center justify-between gap-1.5">
+                  <span className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-ink-faint">
+                    <ReceiptText size={11} className="text-brand" /> Payments
+                  </span>
+                  <span className="text-[11px] text-ink-soft">
+                    Paid <b className="font-mono text-ink">{fmtInr(editInvoice.amountPaid)}</b>
+                    {balanceDue > 0.004 && (
+                      <>
+                        {' '}
+                        · due <b className="font-mono text-red">{fmtInr(balanceDue)}</b>
+                      </>
+                    )}
+                  </span>
+                </div>
+                {editInvoice.payments.map((p) => (
+                  <div key={p.id} className="flex items-center gap-2 border-t border-line py-1.5 text-[11.5px] first:border-0">
+                    <span className="font-mono text-ink">{fmtInr(p.amount)}</span>
+                    <span className="min-w-0 flex-1 truncate text-ink-faint">
+                      {p.date}
+                      {p.mode ? ` · ${p.mode}` : ''}
+                      {p.reference ? ` · ${p.reference}` : ''}
+                      {p.receiptNo ? ` · ${p.receiptNo}` : ''}
+                    </span>
+                    {p.creditNoteId ? (
+                      <Link href={`/credit-notes/${p.creditNoteId}`} className="text-[10.5px] font-bold text-brand hover:underline">
+                        View
+                      </Link>
+                    ) : (
+                      <PdfDownloadButton
+                        iconOnly
+                        variant="ghost"
+                        href={`/api/pdf/receipts/${p.id}`}
+                        fileName={pdfFileName(p.receiptNo ?? `Receipt-${editInvoice.number}`)}
+                        label="Download receipt"
+                      />
+                    )}
+                    {!p.creditNoteId && isOwner && (
+                      <button
+                        aria-label="Delete payment"
+                        className="rounded-sm2 p-1 text-ink-faint hover:bg-red-soft hover:text-red"
+                        onClick={() =>
+                          deletePayment.mutate(p.id, {
+                            onSuccess: () => {
+                              toast.success('Payment removed');
+                              router.refresh();
+                            },
+                            onError: (e: any) => toast.error(e?.message ?? 'Could not remove the payment'),
+                          })
+                        }
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {status !== 'PAID' && (
+                  <Button size="sm" variant="outline" className="mt-1.5 w-full justify-center" onClick={() => setPaymentOpen(true)}>
+                    <IndianRupee size={12} /> Record payment
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {savedId && isGst && editInvoice && (
+              <div className="rounded-xl2 border border-line bg-surface p-2.5 shadow-card">
+                <div className="mb-2 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-ink-faint">
+                  <ShieldCheck size={11} className="text-brand" /> GST filing
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <GenerateEinvoiceButton invoiceId={savedId} hasCredentials={!!company.nicUsername} status={editInvoice.einvoiceStatus} />
+                  <GenerateEwaybillButton invoiceId={savedId} hasCredentials={!!company.nicUsername} status={editInvoice.ewaybillStatus} defaults={editInvoice.transport} />
+                </div>
+                {dirty && <p className="mt-1.5 text-[10.5px] text-ink-faint">Save your changes before filing — the portal gets the saved invoice.</p>}
+              </div>
+            )}
+
+            {savedId && (
+              <details className="rounded-xl2 border border-line bg-surface p-2.5 shadow-card">
+                <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-ink-faint">
+                  <Clock size={11} className="text-brand" /> History
+                </summary>
+                <div className="mt-2">
+                  <InvoiceHistory invoiceId={savedId} />
+                </div>
+              </details>
+            )}
+          </div>
+
+          {/* RIGHT — the live invoice, exactly as the PDF prints it. Scrolls
+              independently on lg+. */}
+          <div data-tour="invoice-sheet" className="invoice-sheet-mono relative lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain" style={PAPER_STYLE}>
+            <div className="sticky top-0 z-10 h-[5px] rounded-t-lg2 bg-brand" />
+            <ResponsiveSheetScale>{renderSheet(true)}</ResponsiveSheetScale>
+          </div>
+        </div>
+
+        {/* One footer row: running total (or the current error) on the left,
+            actions on the right. Last flex row on desktop; pinned above the
+            mobile bottom navigation on phones, where the secondary actions
+            shrink to icons so everything fits on one row. */}
+        <div
+          data-tour="save-buttons"
+          className="sticky bottom-[calc(57px+env(safe-area-inset-bottom))] z-20 -mx-4 flex flex-none flex-wrap items-center gap-2 border-t border-line bg-surface px-3 py-2 shadow-elevated sm:gap-2.5 sm:px-4 sm:py-3 md:bottom-0 md:-mx-6 md:px-6 lg:static lg:mx-0 lg:rounded-b-lg2 lg:shadow-none"
+        >
+          <div className="mr-auto flex min-w-0 flex-1 items-center">
+            {error ? (
+              <p className="flex items-center gap-1.5 text-[11.5px] font-bold leading-snug text-destructive sm:text-[12px]">
+                <AlertTriangle size={12} className="flex-shrink-0" /> {error}
+              </p>
+            ) : hasItems ? (
+              <div className="flex min-w-0 items-center gap-2 text-[11.5px] font-semibold leading-tight text-ink-soft sm:text-[12px]">
+                <span className="hidden h-7 w-7 flex-shrink-0 items-center justify-center rounded-sm2 bg-brand-light text-brand-dark sm:flex">
+                  <ShoppingCart size={13} />
+                </span>
+                <span className="min-w-0">
+                  <b className="font-mono text-ink">{lines.length}</b> item{lines.length !== 1 ? 's' : ''}
+                  <span className="hidden sm:inline">
+                    {' '}
+                    · <b className="font-mono text-ink">{Math.round(totalUnits * 100) / 100}</b> unit{totalUnits !== 1 ? 's' : ''}
+                  </span>{' '}
+                  · <b className="font-mono text-ink">{fmtInr(totals.total)}</b>
+                  {dirty && savedId && (
+                    <>
+                      <span className="ml-2 hidden text-[11px] font-normal text-gold sm:inline">Unsaved changes</span>
+                      <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-gold align-middle sm:hidden" title="Unsaved changes" />
+                    </>
+                  )}
+                </span>
+              </div>
+            ) : (
+              <p className="hidden items-center gap-1.5 text-[10.5px] text-ink-faint sm:flex">
+                <Info size={11} className="flex-shrink-0" /> The invoice number is assigned the moment you save.
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Phones reach Preview from More — the row stays one line. */}
+            <Button variant="secondary" size="sm" className="hidden sm:inline-flex lg:hidden" onClick={() => setPreviewOpen(true)}>
+              <Eye size={13} /> Preview
+            </Button>
+            {downloadButton}
+            {moreMenu}
+            <div className="flex">
+              <Button
+                className="h-8 rounded-r-none px-3 text-[12.5px] sm:h-9 sm:px-4 sm:text-[13px]"
+                onClick={() => save(primarySave.mode)}
+                disabled={busy || blocked}
+                title={blocked ? 'Not enough stock — reduce quantities or add stock' : undefined}
+              >
+                <CheckCircle2 size={13} /> {saving ? 'Saving…' : primarySave.label}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button className="h-8 rounded-l-none border-l border-white/30 px-1.5 sm:h-9 sm:px-2" aria-label="More save options" disabled={busy}>
+                    <ChevronDown size={14} />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-[230px]">
+                  {primarySave.mode !== 'send' && status === 'DRAFT' && (
+                    <DropdownMenuItem onClick={() => save('send')} disabled={blocked}>
+                      <CheckCircle2 size={14} /> Save &amp; send
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onClick={() => save('draft')} disabled={blocked}>
+                    <FileText size={14} /> {savedId && status !== 'DRAFT' ? 'Move back to draft' : 'Save as draft'}
+                  </DropdownMenuItem>
+                  {status !== 'PAID' && (
+                    <DropdownMenuItem onClick={() => save('paid')} disabled={blocked}>
+                      <IndianRupee size={14} /> Save &amp; mark paid
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
         </div>
       </div>
+
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-[720px]" mobileFullScreen>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Eye size={16} className="text-brand" /> Invoice preview
+            </DialogTitle>
+          </DialogHeader>
+          <div className="invoice-sheet-mono max-h-[70vh] overflow-y-auto" style={PAPER_STYLE}>
+            <ResponsiveSheetScale>{renderSheet(false)}</ResponsiveSheetScale>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {dialogs()}
     </>
   );
+}
+
+/** Discounts, in the order they apply: every line's own Disc % (with a
+ * one-shot "set every item to __%"), then an optional bill-level discount,
+ * with the running ladder underneath so the effect of each is visible. */
+function DiscountCard({
+  hasItems,
+  itemCount,
+  setAllPct,
+  onSetAllPctChange,
+  onApplyAll,
+  discountType,
+  onDiscountTypeChange,
+  discountValue,
+  onDiscountValueChange,
+  gross,
+  itemDiscount,
+  billDiscount,
+  totals,
+}: {
+  hasItems: boolean;
+  itemCount: number;
+  setAllPct: string;
+  onSetAllPctChange: (v: string) => void;
+  onApplyAll: () => void;
+  discountType: 'PERCENT' | 'FLAT';
+  onDiscountTypeChange: (t: 'PERCENT' | 'FLAT') => void;
+  discountValue: number;
+  onDiscountValueChange: (v: string) => void;
+  gross: number;
+  itemDiscount: number;
+  billDiscount: number;
+  totals: { taxable: number; cgst: number; sgst: number; igst: number; useIgst: boolean; total: number };
+}) {
+  return (
+    <div className="rounded-xl2 border border-line bg-surface p-2.5 shadow-card">
+      <div className="mb-2 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-ink-faint">
+        <Percent size={11} className="text-brand" /> Discount
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="min-w-0 flex-1 text-[11px] font-semibold text-ink-soft">
+          Set every item to
+          <span className="mt-1 flex w-28 items-center overflow-hidden rounded-sm2 border border-line bg-bg focus-within:border-brand">
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={setAllPct}
+              onChange={(e) => onSetAllPctChange(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && onApplyAll()}
+              placeholder="0"
+              aria-label="Discount percent for every item"
+              className="w-full bg-transparent px-2 py-1.5 text-right font-mono text-[12px] outline-none"
+            />
+            <span className="border-l border-line bg-surface-alt px-2 py-1.5 text-[11px] text-ink-faint">%</span>
+          </span>
+        </label>
+        <Button size="sm" variant="outline" onClick={onApplyAll} disabled={!hasItems && !setAllPct}>
+          Apply to {itemCount || 'all'} item{itemCount === 1 ? '' : 's'}
+        </Button>
+      </div>
+      <p className="mt-1 text-[10.5px] text-ink-faint">One-time — each item&apos;s Disc % stays editable on the invoice, and new items start at this %.</p>
+
+      <div className="mt-2.5 text-[11px] font-semibold text-ink-soft">Extra discount on bill total</div>
+      <div className="mt-1 flex items-center gap-1.5">
+        <div className="flex overflow-hidden rounded-sm2 border border-line">
+          {(['PERCENT', 'FLAT'] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => onDiscountTypeChange(t)}
+              aria-pressed={discountType === t}
+              className={`px-2.5 py-1.5 text-[11.5px] font-bold ${discountType === t ? 'bg-chrome text-white' : 'bg-surface text-ink-soft'}`}
+            >
+              {t === 'PERCENT' ? '%' : '₹'}
+            </button>
+          ))}
+        </div>
+        <input
+          type="number"
+          min={0}
+          max={discountType === 'PERCENT' ? 100 : undefined}
+          value={discountValue || ''}
+          onChange={(e) => onDiscountValueChange(e.target.value)}
+          placeholder="0"
+          aria-label="Bill discount"
+          className="w-28 rounded-sm2 border border-line bg-bg px-2 py-1.5 text-right font-mono text-[12px] outline-none focus:border-brand"
+        />
+      </div>
+      <p className="mt-1 text-[10.5px] text-ink-faint">Taken off after item discounts{discountType === 'PERCENT' ? ' · up to 100%' : ' · up to the subtotal'}.</p>
+
+      {hasItems && (
+        <dl className="mt-2.5 space-y-0.5 border-t border-dashed border-line pt-2 text-[11.5px]">
+          <LadderRow label="Gross (qty × rate)" value={fmtInr(gross)} />
+          {itemDiscount > 0.004 && <LadderRow label="Item discount" value={`−${fmtInr(itemDiscount)}`} accent />}
+          {billDiscount > 0.004 && <LadderRow label="Bill discount" value={`−${fmtInr(billDiscount)}`} accent />}
+          <LadderRow label="Taxable value" value={fmtInr(totals.taxable)} />
+          {totals.useIgst ? totals.igst > 0 && <LadderRow label="IGST" value={fmtInr(totals.igst)} /> : totals.cgst + totals.sgst > 0 && <LadderRow label="CGST + SGST" value={fmtInr(totals.cgst + totals.sgst)} />}
+          <LadderRow label="Total" value={fmtInr(totals.total)} strong />
+          {itemDiscount + billDiscount > 0.004 && <LadderRow label="Customer saves" value={fmtInr(itemDiscount + billDiscount)} accent />}
+        </dl>
+      )}
+    </div>
+  );
+}
+
+function LadderRow({ label, value, accent, strong }: { label: string; value: string; accent?: boolean; strong?: boolean }) {
+  return (
+    <div className={`flex justify-between gap-2 ${strong ? 'border-t border-line pt-1 text-[12.5px] font-bold text-ink' : 'text-ink-soft'}`}>
+      <dt>{label}</dt>
+      <dd className={`font-mono ${accent ? 'text-green' : strong ? 'text-ink' : 'text-ink-body'}`}>{value}</dd>
+    </div>
+  );
+}
+
+/** Lazy-loaded per-invoice activity trail (who created, edited, paid…). */
+function InvoiceHistory({ invoiceId }: { invoiceId: string }) {
+  return <ActivityTimeline entityType="invoice" entityId={invoiceId} />;
 }
 
 /** Controlled variant of company-form.tsx's RateRow — that one is built for
@@ -1452,24 +1894,33 @@ function SettingsToggleRow({ label, checked, disabled, onChange }: { label: stri
 function ProductRow({
   product,
   lines,
+  remaining,
+  specialPrices,
   onAddTier,
   onDecrementTier,
 }: {
   product: Product;
   lines: Line[];
+  /** Main-unit stock this invoice can still use; null = not tracked. */
+  remaining: number | null;
+  specialPrices: Map<string, number>;
   onAddTier: (tier: PriceTier) => void;
   onDecrementTier: (unit: string) => void;
 }) {
   const tiers = tiersFor(product);
   const single = tiers.length === 1;
-  const qtyFor = (unit: string) => lines.find((l) => l.productId === product.id && l.unit === unit)?.qty ?? 0;
+  const qtyFor = (unit: string) => lines.find((l) => !l.free && l.productId === product.id && l.unit === unit)?.qty ?? 0;
+  // One more of this unit must fit in what's left (1 Box needs a whole box;
+  // 1 Piece only 1/12 of one).
+  const canAdd = (unit: string) => remaining == null || remaining + 1e-6 >= unitFactor(product, unit);
+  const specialFor = (unit: string) => specialPrices.get(`${product.id}|${unit.trim().toLowerCase()}`);
   const active = tiers.some((t) => qtyFor(t.unit) > 0);
   // e.g. "₹20.00/Piece · ₹450.00/Box (≈₹11.25/Piece)" — the per-piece figure
   // is price ÷ approxQty, purely a comparison aid; approxQty is never a
   // purchase minimum, see ProductPriceTier.approxQty.
   const tierSummary = tiers
     .map((t) => {
-      const price = Number(t.price);
+      const price = specialFor(t.unit) ?? Number(t.price);
       const approxQty = t.approxQty != null ? Number(t.approxQty) : 0;
       const perPiece = approxQty > 0 ? price / approxQty : null;
       return `${fmtInr(price)}/${formatUnit(t.unit)}${perPiece != null ? ` (≈${fmtInr(perPiece)}/Piece)` : ''}`;
@@ -1483,6 +1934,20 @@ function ProductRow({
       <div className="min-w-0 flex-1 pt-0.5">
         <div className="truncate text-[11.5px] font-bold text-ink">{product.name}</div>
         <div className="truncate text-[10px] text-ink-faint">{tierSummary}</div>
+        {(remaining != null || tiers.some((t) => specialFor(t.unit) != null)) && (
+          <div className="mt-0.5 flex flex-wrap items-center gap-1">
+            {remaining != null && (
+              <span
+                className={`rounded-sm2 px-1.5 py-px text-[9.5px] font-bold ${
+                  remaining <= 1e-6 ? 'bg-red-soft text-red' : product.lowStockAt != null && remaining <= Number(product.lowStockAt) ? 'bg-gold-soft text-gold' : 'bg-green-soft text-green'
+                }`}
+              >
+                {remaining <= 1e-6 ? 'Out of stock' : `${formatStock(remaining, product)} left`}
+              </span>
+            )}
+            {tiers.some((t) => specialFor(t.unit) != null) && <span className="rounded-sm2 bg-brand-light px-1.5 py-px text-[9.5px] font-bold text-brand-dark">Special price</span>}
+          </div>
+        )}
       </div>
       {/* A product with exactly one pricing tier keeps one compact counter
           here. Two or more tiers (e.g. Box + Piece + Kg) stack vertically
@@ -1490,7 +1955,7 @@ function ProductRow({
           unit's control stays visually distinct without eating horizontal
           width the way an equal-column grid underneath used to. */}
       {single ? (
-        <QtyCounter qty={qtyFor(tiers[0].unit)} onAdd={() => onAddTier(tiers[0])} onDecrement={() => onDecrementTier(tiers[0].unit)} name={product.name} />
+        <QtyCounter qty={qtyFor(tiers[0].unit)} canAdd={canAdd(tiers[0].unit)} onAdd={() => onAddTier(tiers[0])} onDecrement={() => onDecrementTier(tiers[0].unit)} name={product.name} />
       ) : (
         <div className="flex flex-shrink-0 flex-col gap-1">
           {tiers.map((t, i) => (
@@ -1499,6 +1964,7 @@ function ProductRow({
               accent={TIER_ACCENTS[i % TIER_ACCENTS.length]}
               caption={formatUnit(t.unit)}
               qty={qtyFor(t.unit)}
+              canAdd={canAdd(t.unit)}
               onAdd={() => onAddTier(t)}
               onDecrement={() => onDecrementTier(t.unit)}
               name={`${product.name} (${formatUnit(t.unit)})`}
@@ -1512,7 +1978,7 @@ function ProductRow({
 
 /** Compact right-aligned +/- pill, used inline for products with exactly
  * one pricing tier (nothing to choose between). */
-function QtyCounter({ qty, onAdd, onDecrement, name }: { qty: number; onAdd: () => void; onDecrement: () => void; name: string }) {
+function QtyCounter({ qty, canAdd = true, onAdd, onDecrement, name }: { qty: number; canAdd?: boolean; onAdd: () => void; onDecrement: () => void; name: string }) {
   if (qty > 0) {
     return (
       <div className="flex flex-shrink-0 items-center gap-1.5 rounded-sm2 border-[1.5px] border-brand bg-surface p-0.5">
@@ -1522,14 +1988,19 @@ function QtyCounter({ qty, onAdd, onDecrement, name }: { qty: number; onAdd: () 
         <span key={qty} className="min-w-[18px] animate-bump text-center font-mono text-[11.5px] font-extrabold">
           {qty}
         </span>
-        <button onClick={onAdd} aria-label={`Increase ${name} quantity`} className="flex h-[20px] w-[20px] items-center justify-center rounded-sm2 bg-brand-light text-brand-dark">
+        <button onClick={onAdd} disabled={!canAdd} aria-label={`Increase ${name} quantity`} className="flex h-[20px] w-[20px] items-center justify-center rounded-sm2 bg-brand-light text-brand-dark disabled:opacity-40">
           <Plus size={10} />
         </button>
       </div>
     );
   }
   return (
-    <button onClick={onAdd} className="flex flex-shrink-0 items-center gap-1 rounded-sm2 bg-brand px-2.5 py-1 text-[11px] font-extrabold text-white">
+    <button
+      onClick={onAdd}
+      disabled={!canAdd}
+      title={canAdd ? undefined : 'Out of stock'}
+      className="flex flex-shrink-0 items-center gap-1 rounded-sm2 bg-brand px-2.5 py-1 text-[11px] font-extrabold text-white disabled:cursor-not-allowed disabled:bg-surface-alt disabled:text-ink-faint"
+    >
       <Plus size={11} /> Add
     </button>
   );
@@ -1548,6 +2019,7 @@ function TierCounterRow({
   accent,
   caption,
   qty,
+  canAdd = true,
   onAdd,
   onDecrement,
   name,
@@ -1555,6 +2027,7 @@ function TierCounterRow({
   accent: string;
   caption: string;
   qty: number;
+  canAdd?: boolean;
   onAdd: () => void;
   onDecrement: () => void;
   name: string;
@@ -1570,12 +2043,17 @@ function TierCounterRow({
           <span key={qty} className="min-w-[14px] animate-bump text-center font-mono text-[10.5px] font-extrabold">
             {qty}
           </span>
-          <button onClick={onAdd} aria-label={`Increase ${name} quantity`} className="flex h-[16px] w-[16px] items-center justify-center rounded-sm2 text-ink-soft hover:bg-surface-alt">
+          <button onClick={onAdd} disabled={!canAdd} aria-label={`Increase ${name} quantity`} className="flex h-[16px] w-[16px] items-center justify-center rounded-sm2 text-ink-soft hover:bg-surface-alt disabled:opacity-40">
             <Plus size={9} />
           </button>
         </div>
       ) : (
-        <button onClick={onAdd} aria-label={`Add ${name}`} className="flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-sm2 bg-brand text-white">
+        <button
+          onClick={onAdd}
+          disabled={!canAdd}
+          aria-label={`Add ${name}`}
+          className="flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-sm2 bg-brand text-white disabled:cursor-not-allowed disabled:bg-surface-alt disabled:text-ink-faint"
+        >
           <Plus size={10} />
         </button>
       )}
@@ -1630,7 +2108,12 @@ function AddCustomItemForm({
       formData.set('price', String(rateNum));
       if (packQtyNum > 0) formData.set('packQty', String(packQtyNum));
       formData.set('tiers', JSON.stringify([{ unit: tierUnit, price: rateNum, approxQty: packQtyNum > 0 ? packQtyNum : null }]));
-      const result = await createProduct.mutateAsync(formData);
+      let result: { id?: string; error?: string };
+      try {
+        result = await createProduct.mutateAsync(formData);
+      } catch (err: any) {
+        result = { error: err?.message ?? 'Could not save the product' };
+      }
       if (result.error) {
         setError(result.error);
         toast.error(result.error);
@@ -1686,17 +2169,22 @@ function AddCustomItemForm({
   );
 }
 
-function QuickAddCustomer({ query, onCreated, onCancel }: { query: string; onCreated: (c: Customer) => void; onCancel: () => void }) {
+function QuickAddCustomer({ query, defaultState, onCreated, onCancel }: { query: string; defaultState: string; onCreated: (c: Customer) => void; onCancel: () => void }) {
   const looksLikePhone = /^[\d\s+()-]{5,}$/.test(query.trim());
   const createCustomer = useCreateCustomer();
   const [error, setError] = useState<string | undefined>();
-  const [quickAddState, setQuickAddState] = useState('Tamil Nadu');
+  const [quickAddState, setQuickAddState] = useState(defaultState);
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     const guest = (e.nativeEvent as SubmitEvent).submitter?.getAttribute('data-guest') === 'true';
-    const result = await createCustomer.mutateAsync({ guest, formData });
+    let result: { id?: string; error?: string };
+    try {
+      result = await createCustomer.mutateAsync({ guest, formData });
+    } catch (err: any) {
+      result = { error: err?.message ?? 'Could not save the customer' };
+    }
     if (result.error) {
       setError(result.error);
       toast.error(result.error);
@@ -1742,47 +2230,5 @@ function QuickAddCustomer({ query, onCreated, onCancel }: { query: string; onCre
         </Button>
       </div>
     </form>
-  );
-}
-
-function ShareDialog({
-  open,
-  onOpenChange,
-  company,
-  customer,
-  due,
-  amountDue,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  company: Company;
-  customer: Customer;
-  due: string;
-  amountDue: number;
-}) {
-  const message = `Invoice from ${company.name}\nBill to: ${customerDisplayName(customer)}\nAmount due: ${fmtInr(amountDue)}\nDue date: ${due}\n\nThank you for your business!`;
-  const waDigits = (customer.phone || '').replace(/[^0-9]/g, '');
-  const waUrl = `https://wa.me/${waDigits}?text=${encodeURIComponent(message)}`;
-  const mailUrl = `mailto:${customer.email || ''}?subject=${encodeURIComponent('Invoice from ' + company.name)}&body=${encodeURIComponent(message)}`;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[380px]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Share2 size={16} className="text-brand" /> Share invoice
-          </DialogTitle>
-        </DialogHeader>
-        <p className="text-[12.5px] leading-relaxed text-ink-soft">Sends a text summary of the invoice — for the full document, use Download / print first and attach that.</p>
-        <div className="flex flex-col gap-2.5">
-          <a href={waUrl} target="_blank" rel="noopener" className="flex items-center justify-center gap-2 rounded-sm2 bg-surface-alt px-4 py-2.5 text-[13px] font-bold text-ink">
-            <MessageCircle size={14} /> Share via WhatsApp{waDigits ? '' : ' (no phone on file)'}
-          </a>
-          <a href={mailUrl} className="flex items-center justify-center gap-2 rounded-sm2 border border-line px-4 py-2.5 text-[13px] font-bold text-ink">
-            <Mail size={14} /> Share via Email{customer.email ? '' : ' (no email on file)'}
-          </a>
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }

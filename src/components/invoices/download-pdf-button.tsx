@@ -1,46 +1,46 @@
-'use client';
+import { Download } from 'lucide-react';
+import { Button, type ButtonProps } from '@/components/ui/button';
 
-import { useState } from 'react';
-import { Download, Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
+/** "ASB/26-27/1020" → "ASB-26-27-1020.pdf" — the same name the PDF route
+ * sends (src/lib/invoice-pdf.ts's invoicePdfFileName, kept in step by hand:
+ * that module is server-only). */
+export function invoicePdfFileName(invoiceNumber: string): string {
+  return `${invoiceNumber.replace(/[\\/]+/g, '-').replace(/[^A-Za-z0-9._-]/g, '-')}.pdf`;
+}
 
-/** A real one-click file download — distinct from PrintButton's
- * window.print() (which only opens the browser's print dialog and leaves
- * "save as PDF" up to the user). Fetches the server-rendered PDF
- * (src/app/api/invoices/[id]/pdf/route.ts) as a blob and saves it via a
- * throwaway object-URL anchor, so we can show a loading state while the
- * headless render (a couple of seconds) is in flight. */
-export function DownloadPdfButton({ invoiceId, invoiceNumber }: { invoiceId: string; invoiceNumber: string }) {
-  const [pending, setPending] = useState(false);
+/** The PDF route for an invoice — a download by default, `inline` to show
+ * it in the browser instead. */
+export function invoicePdfUrl(invoiceId: string, opts: { inline?: boolean } = {}): string {
+  return `/api/invoices/${encodeURIComponent(invoiceId)}/pdf${opts.inline ? '?inline=1' : ''}`;
+}
 
-  async function handleClick() {
-    setPending(true);
-    try {
-      const res = await fetch(`/api/invoices/${invoiceId}/pdf`);
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? `PDF generation failed (HTTP ${res.status})`);
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${invoiceNumber.replace(/[^a-zA-Z0-9-]/g, '-')}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (e: any) {
-      toast.error(e.message ?? 'Could not generate the PDF');
-    } finally {
-      setPending(false);
-    }
-  }
-
+/** A plain link to the PDF route, styled as a button: the browser's own
+ * download handles it — instant when the stored PDF is current (it's
+ * prebuilt on every save), no blank tab, no blob juggling in JS. `href`
+ * overrides the target, e.g. an object URL for a PDF that's already been
+ * fetched (see PdfViewerDialog). */
+export function DownloadPdfButton({
+  invoiceId,
+  invoiceNumber,
+  href,
+  variant = 'outline',
+  size = 'sm',
+  className,
+  label = 'Download PDF',
+}: {
+  invoiceId: string;
+  invoiceNumber: string;
+  href?: string;
+  variant?: ButtonProps['variant'];
+  size?: ButtonProps['size'];
+  className?: string;
+  label?: string;
+}) {
   return (
-    <Button variant="outline" size="sm" onClick={handleClick} disabled={pending}>
-      {pending ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} {pending ? 'Preparing…' : 'Download PDF'}
+    <Button asChild variant={variant} size={size} className={className}>
+      <a href={href ?? invoicePdfUrl(invoiceId)} download={invoicePdfFileName(invoiceNumber)}>
+        <Download size={13} /> {label}
+      </a>
     </Button>
   );
 }

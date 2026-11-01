@@ -33,11 +33,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           throw new TooManyAttempts();
         }
 
+        // Phones are stored without spaces/dashes (see src/actions/team.ts),
+        // so "98400 12345" and "9840012345" both find the same login.
+        const phone = identifier.replace(/[\s-]/g, '');
         const user = await prisma.user.findFirst({
-          where: { OR: [{ email: { equals: identifier, mode: 'insensitive' } }, { phone: identifier }] },
+          where: { OR: [{ email: { equals: identifier, mode: 'insensitive' } }, { phone: identifier }, { phone }] },
         });
         const valid = user ? await bcrypt.compare(password, user.passwordHash) : false;
-        if (!user || !valid) {
+        // A login the owner switched off fails exactly like a wrong password —
+        // no hint that the account exists.
+        if (!user || !valid || !user.active) {
           await recordFailedLogin(identifier);
           return null;
         }

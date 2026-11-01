@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
 import { getCompany } from '@/lib/get-company';
+import { toPublicCompany } from '@/lib/public-company';
 import { saveUploadedImage, deleteUploadedImage } from '@/lib/uploads';
 import { isValidThemeColor } from '@/lib/theme-presets';
 import { encryptSecret } from '@/lib/secret';
@@ -42,7 +43,10 @@ const CompanySchema = z.object({
   nextInvoiceNo: z.coerce.number().int().min(1),
   terms: z.string().optional().nullable(),
   themeColor: z.string().refine(isValidThemeColor, 'Invalid theme color').optional(),
-  invoiceTemplate: z.enum(['MODERN', 'CLASSIC']).optional(),
+  // A change here also bumps Company.updatedAt, which is part of every
+  // stored invoice PDF's key (src/lib/invoice-pdf.ts) — so each PDF is
+  // re-rendered in the new template the next time it's opened or saved.
+  invoiceTemplate: z.enum(['MODERN', 'CLASSIC', 'CLEAN']).optional(),
   fssaiNo: z.string().optional().nullable(),
   pincode: z.string().optional().nullable(),
   // Per-company currency + PDF-handling toggles — plain fields, no
@@ -71,8 +75,10 @@ const CompanySchema = z.object({
 
 export type CompanyFormState = { error?: string; fieldErrors?: Record<string, string> };
 
+/** A server action is a public endpoint, so this never returns the
+ * encrypted NIC credentials — only whether each one is saved. */
 export async function getCompanyProfile() {
-  return getCompany();
+  return toPublicCompany(await getCompany());
 }
 
 export async function updateCompany(_prev: CompanyFormState, formData: FormData): Promise<CompanyFormState> {

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useTransition } from 'react';
 import { useActionState } from 'react';
 import Link from 'next/link';
 import type { Company } from '@prisma/client';
-import { Building2, Globe, Phone, PhoneCall, Home, IdCard, Percent, Landmark, Hash, FileText, Pencil, Check, Flag, Palette, ImagePlus, X, Mail, ShieldCheck, MapPin, KeyRound, LayoutTemplate, PenLine } from 'lucide-react';
+import { Building2, Globe, Phone, PhoneCall, Home, IdCard, Percent, Landmark, Hash, FileText, Pencil, Check, Flag, Palette, ImagePlus, X, Mail, ShieldCheck, MapPin, KeyRound, PenLine } from 'lucide-react';
 import { toast } from 'sonner';
 import { updateCompany, type CompanyFormState } from '@/actions/company';
 import { Field } from '@/components/ui/field';
@@ -14,6 +14,19 @@ import { Sheet, SheetContent, SheetHeader, SheetIcon, SheetBody, SheetFooter } f
 import { ZoomableImage } from '@/components/ui/image-lightbox';
 import { StateSelect, DistrictSelect } from '@/components/ui/location-field';
 import { isThemePresetKey, THEME_PRESET_KEYS, THEME_PRESETS } from '@/lib/theme-presets';
+import type { toPublicCompany } from '@/lib/public-company';
+import type { InvoiceTemplateName } from '@/lib/invoice-template';
+import { cn } from '@/lib/utils';
+
+/** The Company row as the settings page hands it over: no encrypted NIC
+ * credentials, just whether each is saved (src/lib/public-company.ts). */
+export type PublicCompany = ReturnType<typeof toPublicCompany<Company>>;
+
+const TEMPLATES: { id: InvoiceTemplateName; name: string; blurb: string }[] = [
+  { id: 'MODERN', name: 'Modern', blurb: 'Colour accent, rounded card. Best for simple retail bills.' },
+  { id: 'CLASSIC', name: 'Classic', blurb: 'Tally-style GST invoice with IRN/QR, HSN summary and e-Way Bill page.' },
+  { id: 'CLEAN', name: 'Clean', blurb: 'Centered letterhead, logo and QR the same size, thin even lines, one font weight.' },
+];
 
 const TABS = [
   { id: 'identity', label: 'Identity', icon: Building2 },
@@ -26,7 +39,7 @@ const TABS = [
   { id: 'signatures', label: 'Signatures', icon: PenLine },
 ] as const;
 
-export function CompanyForm({ company }: { company: Company }) {
+export function CompanyForm({ company }: { company: PublicCompany }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<(typeof TABS)[number]['id']>('identity');
   const [state, formAction, actionPending] = useActionState<CompanyFormState, FormData>(updateCompany, {});
@@ -49,7 +62,7 @@ export function CompanyForm({ company }: { company: Company }) {
   const signatureInputRef = useRef<HTMLInputElement>(null);
   const [selectedState, setSelectedState] = useState(company.state);
   const [selectedDistrict, setSelectedDistrict] = useState(company.district ?? '');
-  const [invoiceTemplate, setInvoiceTemplate] = useState<'MODERN' | 'CLASSIC'>(company.invoiceTemplate);
+  const [invoiceTemplate, setInvoiceTemplate] = useState<InvoiceTemplateName>(company.invoiceTemplate);
 
   useEffect(() => {
     if (!submittedRef.current) return;
@@ -257,6 +270,35 @@ export function CompanyForm({ company }: { company: Company }) {
                   </div>
                   <p className="mt-2 text-[11px] text-ink-faint">Pick any color from the wheel — the app keeps it readable in both light and dark mode.</p>
                 </div>
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-bold text-ink-faint">Invoice template</label>
+                  <div role="radiogroup" aria-label="Invoice template" className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                    {TEMPLATES.map((t) => {
+                      const active = invoiceTemplate === t.id;
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          onClick={() => setInvoiceTemplate(t.id)}
+                          // 2px border when picked, padding trimmed by the
+                          // same 1px so the card doesn't shift.
+                          className={`grid content-start gap-2 rounded-lg2 bg-surface text-left transition-colors ${active ? 'border-2 border-brand p-[9px]' : 'border border-line p-2.5 hover:border-ink-faint'}`}
+                        >
+                          <TemplateThumb id={t.id} />
+                          <span className="flex items-center justify-between gap-2 text-[13px] font-bold text-ink">
+                            {t.name}
+                            {active && <span className="rounded-sm2 bg-brand-light px-1.5 py-0.5 text-[10.5px] font-bold text-brand-dark">Selected</span>}
+                          </span>
+                          <span className="text-[11.5px] leading-snug text-ink-soft">{t.blurb}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input type="hidden" name="invoiceTemplate" value={invoiceTemplate} />
+                  <p className="mt-2 text-[11px] text-ink-faint">Applies to every invoice PDF, including ones already saved — each one is redrawn in the new look the next time it&apos;s opened.</p>
+                </div>
               </div>
 
               <div className={tab === 'gst' ? 'grid grid-cols-1 gap-3' : 'hidden'}>
@@ -312,27 +354,6 @@ export function CompanyForm({ company }: { company: Company }) {
               </div>
 
               <div className={tab === 'compliance' ? 'space-y-5' : 'hidden'}>
-                <div>
-                  <label className="mb-1.5 block text-[11px] font-bold text-ink-faint">Invoice template</label>
-                  <div className="flex gap-2.5">
-                    {(['MODERN', 'CLASSIC'] as const).map((t) => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => setInvoiceTemplate(t)}
-                        className={`flex flex-1 items-center gap-2 rounded-lg2 border-[1.5px] px-3.5 py-2.5 text-left text-[12.5px] font-bold transition-colors ${
-                          invoiceTemplate === t ? 'border-brand bg-brand-light text-brand-dark' : 'border-line text-ink-soft'
-                        }`}
-                      >
-                        <LayoutTemplate size={14} className="flex-shrink-0" />
-                        {t === 'MODERN' ? 'Modern' : 'Classic (GST/Tally)'}
-                      </button>
-                    ))}
-                  </div>
-                  <input type="hidden" name="invoiceTemplate" value={invoiceTemplate} />
-                  <p className="mt-1.5 text-[11px] text-ink-faint">Classic mirrors a standard Tally-style GST tax invoice — IRN/QR, HSN-wise tax summary, and (when generated) an e-Way Bill page.</p>
-                </div>
-
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="FSSAI license no. (optional)" name="fssaiNo" icon={ShieldCheck} mono defaultValue={company.fssaiNo ?? ''} />
                   <Field label="Pincode" name="pincode" icon={MapPin} mono defaultValue={company.pincode ?? ''} />
@@ -384,10 +405,10 @@ export function CompanyForm({ company }: { company: Company }) {
                   </p>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Username" name="nicUsername" icon={IdCard} mono defaultValue={company.nicUsername ?? ''} />
-                    <Field label={company.nicPasswordEnc ? 'Password (•••• saved — leave blank to keep)' : 'Password'} name="nicPassword" type="password" icon={KeyRound} mono />
+                    <Field label={company.nicPasswordSaved ? 'Password (•••• saved — leave blank to keep)' : 'Password'} name="nicPassword" type="password" icon={KeyRound} mono />
                     <Field label="Client ID" name="nicClientId" icon={IdCard} mono defaultValue={company.nicClientId ?? ''} />
                     <Field
-                      label={company.nicClientSecretEnc ? 'Client secret (•••• saved — leave blank to keep)' : 'Client secret'}
+                      label={company.nicClientSecretSaved ? 'Client secret (•••• saved — leave blank to keep)' : 'Client secret'}
                       name="nicClientSecret"
                       type="password"
                       icon={KeyRound}
@@ -399,7 +420,7 @@ export function CompanyForm({ company }: { company: Company }) {
 
               <div className={tab === 'signatures' ? 'space-y-5' : 'hidden'}>
                 <p className="text-[11px] leading-relaxed text-ink-faint">
-                  Printed on the CLASSIC template&apos;s Authorised Signatory row, on the bottom-right of the invoice. Leave blank to keep that side blank for physical signing.
+                  Printed on the Classic and Clean templates&apos; Authorised Signatory row, on the bottom-right of the invoice. Leave blank to keep that side blank for physical signing.
                 </p>
                 <Field label="Authorised signatory name" name="signatoryName" icon={PenLine} defaultValue={company.signatoryName ?? ''} />
 
@@ -482,5 +503,53 @@ function RateRow({
       <span className="flex-1 text-[12.5px] font-bold text-ink-soft">{label}</span>
       <Switch name={enabledName} defaultChecked={defaultEnabled} />
     </div>
+  );
+}
+
+/** A tiny schematic of each template's first page — always on white paper,
+ * like the invoice itself, whatever the app theme. */
+function TemplateThumb({ id }: { id: InvoiceTemplateName }) {
+  // tailwind-merge (cn) so a bar's own height/colour reliably replaces the
+  // default — plain string concatenation leaves that to CSS order.
+  const bar = (cls: string) => cn('block h-1.5 rounded-[2px] bg-[#d1d5db]', cls);
+  return (
+    <span aria-hidden="true" className="grid h-[84px] content-start gap-1.5 overflow-hidden rounded-md2 border border-line bg-white p-2.5">
+      {id === 'MODERN' && (
+        <>
+          <span className={bar('h-2.5 w-[40%] bg-brand')} />
+          <span className={bar('w-[70%]')} />
+          <span className={bar('w-[55%]')} />
+          <span className={bar('h-[26px] bg-[#f1f5f9]')} />
+        </>
+      )}
+      {id === 'CLASSIC' && (
+        <>
+          <span className={bar('h-2 bg-[#9ca3af]')} />
+          <span className="flex gap-1.5">
+            <span className={bar('h-[18px] w-[18px] flex-none')} />
+            <span className="grid flex-1 content-start gap-1">
+              <span className={bar('w-[60%]')} />
+              <span className={bar('w-[90%]')} />
+            </span>
+          </span>
+          <span className={bar('h-[26px] bg-[#e5e7eb]')} />
+        </>
+      )}
+      {id === 'CLEAN' && (
+        <>
+          <span className={bar('mx-auto w-[40%]')} />
+          <span className="grid grid-cols-[22px_1fr_22px] items-center gap-1.5">
+            <span className={bar('h-[22px] bg-brand opacity-70')} />
+            <span className="grid justify-items-center gap-[3px]">
+              <span className={bar('h-[7px] w-[70%] bg-[#6b7280]')} />
+              <span className={bar('w-[90%]')} />
+              <span className={bar('w-[60%]')} />
+            </span>
+            <span className={bar('h-[22px] bg-[#1c1c1c]')} />
+          </span>
+          <span className={bar('h-6 rounded-none border border-[#9ca3af] bg-[#f3f4f6]')} />
+        </>
+      )}
+    </span>
   );
 }

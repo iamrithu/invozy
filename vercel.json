@@ -4,6 +4,24 @@
     "src/app/api/invoices/[id]/pdf/route.ts": {
       "memory": 2048,
       "maxDuration": 60
+    },
+    "src/app/api/pdf/**/route.ts": {
+      "memory": 2048,
+      "maxDuration": 60
+    },
+    "src/app/api/cron/warm/route.ts": {
+      "memory": 2048,
+      "maxDuration": 60
+    },
+    "src/app/api/cron/backup/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/export/backup/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/share/[token]/route.ts": {
+      "maxDuration": 60
     }
-  }
+  },
+  "crons": [{ "path": "/api/cron/backup", "schedule": "30 21 * * *" }]
 }

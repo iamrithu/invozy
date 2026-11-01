@@ -11,6 +11,13 @@ import {
   BarChart3,
   Plus,
   Search,
+  Boxes,
+  ShoppingCart,
+  Truck,
+  FileMinus,
+  Activity as ActivityIcon,
+  UserCog,
+  ClipboardList,
 } from 'lucide-react';
 import { useGlobalSearch } from '@/hooks/use-global-search';
 import { fmtInr } from '@/lib/gst';
@@ -65,12 +72,20 @@ export function CommandPalette({
   const actions: Action[] = useMemo(
     () => [
       { key: 'dashboard', name: 'Go to Dashboard', hint: 'Page', icon: <LayoutDashboard size={15} />, run: () => router.push('/dashboard') },
-      { key: 'company', name: 'Go to Company', hint: 'Page', icon: <Building2 size={15} />, run: () => router.push('/company') },
-      { key: 'products', name: 'Go to Products', hint: 'Page', icon: <Package size={15} />, run: () => router.push('/products') },
-      { key: 'customers', name: 'Go to Customers', hint: 'Page', icon: <Users size={15} />, run: () => router.push('/customers') },
       { key: 'invoices', name: 'Go to Invoices', hint: 'Page', icon: <Receipt size={15} />, run: () => router.push('/invoices') },
+      { key: 'customers', name: 'Go to Customers', hint: 'Page', icon: <Users size={15} />, run: () => router.push('/customers') },
+      { key: 'products', name: 'Go to Products', hint: 'Page', icon: <Package size={15} />, run: () => router.push('/products') },
+      { key: 'inventory', name: 'Go to Inventory', hint: 'Page', icon: <Boxes size={15} />, run: () => router.push('/inventory') },
+      { key: 'purchases', name: 'Go to Purchases', hint: 'Page', icon: <ShoppingCart size={15} />, run: () => router.push('/purchases') },
+      { key: 'suppliers', name: 'Go to Suppliers', hint: 'Page', icon: <Truck size={15} />, run: () => router.push('/suppliers') },
+      { key: 'credit-notes', name: 'Go to Credit notes', hint: 'Page', icon: <FileMinus size={15} />, run: () => router.push('/credit-notes') },
       { key: 'reports', name: 'Go to Reports', hint: 'Page', icon: <BarChart3 size={15} />, run: () => router.push('/reports') },
+      { key: 'loading-sheet', name: "Today's loading sheet", hint: 'Page', icon: <ClipboardList size={15} />, run: () => router.push('/reports/loading-sheet') },
+      { key: 'company', name: 'Go to Company', hint: 'Page', icon: <Building2 size={15} />, run: () => router.push('/company') },
+      { key: 'activity', name: 'Go to Activity log', hint: 'Page', icon: <ActivityIcon size={15} />, run: () => router.push('/activity') },
+      { key: 'team', name: 'Go to Team', hint: 'Page', icon: <UserCog size={15} />, run: () => router.push('/team') },
       { key: 'new-invoice', name: 'New invoice', hint: 'Shortcut', icon: <Plus size={15} />, run: () => router.push('/invoices/new') },
+      { key: 'new-purchase', name: 'New purchase', hint: 'Action', icon: <ShoppingCart size={15} />, run: () => router.push('/purchases/new') },
       { key: 'add-product', name: 'Add product', hint: 'Action', icon: <Package size={15} />, run: onOpenQuickAddProduct },
       { key: 'add-customer', name: 'Add customer', hint: 'Action', icon: <Users size={15} />, run: onOpenQuickAddCustomer },
     ],

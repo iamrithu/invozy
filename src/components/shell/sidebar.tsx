@@ -4,17 +4,23 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 import clsx from 'clsx';
-import { LayoutDashboard, Package, Users, Receipt, BarChart3, Building2, ChevronLeft } from 'lucide-react';
+import { LayoutDashboard, Package, Users, Receipt, BarChart3, Building2, ChevronLeft, Boxes, ShoppingCart, type LucideIcon } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/lib/redux/hooks';
 import { sidebarHydrated, toggleSidebar } from '@/lib/redux/ui-slice';
 import { BrandMark } from '@/components/shell/brand-mark';
 import { APP_NAME } from '@/lib/brand';
 
-const NAV = [
+// Ordered by how often a working day reaches for each: billing first, then
+// who and what you bill, then stock. `also` lists sub-screens that live
+// under an entry without their own nav item (Suppliers sits inside
+// Purchases).
+const NAV: { href: string; label: string; icon: LucideIcon; tour?: string; also?: string[] }[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, tour: 'nav-dashboard' },
-  { href: '/products', label: 'Products', icon: Package, tour: 'nav-products' },
-  { href: '/customers', label: 'Customers', icon: Users, tour: 'nav-customers' },
   { href: '/invoices', label: 'Invoices', icon: Receipt },
+  { href: '/customers', label: 'Customers', icon: Users, tour: 'nav-customers' },
+  { href: '/products', label: 'Products', icon: Package, tour: 'nav-products' },
+  { href: '/inventory', label: 'Inventory', icon: Boxes },
+  { href: '/purchases', label: 'Purchases', icon: ShoppingCart, also: ['/suppliers'] },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
   { href: '/company', label: 'Company', icon: Building2 },
 ];
@@ -37,7 +43,7 @@ export function Sidebar() {
     >
       <nav className="flex flex-1 flex-col gap-1">
         {NAV.map((item) => {
-          const active = pathname?.startsWith(item.href);
+          const active = [item.href, ...(item.also ?? [])].some((href) => pathname?.startsWith(href));
           const Icon = item.icon;
           return (
             <Link

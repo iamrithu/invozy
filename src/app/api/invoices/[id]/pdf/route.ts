@@ -1,125 +1,84 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { requireUser } from '@/lib/session';
-import { getSharedBrowser } from '@/lib/pdf-browser';
+import { verifySignedToken } from '@/lib/signed-token';
+import { ensureInvoicePdf, getInvoicePdf, invoicePdfFileName, PdfNotFoundError } from '@/lib/invoice-pdf';
 
 export const dynamic = 'force-dynamic';
-// Launching @sparticuz/chromium cold (extracting its bundled binary) plus a
-// full page render/networkidle wait routinely takes longer than a
-// serverless function's default duration — Vercel's default is 15s on Pro
-// (10s on Hobby, which cannot be raised past this at all), well under what
-// a cold start needs. See vercel.json for the matching memory bump; chromium
-// is memory-hungry enough that the default 1024MB can also cause failures.
+// A cold @sparticuz/chromium launch (extracting its bundled binary) plus a
+// render can outlast a serverless function's default duration; renders
+// themselves are capped at 20s in src/lib/invoice-pdf.ts. See vercel.json
+// for the matching memory bump — Chromium needs more than the default.
 export const maxDuration = 60;
 
 /**
- * Real, one-click PDF download (as opposed to PrintButton's window.print(),
- * which only opens the browser's print dialog) — headlessly renders this
- * exact same /invoices/[id] page (same HTML/CSS/print rules already
- * verified via manual print-to-PDF) via Playwright and streams the result
- * back as an attachment.
+ * The invoice PDF — the one place PDFs are rendered (this function is the
+ * one with Chromium bundled; see the top of src/lib/invoice-pdf.ts).
  *
- * See src/lib/pdf-browser.ts for which Chromium actually gets launched —
- * locally it's the full `playwright` package's own downloaded browser;
- * on Vercel (or any serverless host) it's `@sparticuz/chromium` driven via
- * `playwright-core`, since a downloaded browser binary never makes it into
- * a serverless function's deployment bundle.
+ * GET (signed-in users): the stored PDF when it's current, otherwise a
+ * fresh render. Served as a download named after the invoice number
+ * ("ASB-26-27-1020.pdf"), or shown in the browser with `?inline=1` (the
+ * in-app viewer).
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser().catch(() => null);
   if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const { id } = await params;
-  const invoice = await prisma.invoice.findUnique({ where: { id }, select: { number: true } });
-  if (!invoice) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
+  try {
+    const { buffer, number } = await getInvoicePdf(id, { origin: req.nextUrl.origin });
+    return pdfResponse(buffer, number, req.nextUrl.searchParams.get('inline') === '1' ? 'inline' : 'attachment');
+  } catch (e) {
+    return errorResponse(id, e);
+  }
+}
+
+/**
+ * Machine-to-machine: `Authorization: Bearer <'pdf-build' token for this
+ * invoice>` (src/lib/invoice-pdf.ts's requestPdfFromRenderer). Used by
+ * schedulePdfBuild after an invoice is saved — answers 202 at once and
+ * builds after responding — and by the public share link when the stored
+ * copy is stale (`?wait=1`: answers with the PDF itself).
+ */
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+  if (verifySignedToken('pdf-build', token) !== id) return NextResponse.json({ error: 'Not allowed' }, { status: 403 });
 
   const origin = req.nextUrl.origin;
-  const cookieHeader = req.headers.get('cookie') ?? '';
-  const cookies = cookieHeader
-    .split(';')
-    .map((c) => c.trim())
-    .filter(Boolean)
-    .map((c) => {
-      const idx = c.indexOf('=');
-      return { name: c.slice(0, idx), value: c.slice(idx + 1), url: origin };
+  if (req.nextUrl.searchParams.get('wait') !== '1') {
+    after(async () => {
+      try {
+        await ensureInvoicePdf(id, { origin });
+      } catch (e) {
+        if (!(e instanceof PdfNotFoundError)) console.error(`PDF prebuild failed for invoice ${id}`, e);
+      }
     });
-
-  const browser = await getSharedBrowser();
-  const context = await browser.newContext();
-  try {
-    // Forwards the requesting user's own session cookie into the headless
-    // context, so this internal navigation loads authenticated as them —
-    // no separate service-account/token scheme needed.
-    if (cookies.length) await context.addCookies(cookies);
-    const page = await context.newPage();
-    // Set *before* navigating, not after: the invoice sheet's self-
-    // measuring pagination (see print-pagination.tsx) measures real
-    // section heights on mount, and those sections only exist in the
-    // layout at all once print media is active (the print-only copy is
-    // collapsed to zero height outside of it — see the `.invoice-print`
-    // wrapper in invoices/[id]/page.tsx). Emulating print media only
-    // after the page has already loaded and measured would have it
-    // measure everything as zero and silently fall back to "no
-    // pagination".
-    await page.emulateMedia({ media: 'print' });
-    // `pdfRender=1` tells the detail page to skip InlinePdfPreview (see
-    // src/app/(app)/invoices/[id]/page.tsx) — that component fetches this
-    // very endpoint to render inline, so without this guard rendering the
-    // page here would recursively re-trigger this same route from inside
-    // itself (each nested render spawning another browser context) until
-    // requests time out and the shared browser is left wedged.
-    await page.goto(`${origin}/invoices/${id}?pdfRender=1`, { waitUntil: 'networkidle', timeout: 45_000 });
-    // The invoice sheet renders once, measures its own real section
-    // heights, then re-renders with the corrected page split — this waits
-    // for that corrected layout to commit (see the `data-pdf-ready`
-    // marker in invoice-sheet.tsx / invoice-sheet-classic.tsx) rather than
-    // capturing whatever happened to be on screen right after navigation.
-    // `state: 'attached'` — the marker is deliberately `display:none` (see
-    // its render site), so the default `state: 'visible'` would never
-    // resolve; presence in the DOM is all that signals the corrected
-    // layout has committed.
-    await page.waitForSelector('[data-pdf-ready="true"]', { state: 'attached', timeout: 15_000 });
-    const pdf = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-      // A multi-page invoice (many line items, or the closing block
-      // overflowing onto its own page — see ClassicClosing's natural print
-      // flow) otherwise gives no clue a page was cut off — this footer runs
-      // on every physical page once page count is known, using Chromium's
-      // own pagination (`pageNumber`/`totalPages` are computed post-layout
-      // by Chromium itself, so this is accurate even when the split comes
-      // from natural content overflow rather than this app's own explicit
-      // per-item pagination).
-      displayHeaderFooter: true,
-      headerTemplate: '<span></span>',
-      footerTemplate: `
-        <div style="width: 100%; display: flex; justify-content: space-between; font-size: 8.5px; font-family: 'IBM Plex Sans', system-ui, sans-serif; color: #000; padding: 0 12mm;">
-          <span>This is a computer generated invoice.</span>
-          <span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>
-        </div>
-      `,
-      margin: { top: '14mm', bottom: '14mm', left: '12mm', right: '12mm' },
-    });
-
-    // `?inline=1` (used by InlinePdfPreview/PdfViewer) shows the PDF
-    // in-browser instead of forcing a save-file prompt; the actual Download
-    // button never reads this header (it fetches as a blob and forces its
-    // own filename via an anchor's `download` attribute), so this only
-    // affects the embedded viewers' direct navigation.
-    const inline = req.nextUrl.searchParams.get('inline') === '1';
-    const filename = invoice.number.replace(/[^a-zA-Z0-9-]/g, '-');
-
-    return new NextResponse(new Uint8Array(pdf), {
-      headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${filename}.pdf"`,
-        'Content-Length': String(pdf.length),
-      },
-    });
-  } catch (e) {
-    console.error(`PDF generation failed for invoice ${id}`, e);
-    return NextResponse.json({ error: 'PDF generation failed' }, { status: 500 });
-  } finally {
-    await context.close();
+    return new NextResponse(null, { status: 202 });
   }
+
+  try {
+    const { buffer, number } = await getInvoicePdf(id, { origin });
+    return pdfResponse(buffer, number, 'inline');
+  } catch (e) {
+    return errorResponse(id, e);
+  }
+}
+
+function pdfResponse(pdf: Buffer, invoiceNumber: string, disposition: 'inline' | 'attachment') {
+  return new NextResponse(new Uint8Array(pdf), {
+    headers: {
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `${disposition}; filename="${invoicePdfFileName(invoiceNumber)}"`,
+      'Content-Length': String(pdf.length),
+      // Per-user and changes on every edit — never let a browser or CDN
+      // hand back yesterday's copy.
+      'Cache-Control': 'private, no-store',
+    },
+  });
+}
+
+function errorResponse(id: string, e: unknown) {
+  if (e instanceof PdfNotFoundError) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
+  console.error(`PDF generation failed for invoice ${id}`, e);
+  return NextResponse.json({ error: 'Could not prepare the PDF. Please try again.' }, { status: 500 });
 }

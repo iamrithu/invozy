@@ -3,8 +3,8 @@
 import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useSession, signOut } from 'next-auth/react';
-import { Search, Bell, Plus, Building2, ChevronDown, Package, Users, Receipt, LogOut, UserCog, Compass } from 'lucide-react';
+import { signOut } from 'next-auth/react';
+import { Search, Bell, Plus, Building2, ChevronDown, Package, Users, Receipt, LogOut, UserCog, Compass, UsersRound, History } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
 import { CommandPalette } from '@/components/shell/command-palette';
 import { ThemeToggle } from '@/components/shell/theme-toggle';
@@ -15,11 +15,16 @@ import { useAppDispatch } from '@/lib/redux/hooks';
 import { requestTour } from '@/lib/redux/ui-slice';
 import { fmtInr } from '@/lib/gst';
 import { Skeleton } from '@/components/ui/skeleton';
+import { roleLabel, useCurrentUser, userLabel } from '@/components/current-user';
+import { initials } from '@/lib/avatar';
 
 export function TopBar({ company }: { company: { name: string; logoUrl: string | null } }) {
   const router = useRouter();
   const dispatch = useAppDispatch();
-  const { data: session } = useSession();
+  // From the app layout (CurrentUserProvider) rather than useSession(): the
+  // session cookie only carries the user id, not their name or role.
+  const me = useCurrentUser();
+  const meLabel = userLabel(me);
   const [search, setSearch] = useState('');
   const [showResults, setShowResults] = useState(false);
   const [addProductOpen, setAddProductOpen] = useState(false);
@@ -179,15 +184,37 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
               data-tour="account-menu"
               className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-sm2 bg-brand-light text-[11px] font-extrabold text-brand-dark sm:h-9 sm:w-9 sm:text-[12px]"
             >
-              {(session?.user?.email ?? 'U').slice(0, 1).toUpperCase()}
+              {initials(me.name || meLabel.split('@')[0]).slice(0, 2) || 'U'}
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuLabel className="truncate">{session?.user?.email ?? 'Signed in'}</DropdownMenuLabel>
+          <DropdownMenuContent align="end" className="min-w-[210px] max-w-[260px]">
+            <DropdownMenuLabel className="font-normal">
+              <div className="truncate text-[13px] font-bold text-ink">{meLabel}</div>
+              <div className="mt-1 flex min-w-0 items-center gap-1.5">
+                <span
+                  className={`flex-shrink-0 rounded-sm2 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide ${
+                    me.isOwner ? 'bg-brand-light text-brand-dark' : 'bg-surface-alt text-ink-soft'
+                  }`}
+                >
+                  {roleLabel(me.role)}
+                </span>
+                {me.name && (me.email || me.phone) && <span className="truncate text-[11px] font-semibold text-ink-faint">{me.email || me.phone}</span>}
+              </div>
+            </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => router.push('/account')}>
               <UserCog size={14} /> My account
             </DropdownMenuItem>
+            {me.isOwner && (
+              <>
+                <DropdownMenuItem onClick={() => router.push('/team')}>
+                  <UsersRound size={14} /> Team &amp; logins
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => router.push('/activity')}>
+                  <History size={14} /> Activity log
+                </DropdownMenuItem>
+              </>
+            )}
             <DropdownMenuItem onClick={() => dispatch(requestTour())}>
               <Compass size={14} /> Replay tour
             </DropdownMenuItem>

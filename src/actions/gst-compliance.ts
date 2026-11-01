@@ -2,6 +2,7 @@
 
 import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
+import { schedulePdfBuild } from '@/lib/invoice-pdf';
 import { prisma } from '@/lib/prisma';
 import { getCompany } from '@/lib/get-company';
 import { computeTotals, decidesIgst } from '@/lib/gst';
@@ -122,7 +123,8 @@ export async function generateEinvoice(invoiceId: string): Promise<GstCompliance
   const result = await generateIrn(nic.config, input);
   if (!result.ok) {
     await prisma.invoice.update({ where: { id: invoiceId }, data: { einvoiceStatus: 'FAILED', einvoiceError: result.error } });
-    revalidatePath(`/invoices/${invoiceId}`);
+    schedulePdfBuild(invoiceId);
+  revalidatePath(`/invoices/${invoiceId}`);
     return { error: result.error };
   }
 
@@ -137,6 +139,7 @@ export async function generateEinvoice(invoiceId: string): Promise<GstCompliance
       einvoiceError: null,
     },
   });
+  schedulePdfBuild(invoiceId);
   revalidatePath(`/invoices/${invoiceId}`);
   return {};
 }
@@ -220,7 +223,8 @@ export async function generateEwaybillAction(invoiceId: string, transportDetails
   const result = await generateEwaybill(nic.config, input);
   if (!result.ok) {
     await prisma.invoice.update({ where: { id: invoiceId }, data: { ewaybillStatus: 'FAILED', ewbError: result.error } });
-    revalidatePath(`/invoices/${invoiceId}`);
+    schedulePdfBuild(invoiceId);
+  revalidatePath(`/invoices/${invoiceId}`);
     return { error: result.error };
   }
 
@@ -234,6 +238,7 @@ export async function generateEwaybillAction(invoiceId: string, transportDetails
       ewbError: null,
     },
   });
+  schedulePdfBuild(invoiceId);
   revalidatePath(`/invoices/${invoiceId}`);
   return {};
 }
@@ -264,6 +269,7 @@ export async function cancelEinvoiceAction(invoiceId: string, input: { reasonCod
   if (!result.ok) return { error: result.error };
 
   await prisma.invoice.update({ where: { id: invoiceId }, data: { einvoiceStatus: 'CANCELLED', einvoiceError: null } });
+  schedulePdfBuild(invoiceId);
   revalidatePath(`/invoices/${invoiceId}`);
   return {};
 }
@@ -285,6 +291,7 @@ export async function cancelEwaybillAction(invoiceId: string, input: { reasonCod
   if (!result.ok) return { error: result.error };
 
   await prisma.invoice.update({ where: { id: invoiceId }, data: { ewaybillStatus: 'CANCELLED', ewbError: null } });
+  schedulePdfBuild(invoiceId);
   revalidatePath(`/invoices/${invoiceId}`);
   return {};
 }

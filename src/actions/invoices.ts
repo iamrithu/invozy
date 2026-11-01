@@ -1,23 +1,30 @@
 'use server';
 
 import { z } from 'zod';
+import { headers } from 'next/headers';
 import type { Prisma, InvoiceStatus } from '@prisma/client';
 import { revalidatePath } from 'next/cache';
-import { prisma } from '@/lib/prisma';
+import { prisma, type Tx } from '@/lib/prisma';
 import { getCompany } from '@/lib/get-company';
-import { requireUser } from '@/lib/session';
-import { computeTotals, formatInvoiceNumber, isOverCreditLimit, deriveStatus, DEFAULT_HSN } from '@/lib/gst';
+import { requireOwner, requireUser } from '@/lib/session';
+import { computeTotals, formatInvoiceNumber, isOverCreditLimit, deriveStatus, DEFAULT_HSN, fmtInr } from '@/lib/gst';
 import { totalsColumns, customerOutstanding } from '@/lib/invoice-totals';
 import { istDayRangeUtc } from '@/lib/dates';
+import { toActionError } from '@/lib/action-result';
+import { logActivity } from '@/lib/activity';
+import { invoiceHeld, lineStockQuantities, postStockChanges, sumByProduct } from '@/lib/stock';
+import { schedulePdfBuild } from '@/lib/invoice-pdf';
+import { invoiceShareToken } from '@/lib/signed-token';
+import { deleteUploadedImage } from '@/lib/uploads';
 
 const LineSchema = z.object({
   // Nullable — an ad-hoc/custom line item isn't backed by a catalog Product.
   productId: z.string().nullable(),
-  name: z.string(),
+  name: z.string().trim().min(1, 'needs a name'),
   unit: z.string(),
-  qty: z.coerce.number().positive(),
-  rate: z.coerce.number().min(0),
-  discount: z.coerce.number().min(0).max(100).default(0),
+  qty: z.coerce.number().positive('quantity must be more than zero'),
+  rate: z.coerce.number().min(0, "rate can't be negative"),
+  discount: z.coerce.number().min(0, 'discount must be between 0 and 100%').max(100, 'discount must be between 0 and 100%').default(0),
   // Snapshotted at creation time (CLASSIC template + e-Invoice/e-Way Bill) —
   // hsn defaults from the product's catalog HSN when not overridden per-line.
   hsn: z.string().optional().nullable(),
@@ -26,145 +33,67 @@ const LineSchema = z.object({
   altQtyPerUnit: z.coerce.number().optional().nullable(),
 });
 
-const InvoiceInputSchema = z.object({
-  customerId: z.string().min(1, 'Select a customer'),
-  date: z.string(),
-  due: z.string(),
-  items: z.array(LineSchema).min(1, 'Add at least one line item'),
-  overallDiscountType: z.enum(['PERCENT', 'FLAT']).default('PERCENT'),
-  overallDiscountValue: z.coerce.number().min(0).default(0),
-  notes: z.string().optional().nullable(),
-  deliveryInstructions: z.string().optional().nullable(),
-  // Informal transport reference — see schema.prisma's comment on these
-  // same fields. Independent of the GST/e-Way Bill machinery entirely.
-  showTransportDetails: z.coerce.boolean().default(false),
-  transportVehicleNo: z.string().optional().nullable(),
-  transportDriverName: z.string().optional().nullable(),
-  transportDriverPhone: z.string().optional().nullable(),
-  markSent: z.boolean().default(false),
-  // Records a full-amount Payment alongside the invoice so it's created
-  // already PAID — for walk-in/cash-on-delivery sales where there's no real
-  // "unpaid" period to track, this skips the separate record-payment step.
-  markPaid: z.boolean().default(false),
-  // GST config + PDF section visibility, snapshotted onto the Invoice row —
-  // see the schema.prisma comment on these same fields for why. The client
-  // always sends a complete set (pre-filled from Company defaults, or from
-  // the invoice's own existing snapshot when editing), so these Zod
-  // defaults are only a safety net, not the primary UX path.
-  cgstRate: z.coerce.number().min(0).max(100).default(9),
-  sgstRate: z.coerce.number().min(0).max(100).default(9),
-  igstRate: z.coerce.number().min(0).max(100).default(18),
-  cgstEnabled: z.coerce.boolean().default(true),
-  sgstEnabled: z.coerce.boolean().default(true),
-  igstEnabled: z.coerce.boolean().default(true),
-  showBankDetails: z.coerce.boolean().default(true),
-  showHsnSummary: z.coerce.boolean().default(false),
-  showUpiQr: z.coerce.boolean().default(false),
-  showGpayNumber: z.coerce.boolean().default(false),
-});
-
-export type InvoiceInput = z.infer<typeof InvoiceInputSchema>;
-export type InvoiceActionResult = { error?: string; warning?: string; invoiceId?: string };
-
-/**
- * The one function everything in the create-invoice flow ultimately calls.
- * Mirrors end-to-end-flow.md §2: validate → recompute totals server-side →
- * check credit limit (advisory) → transaction (claim invoice number + insert).
- */
-export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionResult> {
-  const parsed = InvoiceInputSchema.safeParse(input);
-  if (!parsed.success) {
-    return { error: parsed.error.issues[0]?.message ?? 'Invalid invoice' };
-  }
-  const data = parsed.data;
-
-  // The outstanding-balance lookup only matters when the customer has a
-  // credit limit, but it's one indexed aggregate — running it alongside
-  // the other two reads is cheaper than a second round trip afterwards.
-  const [company, customer, outstandingBefore] = await Promise.all([
-    getCompany(),
-    prisma.customer.findUnique({ where: { id: data.customerId } }),
-    customerOutstanding(data.customerId),
-  ]);
-  if (!customer) return { error: 'Customer not found' };
-
-  const totals = computeTotals(
-    data.items.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount })),
-    { type: data.overallDiscountType, value: data.overallDiscountValue },
-    {
-      cgstRate: data.cgstRate,
-      sgstRate: data.sgstRate,
-      igstRate: data.igstRate,
-      cgstEnabled: data.cgstEnabled,
-      sgstEnabled: data.sgstEnabled,
-      igstEnabled: data.igstEnabled,
-    },
-    company.state,
-    customer.state
-  );
-
-  // §3.4 — advisory, not blocking, matching the prototype's UI.
-  const warning = isOverCreditLimit(outstandingBefore, totals.total, Number(customer.creditLimit))
-    ? `This will put ${customer.name} at or over their credit limit.`
-    : undefined;
-
-  // §3.3 — claim the number and insert inside one transaction so two
-  // concurrent invoice creations can never collide on the same number.
-  const invoice = await prisma.$transaction(async (tx) => {
-    const number = await claimInvoiceNumber(tx, company.id);
-    return tx.invoice.create({
-      data: {
-        customerId: customer.id,
-        number,
-        date: new Date(data.date),
-        due: new Date(data.due),
-        status: data.markPaid ? 'PAID' : data.markSent ? 'SENT' : 'DRAFT',
-        overallDiscountType: data.overallDiscountType,
-        overallDiscountValue: data.overallDiscountValue,
-        notes: data.notes?.trim() || null,
-        deliveryInstructions: data.deliveryInstructions?.trim() || null,
-        showTransportDetails: data.showTransportDetails,
-        transportVehicleNo: data.transportVehicleNo?.trim() || null,
-        transportDriverName: data.transportDriverName?.trim() || null,
-        transportDriverPhone: data.transportDriverPhone?.trim() || null,
-        // Snapshotted, not re-read from Company later — see schema.prisma.
-        cgstRate: data.cgstRate,
-        sgstRate: data.sgstRate,
-        igstRate: data.igstRate,
-        cgstEnabled: data.cgstEnabled,
-        sgstEnabled: data.sgstEnabled,
-        igstEnabled: data.igstEnabled,
-        showBankDetails: data.showBankDetails,
-        showHsnSummary: data.showHsnSummary,
-        showUpiQr: data.showUpiQr,
-        showGpayNumber: data.showGpayNumber,
-        ...totalsColumns(totals),
-        amountPaid: data.markPaid ? totals.total : 0,
-        items: {
-          create: data.items.map((l) => ({
-            productId: l.productId,
-            name: l.name, // snapshot — see schema.prisma comment
-            unit: l.unit,
-            qty: l.qty,
-            rate: l.rate,
-            discount: l.discount,
-            // Persisted (not just a display-time fallback — see invoice-sheet-classic.tsx)
-            // so the completeness checklist and any real e-Invoice/e-Way Bill
-            // submission see a real code instead of a missing one.
-            hsn: l.hsn?.trim() || company.defaultHsn || DEFAULT_HSN,
-            batch: l.batch,
-            altUnit: l.altUnit,
-            altQtyPerUnit: l.altQtyPerUnit,
-          })),
-        },
-        ...(data.markPaid ? { payments: { create: { amount: totals.total, date: new Date(data.date), mode: 'Cash' } } } : {}),
-      },
-    });
+const InvoiceInputSchema = z
+  .object({
+    customerId: z.string().min(1, 'Select a customer'),
+    date: z.string(),
+    due: z.string(),
+    items: z.array(LineSchema).min(1, 'Add at least one line item'),
+    overallDiscountType: z.enum(['PERCENT', 'FLAT']).default('PERCENT'),
+    overallDiscountValue: z.coerce.number().min(0, "The bill discount can't be negative").default(0),
+    notes: z.string().optional().nullable(),
+    deliveryInstructions: z.string().optional().nullable(),
+    // Informal transport reference — see schema.prisma's comment on these
+    // same fields. Independent of the GST/e-Way Bill machinery entirely.
+    showTransportDetails: z.coerce.boolean().default(false),
+    transportVehicleNo: z.string().optional().nullable(),
+    transportDriverName: z.string().optional().nullable(),
+    transportDriverPhone: z.string().optional().nullable(),
+    markSent: z.boolean().default(false),
+    // Records a payment for whatever is still due alongside the save, so a
+    // walk-in/cash-on-delivery sale is created already PAID.
+    markPaid: z.boolean().default(false),
+    paymentMode: z.string().optional().nullable(),
+    // Owner only: save even though a tracked product would go below zero
+    // (the count is wrong and the goods really are there). See postStockChanges.
+    allowNegativeStock: z.boolean().default(false),
+    // GST config + PDF section visibility, snapshotted onto the Invoice row —
+    // see the schema.prisma comment on these same fields for why. The client
+    // always sends a complete set (pre-filled from Company defaults, or from
+    // the invoice's own existing snapshot when editing), so these Zod
+    // defaults are only a safety net, not the primary UX path.
+    cgstRate: z.coerce.number().min(0).max(100).default(9),
+    sgstRate: z.coerce.number().min(0).max(100).default(9),
+    igstRate: z.coerce.number().min(0).max(100).default(18),
+    cgstEnabled: z.coerce.boolean().default(true),
+    sgstEnabled: z.coerce.boolean().default(true),
+    igstEnabled: z.coerce.boolean().default(true),
+    showBankDetails: z.coerce.boolean().default(true),
+    showHsnSummary: z.coerce.boolean().default(false),
+    showUpiQr: z.coerce.boolean().default(false),
+    showGpayNumber: z.coerce.boolean().default(false),
+  })
+  .refine((d) => d.overallDiscountType !== 'PERCENT' || d.overallDiscountValue <= 100, {
+    message: 'The bill discount must be between 0 and 100%',
+    path: ['overallDiscountValue'],
   });
 
-  revalidatePath('/invoices');
-  revalidatePath('/dashboard');
-  return { invoiceId: invoice.id, warning };
+export type InvoiceInput = z.input<typeof InvoiceInputSchema>;
+export type InvoiceActionResult = { error?: string; warning?: string; invoiceId?: string; number?: string; status?: InvoiceStatus };
+
+/** Zod's first issue as a sentence a person can act on — "Line 3 (CM -
+ * Cassata): discount must be between 0 and 100%" instead of "Number must be
+ * less than or equal to 100". */
+function parseInvoiceInput(input: InvoiceInput) {
+  const parsed = InvoiceInputSchema.safeParse(input);
+  if (parsed.success) return { data: parsed.data };
+  const issue = parsed.error.issues[0];
+  if (issue && issue.path[0] === 'items' && typeof issue.path[1] === 'number') {
+    const i = issue.path[1];
+    const name = input.items?.[i]?.name;
+    return { error: `Line ${i + 1}${name ? ` (${name})` : ''}: ${issue.message}` };
+  }
+  return { error: issue?.message ?? 'Check the invoice and try again.' };
 }
 
 /** Atomically takes the company's next invoice number — the UPDATE's row
@@ -181,159 +110,329 @@ async function claimInvoiceNumber(tx: Pick<typeof prisma, 'company'>, companyId:
   return formatInvoiceNumber(c.invoicePrefix, c.invoiceFY, c.nextInvoiceNo - 1);
 }
 
-/**
- * Full edit of an existing invoice — same validation/totals/credit-limit flow
- * as createInvoice, but updates the invoice row + replaces its items in
- * place instead of claiming a new number. Editable any time up to (not
- * including) PAID — once fully paid it's treated as settled/closed, the
- * same real-world constraint most billing software enforces past that
- * point (recordPayment/duplicateInvoice are the supported paths after).
- */
-export async function updateInvoice(invoiceId: string, input: InvoiceInput): Promise<InvoiceActionResult> {
-  const parsed = InvoiceInputSchema.safeParse(input);
-  if (!parsed.success) {
-    return { error: parsed.error.issues[0]?.message ?? 'Invalid invoice' };
-  }
-  const data = parsed.data;
-
-  const [company, existing, customer, outstandingBefore] = await Promise.all([
-    getCompany(),
-    prisma.invoice.findUnique({ where: { id: invoiceId } }),
-    prisma.customer.findUnique({ where: { id: data.customerId } }),
-    // Excludes this invoice's own (pre-edit) record — otherwise its old
-    // total would double-count against the newly edited total below.
-    customerOutstanding(data.customerId, invoiceId),
-  ]);
-  if (!existing) return { error: 'Invoice not found' };
-  if (existing.status === 'PAID') return { error: 'This invoice is already paid in full and can no longer be edited' };
-  if (!customer) return { error: 'Customer not found' };
-  // Real money already recorded (e.g. a PARTIALLY_PAID invoice) — markPaid
-  // below must only top up the remaining balance, never re-insert the full
-  // total as a second payment on top of what's already on file.
-  const alreadyPaid = Number(existing.amountPaid);
-
-  // Once an e-Invoice IRN has been filed with NIC, its tax amounts are
-  // locked with the government (there's no amend API, only cancel-within-
-  // 24h) — a GST-config edit here would desync the locally displayed/
-  // stored totals from what was actually filed. Ignore whatever the client
-  // submitted for these 8 fields in that case and keep the invoice's
-  // existing snapshot, regardless of what the (should-be-disabled) client
-  // UI sent — this is a server-side guard, not just a UI affordance.
-  const gst = existing.irn
-    ? {
-        cgstRate: Number(existing.cgstRate),
-        sgstRate: Number(existing.sgstRate),
-        igstRate: Number(existing.igstRate),
-        cgstEnabled: existing.cgstEnabled,
-        sgstEnabled: existing.sgstEnabled,
-        igstEnabled: existing.igstEnabled,
-        showBankDetails: existing.showBankDetails,
-        showHsnSummary: existing.showHsnSummary,
-        showUpiQr: existing.showUpiQr,
-        showGpayNumber: existing.showGpayNumber,
-      }
-    : {
-        cgstRate: data.cgstRate,
-        sgstRate: data.sgstRate,
-        igstRate: data.igstRate,
-        cgstEnabled: data.cgstEnabled,
-        sgstEnabled: data.sgstEnabled,
-        igstEnabled: data.igstEnabled,
-        showBankDetails: data.showBankDetails,
-        showHsnSummary: data.showHsnSummary,
-        showUpiQr: data.showUpiQr,
-        showGpayNumber: data.showGpayNumber,
-      };
-
-  const totals = computeTotals(
-    data.items.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount })),
-    { type: data.overallDiscountType, value: data.overallDiscountValue },
-    {
-      cgstRate: gst.cgstRate,
-      sgstRate: gst.sgstRate,
-      igstRate: gst.igstRate,
-      cgstEnabled: gst.cgstEnabled,
-      sgstEnabled: gst.sgstEnabled,
-      igstEnabled: gst.igstEnabled,
-    },
-    company.state,
-    customer.state
-  );
-
-  const warning = isOverCreditLimit(outstandingBefore, totals.total, Number(customer.creditLimit))
-    ? `This will put ${customer.name} at or over their credit limit.`
-    : undefined;
-
-  // Only top up the remaining balance — inserting the full total again would
-  // double-count whatever's already been recorded against this invoice
-  // (e.g. a PARTIALLY_PAID one). And the resulting status is *derived*, not
-  // just taken from which Save button was clicked: real money already on
-  // file must promote a plain "Save as draft"/"Save & mark as sent" click
-  // to at least PARTIALLY_PAID rather than silently erasing that a partial
-  // payment exists — deriveStatus (below) already encodes exactly that
-  // precedence, same as recordPayment's own status transitions.
-  const topUp = data.markPaid ? Math.max(totals.total - alreadyPaid, 0) : 0;
-  const newStatus = deriveStatus(totals.total, alreadyPaid + topUp, data.markSent || data.markPaid);
-
-  const updated = await prisma.$transaction(async (tx) => {
-    await tx.invoiceItem.deleteMany({ where: { invoiceId } });
-    return tx.invoice.update({
-      where: { id: invoiceId },
-      data: {
-        customerId: customer.id,
-        date: new Date(data.date),
-        due: new Date(data.due),
-        status: newStatus,
-        overallDiscountType: data.overallDiscountType,
-        overallDiscountValue: data.overallDiscountValue,
-        notes: data.notes?.trim() || null,
-        deliveryInstructions: data.deliveryInstructions?.trim() || null,
-        showTransportDetails: data.showTransportDetails,
-        transportVehicleNo: data.transportVehicleNo?.trim() || null,
-        transportDriverName: data.transportDriverName?.trim() || null,
-        transportDriverPhone: data.transportDriverPhone?.trim() || null,
-        // `gst` above already resolves to the invoice's existing (locked)
-        // snapshot when an IRN exists, or the submitted override otherwise.
-        cgstRate: gst.cgstRate,
-        sgstRate: gst.sgstRate,
-        igstRate: gst.igstRate,
-        cgstEnabled: gst.cgstEnabled,
-        sgstEnabled: gst.sgstEnabled,
-        igstEnabled: gst.igstEnabled,
-        showBankDetails: gst.showBankDetails,
-        showHsnSummary: gst.showHsnSummary,
-        showUpiQr: gst.showUpiQr,
-        showGpayNumber: gst.showGpayNumber,
-        ...totalsColumns(totals),
-        amountPaid: alreadyPaid + (topUp > 0.004 ? topUp : 0),
-        items: {
-          create: data.items.map((l) => ({
-            productId: l.productId,
-            name: l.name,
-            unit: l.unit,
-            qty: l.qty,
-            rate: l.rate,
-            discount: l.discount,
-            hsn: l.hsn?.trim() || company.defaultHsn || DEFAULT_HSN,
-            batch: l.batch,
-            altUnit: l.altUnit,
-            altQtyPerUnit: l.altQtyPerUnit,
-          })),
-        },
-        ...(topUp > 0.004 ? { payments: { create: { amount: topUp, date: new Date(data.date), mode: 'Cash' } } } : {}),
-      },
-    });
+/** Same claim-in-transaction pattern as claimInvoiceNumber, for the
+ * sequential number printed on a payment receipt. */
+async function claimReceiptNumber(tx: Pick<typeof prisma, 'company'>, companyId: string) {
+  const c = await tx.company.update({
+    where: { id: companyId },
+    data: { nextReceiptNo: { increment: 1 } },
+    select: { receiptPrefix: true, invoiceFY: true, nextReceiptNo: true },
   });
-
-  revalidatePath('/invoices');
-  revalidatePath('/dashboard');
-  revalidatePath(`/invoices/${invoiceId}`);
-  return { invoiceId: updated.id, warning };
+  return formatInvoiceNumber(c.receiptPrefix, c.invoiceFY, c.nextReceiptNo - 1);
 }
 
-/** Only the columns the Invoices list/detail sheet actually render — totals
- * come from the stored columns (see schema.prisma), so no items join is
- * needed, just a count. */
+// Interactive transactions default to a 5s budget; an invoice save now
+// also posts one stock movement per tracked product, so give a slow Neon
+// wake-up room before Prisma aborts a perfectly good save.
+const TX_OPTIONS = { timeout: 20_000, maxWait: 10_000 };
+
+/** Stored lines with their main-unit stock quantity. Lines saved before
+ * stock tracking existed carry no stockQty snapshot, so it's derived from
+ * their qty/unit here — otherwise the "before" side of a stock difference
+ * would treat them as consuming nothing. */
+async function withStockQty(tx: Tx, items: { productId: string | null; qty: unknown; unit: string; stockQty: unknown }[]) {
+  if (!items.some((it) => it.productId && it.stockQty == null)) return items.map((it) => ({ productId: it.productId, stockQty: it.stockQty }));
+  const derived = await lineStockQuantities(tx, items.map((it) => ({ productId: it.productId, qty: Number(it.qty), unit: it.unit })));
+  return items.map((it, i) => ({ productId: it.productId, stockQty: it.stockQty ?? derived[i] }));
+}
+
+function itemRows(items: z.infer<typeof LineSchema>[], stockQtys: (number | null)[], defaultHsn: string) {
+  return items.map((l, i) => ({
+    productId: l.productId,
+    name: l.name, // snapshot — see schema.prisma comment
+    unit: l.unit,
+    qty: l.qty,
+    rate: l.rate,
+    discount: l.discount,
+    // Persisted (not just a display-time fallback) so the completeness
+    // checklist and any real e-Invoice/e-Way Bill submission see a real code.
+    hsn: l.hsn?.trim() || defaultHsn || DEFAULT_HSN,
+    batch: l.batch,
+    altUnit: l.altUnit,
+    altQtyPerUnit: l.altQtyPerUnit,
+    stockQty: stockQtys[i],
+  }));
+}
+
+/**
+ * The one function everything in the create-invoice flow ultimately calls:
+ * validate → recompute totals server-side → check credit limit (advisory) →
+ * transaction (claim invoice number + insert + take stock out).
+ */
+export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionResult> {
+  const parsed = parseInvoiceInput(input);
+  if ('error' in parsed) return { error: parsed.error };
+  const data = parsed.data;
+
+  try {
+    // The outstanding-balance lookup only matters when the customer has a
+    // credit limit, but it's one indexed aggregate — running it alongside
+    // the other reads is cheaper than a second round trip afterwards.
+    const [user, company, customer, outstandingBefore] = await Promise.all([
+      requireUser(),
+      getCompany(),
+      prisma.customer.findUnique({ where: { id: data.customerId } }),
+      customerOutstanding(data.customerId),
+    ]);
+    if (!customer) return { error: 'Customer not found' };
+    if (!customer.active) return { error: `${customer.shopName || customer.name} is disabled. Enable them in Customers to bill them again.` };
+    if (data.allowNegativeStock && user.role !== 'OWNER') return { error: 'Only the owner can save an invoice with stock below zero.' };
+
+    const totals = computeTotals(
+      data.items.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount })),
+      { type: data.overallDiscountType, value: data.overallDiscountValue },
+      data,
+      company.state,
+      customer.state
+    );
+
+    const warning = isOverCreditLimit(outstandingBefore, totals.total, Number(customer.creditLimit))
+      ? `This will put ${customer.name} at or over their credit limit.`
+      : undefined;
+
+    const status: InvoiceStatus = data.markPaid ? 'PAID' : data.markSent ? 'SENT' : 'DRAFT';
+
+    const invoice = await prisma.$transaction(async (tx) => {
+      const number = await claimInvoiceNumber(tx, company.id);
+      const stockQtys = await lineStockQuantities(tx, data.items);
+      const receiptNo = data.markPaid ? await claimReceiptNumber(tx, company.id) : null;
+      const created = await tx.invoice.create({
+        data: {
+          customerId: customer.id,
+          number,
+          date: new Date(data.date),
+          due: new Date(data.due),
+          status,
+          overallDiscountType: data.overallDiscountType,
+          overallDiscountValue: data.overallDiscountValue,
+          notes: data.notes?.trim() || null,
+          deliveryInstructions: data.deliveryInstructions?.trim() || null,
+          showTransportDetails: data.showTransportDetails,
+          transportVehicleNo: data.transportVehicleNo?.trim() || null,
+          transportDriverName: data.transportDriverName?.trim() || null,
+          transportDriverPhone: data.transportDriverPhone?.trim() || null,
+          // Snapshotted, not re-read from Company later — see schema.prisma.
+          cgstRate: data.cgstRate,
+          sgstRate: data.sgstRate,
+          igstRate: data.igstRate,
+          cgstEnabled: data.cgstEnabled,
+          sgstEnabled: data.sgstEnabled,
+          igstEnabled: data.igstEnabled,
+          showBankDetails: data.showBankDetails,
+          showHsnSummary: data.showHsnSummary,
+          showUpiQr: data.showUpiQr,
+          showGpayNumber: data.showGpayNumber,
+          ...totalsColumns(totals),
+          amountPaid: data.markPaid ? totals.total : 0,
+          items: { create: itemRows(data.items, stockQtys, company.defaultHsn) },
+          ...(data.markPaid
+            ? { payments: { create: { amount: totals.total, date: new Date(data.date), mode: data.paymentMode || 'Cash', receiptNo } } }
+            : {}),
+        },
+      });
+      await postStockChanges(tx, {
+        direction: 'out',
+        before: new Map(),
+        // Drafts included — saving an invoice in any status takes its stock.
+        after: sumByProduct(data.items.map((l, i) => ({ productId: l.productId, stockQty: stockQtys[i] }))),
+        increaseType: 'SALE',
+        decreaseType: 'SALE_RETURN',
+        meta: { invoiceId: created.id, invoiceNumber: number, userId: user.id, date: new Date(data.date), note: data.allowNegativeStock ? 'Saved with stock below zero' : null },
+        enforce: !data.allowNegativeStock,
+      });
+      return created;
+    }, TX_OPTIONS);
+
+    await logActivity({
+      userId: user.id,
+      action: 'invoice.create',
+      entityType: 'invoice',
+      entityId: invoice.id,
+      summary: `Created ${invoice.number} for ${customer.shopName || customer.name} — ${fmtInr(totals.total)} (${status.toLowerCase().replace('_', ' ')})`,
+    });
+    schedulePdfBuild(invoice.id);
+    revalidatePath('/invoices');
+    revalidatePath('/dashboard');
+    return { invoiceId: invoice.id, number: invoice.number, status: invoice.status, warning };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+/**
+ * Full edit of an existing invoice — same validation/totals/credit-limit
+ * flow as createInvoice, but updates the invoice row + replaces its items in
+ * place instead of claiming a new number. Allowed in every status,
+ * including PAID: the status is re-derived from what's been paid against
+ * the new total, and stock moves by exactly what the edit changed.
+ */
+export async function updateInvoice(invoiceId: string, input: InvoiceInput): Promise<InvoiceActionResult> {
+  const parsed = parseInvoiceInput(input);
+  if ('error' in parsed) return { error: parsed.error };
+  const data = parsed.data;
+
+  try {
+    const [user, company, existing, customer, outstandingBefore] = await Promise.all([
+      requireUser(),
+      getCompany(),
+      prisma.invoice.findUnique({
+        where: { id: invoiceId },
+        include: {
+          items: { select: { productId: true, qty: true, unit: true, stockQty: true } },
+          creditNotes: { select: { number: true, items: { select: { productId: true, name: true, unit: true, qty: true } } } },
+        },
+      }),
+      prisma.customer.findUnique({ where: { id: data.customerId } }),
+      // Excludes this invoice's own (pre-edit) record — otherwise its old
+      // total would double-count against the newly edited total below.
+      customerOutstanding(data.customerId, invoiceId),
+    ]);
+    if (!existing) return { error: 'Invoice not found' };
+    if (!customer) return { error: 'Customer not found' };
+    if (data.allowNegativeStock && user.role !== 'OWNER') return { error: 'Only the owner can save an invoice with stock below zero.' };
+    // Switching an invoice *to* a disabled customer is blocked; an invoice
+    // that already belongs to one stays editable.
+    if (!customer.active && customer.id !== existing.customerId) {
+      return { error: `${customer.shopName || customer.name} is disabled. Enable them in Customers to bill them again.` };
+    }
+    const alreadyPaid = Number(existing.amountPaid);
+
+    // Goods already credited back on a credit note can't be edited away
+    // from the invoice — the credit note's own stock return and money would
+    // then count them a second time. Delete the credit note first.
+    const credited = new Map<string, { qty: number; name: string; unit: string; note: string }>();
+    for (const cn of existing.creditNotes) {
+      for (const it of cn.items) {
+        const key = `${it.productId ?? it.name}|${it.unit.trim().toLowerCase()}`;
+        const prev = credited.get(key);
+        credited.set(key, { qty: (prev?.qty ?? 0) + Number(it.qty), name: it.name, unit: it.unit, note: cn.number });
+      }
+    }
+    for (const [key, c] of credited) {
+      const billed = data.items
+        .filter((l) => `${l.productId ?? l.name}|${l.unit.trim().toLowerCase()}` === key)
+        .reduce((sum, l) => sum + l.qty, 0);
+      if (billed + 1e-6 < c.qty) {
+        return { error: `${c.name}: ${c.qty} ${c.unit} was already credited on ${c.note}, so the invoice can't go below that. Delete the credit note first if this needs to change.` };
+      }
+    }
+
+    // Once an e-Invoice IRN has been filed with NIC, its tax amounts are
+    // locked with the government (there's no amend API, only cancel-within-
+    // 24h) — keep the invoice's existing GST snapshot whatever the client
+    // sent. A server-side guard, not just a UI affordance.
+    const gst = existing.irn
+      ? {
+          cgstRate: Number(existing.cgstRate),
+          sgstRate: Number(existing.sgstRate),
+          igstRate: Number(existing.igstRate),
+          cgstEnabled: existing.cgstEnabled,
+          sgstEnabled: existing.sgstEnabled,
+          igstEnabled: existing.igstEnabled,
+          showBankDetails: existing.showBankDetails,
+          showHsnSummary: existing.showHsnSummary,
+          showUpiQr: existing.showUpiQr,
+          showGpayNumber: existing.showGpayNumber,
+        }
+      : {
+          cgstRate: data.cgstRate,
+          sgstRate: data.sgstRate,
+          igstRate: data.igstRate,
+          cgstEnabled: data.cgstEnabled,
+          sgstEnabled: data.sgstEnabled,
+          igstEnabled: data.igstEnabled,
+          showBankDetails: data.showBankDetails,
+          showHsnSummary: data.showHsnSummary,
+          showUpiQr: data.showUpiQr,
+          showGpayNumber: data.showGpayNumber,
+        };
+
+    const totals = computeTotals(
+      data.items.map((l) => ({ qty: l.qty, rate: l.rate, discount: l.discount })),
+      { type: data.overallDiscountType, value: data.overallDiscountValue },
+      gst,
+      company.state,
+      customer.state
+    );
+
+    const warnings: string[] = [];
+    if (isOverCreditLimit(outstandingBefore, totals.total, Number(customer.creditLimit))) warnings.push(`This will put ${customer.name} at or over their credit limit.`);
+    if (alreadyPaid > totals.total + 0.004) warnings.push(`${customer.shopName || customer.name} has paid ${fmtInr(alreadyPaid - totals.total)} more than the new total.`);
+
+    // Only top up the remaining balance — inserting the full total again would
+    // double-count whatever's already been recorded. The resulting status is
+    // *derived*, not just taken from which Save button was clicked: real
+    // money already on file promotes a plain save to at least PARTIALLY_PAID,
+    // and a raised total turns a PAID invoice back into PARTIALLY_PAID.
+    const topUp = data.markPaid ? Math.max(totals.total - alreadyPaid, 0) : 0;
+    const newStatus = deriveStatus(totals.total, alreadyPaid + topUp, data.markSent || data.markPaid);
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const oldLines = await withStockQty(tx, existing.items);
+      const stockQtys = await lineStockQuantities(tx, data.items);
+      const receiptNo = topUp > 0.004 ? await claimReceiptNumber(tx, company.id) : null;
+
+      await tx.invoiceItem.deleteMany({ where: { invoiceId } });
+      const inv = await tx.invoice.update({
+        where: { id: invoiceId },
+        data: {
+          customerId: customer.id,
+          date: new Date(data.date),
+          due: new Date(data.due),
+          status: newStatus,
+          stockTaken: true,
+          overallDiscountType: data.overallDiscountType,
+          overallDiscountValue: data.overallDiscountValue,
+          notes: data.notes?.trim() || null,
+          deliveryInstructions: data.deliveryInstructions?.trim() || null,
+          showTransportDetails: data.showTransportDetails,
+          transportVehicleNo: data.transportVehicleNo?.trim() || null,
+          transportDriverName: data.transportDriverName?.trim() || null,
+          transportDriverPhone: data.transportDriverPhone?.trim() || null,
+          ...gst,
+          ...totalsColumns(totals),
+          amountPaid: alreadyPaid + (topUp > 0.004 ? topUp : 0),
+          items: { create: itemRows(data.items, stockQtys, company.defaultHsn) },
+          ...(topUp > 0.004 ? { payments: { create: { amount: topUp, date: new Date(data.date), mode: data.paymentMode || 'Cash', receiptNo } } } : {}),
+        },
+      });
+
+      await postStockChanges(tx, {
+        direction: 'out',
+        before: invoiceHeld(existing.stockTaken, oldLines),
+        after: sumByProduct(data.items.map((l, i) => ({ productId: l.productId, stockQty: stockQtys[i] }))),
+        increaseType: 'SALE',
+        decreaseType: 'SALE_RETURN',
+        meta: {
+          invoiceId,
+          invoiceNumber: existing.number,
+          userId: user.id,
+          note: data.allowNegativeStock ? 'Saved with stock below zero' : existing.stockTaken ? 'Invoice edited' : 'Draft saved',
+        },
+        enforce: !data.allowNegativeStock,
+      });
+      return inv;
+    }, TX_OPTIONS);
+
+    await logActivity({
+      userId: user.id,
+      action: 'invoice.update',
+      entityType: 'invoice',
+      entityId: invoiceId,
+      summary: `Edited ${existing.number} — ${fmtInr(totals.total)}${existing.status !== newStatus ? ` · ${existing.status.toLowerCase().replace('_', ' ')} → ${newStatus.toLowerCase().replace('_', ' ')}` : ''}`,
+    });
+    schedulePdfBuild(invoiceId);
+    revalidatePath('/invoices');
+    revalidatePath('/dashboard');
+    revalidatePath(`/invoices/${invoiceId}`);
+    return { invoiceId: updated.id, number: updated.number, status: updated.status, warning: warnings.join(' ') || undefined };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+/** Only the columns the Invoices list renders — totals come from the stored
+ * columns (see schema.prisma), so no items join is needed, just a count. */
 const LIST_SELECT = {
   id: true,
   number: true,
@@ -343,7 +442,8 @@ const LIST_SELECT = {
   total: true,
   amountPaid: true,
   interState: true,
-  customer: { select: { name: true, shopName: true, state: true } },
+  lastRemindedAt: true,
+  customer: { select: { name: true, shopName: true, state: true, phone: true } },
   payments: { select: { amount: true, date: true, mode: true }, orderBy: { date: 'asc' } },
   _count: { select: { items: true } },
 } satisfies Prisma.InvoiceSelect;
@@ -475,97 +575,255 @@ export async function listInvoicesPage(opts?: InvoiceListFilters) {
   return { items: JSON.parse(JSON.stringify(rows.map((inv) => toListRow(inv, now)))), total };
 }
 
-export async function recordPayment(invoiceId: string, amount: number, date: string, mode?: string) {
-  await requireUser();
-  if (amount <= 0) throw new Error('Amount must be greater than zero');
-  const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, select: { total: true, amountPaid: true, status: true } });
-  if (!invoice) throw new Error('Invoice not found');
+const PaymentSchema = z.object({
+  amount: z.coerce.number().positive('Amount must be greater than zero'),
+  date: z.string().min(1, 'Pick the payment date'),
+  mode: z.string().optional().nullable(),
+  reference: z.string().optional().nullable(),
+});
 
-  const totalPaid = Number(invoice.amountPaid) + amount;
-  const newStatus = deriveStatus(Number(invoice.total), totalPaid, invoice.status !== 'DRAFT');
-
-  // One statement: the payment row, the running amountPaid, and the status
-  // all land together or not at all.
-  await prisma.invoice.update({
-    where: { id: invoiceId },
-    data: { status: newStatus, amountPaid: { increment: amount }, payments: { create: { amount, date: new Date(date), mode } } },
-  });
-  revalidatePath('/invoices');
-  revalidatePath('/dashboard');
+/** Records a payment (with its own receipt number) and re-derives the
+ * status. Stock only moves for a draft saved before drafts took stock (see
+ * Invoice.stockTaken): one that receives money is a real sale, so it takes
+ * its stock now. */
+export async function recordPayment(invoiceId: string, input: z.input<typeof PaymentSchema>): Promise<{ error?: string; receiptNo?: string; paymentId?: string }> {
+  const parsed = PaymentSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Check the payment details' };
+  const { amount, date, mode, reference } = parsed.data;
+  try {
+    const [user, company] = await Promise.all([requireUser(), getCompany()]);
+    const result = await prisma.$transaction(async (tx) => {
+      const invoice = await tx.invoice.findUnique({
+        where: { id: invoiceId },
+        select: { number: true, total: true, amountPaid: true, status: true, stockTaken: true, items: { select: { productId: true, qty: true, unit: true, stockQty: true } } },
+      });
+      if (!invoice) throw new Error('Invoice not found');
+      const lines = await withStockQty(tx, invoice.items);
+      const totalPaid = Number(invoice.amountPaid) + amount;
+      const newStatus = deriveStatus(Number(invoice.total), totalPaid, invoice.status !== 'DRAFT');
+      const receiptNo = await claimReceiptNumber(tx, company.id);
+      const payment = await tx.payment.create({
+        data: { invoiceId, amount, date: new Date(date), mode: mode?.trim() || null, reference: reference?.trim() || null, receiptNo },
+      });
+      await tx.invoice.update({ where: { id: invoiceId }, data: { status: newStatus, amountPaid: { increment: amount }, stockTaken: true } });
+      await postStockChanges(tx, {
+        direction: 'out',
+        before: invoiceHeld(invoice.stockTaken, lines),
+        after: sumByProduct(lines),
+        increaseType: 'SALE',
+        decreaseType: 'SALE_RETURN',
+        meta: { invoiceId, invoiceNumber: invoice.number, userId: user.id, note: 'Payment received on a draft' },
+      });
+      return { number: invoice.number, receiptNo, paymentId: payment.id };
+    }, TX_OPTIONS);
+    await logActivity({ userId: user.id, action: 'payment.create', entityType: 'invoice', entityId: invoiceId, summary: `Recorded ${fmtInr(amount)}${mode ? ` by ${mode}` : ''} on ${result.number} (receipt ${result.receiptNo})` });
+    schedulePdfBuild(invoiceId);
+    revalidatePath('/invoices');
+    revalidatePath('/dashboard');
+    return { receiptNo: result.receiptNo, paymentId: result.paymentId };
+  } catch (e) {
+    return toActionError(e);
+  }
 }
 
-export async function deleteInvoice(id: string) {
-  await requireUser();
-  const { count } = await prisma.invoice.deleteMany({ where: { id } }); // cascades to items + payments
-  if (!count) throw new Error('Invoice not found');
-  revalidatePath('/invoices');
-  revalidatePath('/dashboard');
+/** Removes a payment recorded by mistake. Credit-note payments are removed
+ * by deleting the credit note instead, which also reverses its stock. */
+export async function deletePayment(paymentId: string): Promise<{ error?: string }> {
+  try {
+    const user = await requireOwner();
+    const payment = await prisma.payment.findUnique({ where: { id: paymentId }, include: { invoice: { select: { id: true, number: true, total: true, status: true } } } });
+    if (!payment) return { error: 'Payment not found' };
+    if (payment.creditNoteId) return { error: 'This was applied by a credit note. Delete the credit note instead.' };
+    await prisma.$transaction(async (tx) => {
+      await tx.payment.delete({ where: { id: paymentId } });
+      const agg = await tx.payment.aggregate({ where: { invoiceId: payment.invoiceId }, _sum: { amount: true } });
+      const paid = Number(agg._sum.amount ?? 0);
+      // Never back to DRAFT: once it had money against it, it was sent.
+      const status = deriveStatus(Number(payment.invoice.total), paid, payment.invoice.status !== 'DRAFT');
+      await tx.invoice.update({ where: { id: payment.invoiceId }, data: { amountPaid: paid, status } });
+    }, TX_OPTIONS);
+    await logActivity({ userId: user.id, action: 'payment.delete', entityType: 'invoice', entityId: payment.invoiceId, summary: `Deleted payment ${fmtInr(Number(payment.amount))}${payment.receiptNo ? ` (receipt ${payment.receiptNo})` : ''} on ${payment.invoice.number}` });
+    schedulePdfBuild(payment.invoiceId);
+    revalidatePath('/invoices');
+    return {};
+  } catch (e) {
+    return toActionError(e);
+  }
 }
 
-export async function duplicateInvoice(id: string) {
-  const [src, company] = await Promise.all([prisma.invoice.findUnique({ where: { id }, include: { items: true } }), getCompany()]);
-  if (!src) throw new Error('Invoice not found');
-
-  const created = await prisma.$transaction(async (tx) => {
-    const number = await claimInvoiceNumber(tx, company.id);
-    const today = new Date();
-    return tx.invoice.create({
-      data: {
-        customerId: src.customerId,
-        number,
-        date: today,
-        due: today,
-        status: 'DRAFT',
-        overallDiscountType: src.overallDiscountType,
-        overallDiscountValue: src.overallDiscountValue,
-        notes: src.notes,
-        deliveryInstructions: src.deliveryInstructions,
-        showTransportDetails: src.showTransportDetails,
-        transportVehicleNo: src.transportVehicleNo,
-        transportDriverName: src.transportDriverName,
-        transportDriverPhone: src.transportDriverPhone,
-        // A duplicate clones the source's GST config exactly — not
-        // re-derived from (possibly since-changed) current Company
-        // settings — same "duplicate this exact invoice" semantics as
-        // everything else copied here.
-        cgstRate: src.cgstRate,
-        sgstRate: src.sgstRate,
-        igstRate: src.igstRate,
-        cgstEnabled: src.cgstEnabled,
-        sgstEnabled: src.sgstEnabled,
-        igstEnabled: src.igstEnabled,
-        showBankDetails: src.showBankDetails,
-        showHsnSummary: src.showHsnSummary,
-        showUpiQr: src.showUpiQr,
-        showGpayNumber: src.showGpayNumber,
-        // Same lines, discount, GST snapshot, and customer — so the same
-        // stored totals; nothing has been paid on the copy yet.
-        taxable: src.taxable,
-        cgst: src.cgst,
-        sgst: src.sgst,
-        igst: src.igst,
-        total: src.total,
-        interState: src.interState,
-        items: {
-          create: src.items.map((it) => ({
-            productId: it.productId,
-            name: it.name,
-            unit: it.unit,
-            qty: it.qty,
-            rate: it.rate,
-            discount: it.discount,
-            hsn: it.hsn,
-            batch: it.batch,
-            altUnit: it.altUnit,
-            altQtyPerUnit: it.altQtyPerUnit,
-          })),
-        },
+/** Deletes an invoice with its items and payments (cascade). A draft puts
+ * back the stock it took; a sent or paid invoice doesn't — its goods left
+ * with the customer, and goods that come back are returned with a credit
+ * note. The stock-history rows stay, keyed by the invoice number, so the
+ * ledger still explains the movements. */
+export async function deleteInvoice(id: string): Promise<{ error?: string }> {
+  try {
+    const user = await requireOwner();
+    const invoice = await prisma.invoice.findUnique({
+      where: { id },
+      select: {
+        number: true,
+        status: true,
+        pdfUrl: true,
+        total: true,
+        stockTaken: true,
+        customer: { select: { name: true, shopName: true } },
+        items: { select: { productId: true, qty: true, unit: true, stockQty: true } },
+        creditNotes: { select: { number: true } },
       },
     });
-  });
-  revalidatePath('/invoices');
-  revalidatePath('/dashboard');
-  return created.id;
+    if (!invoice) return { error: 'Invoice not found' };
+    // Its credit notes returned their own stock and money against it —
+    // deleting the invoice underneath them would leave both dangling.
+    if (invoice.creditNotes.length) {
+      return { error: `${invoice.number} has credit note${invoice.creditNotes.length > 1 ? 's' : ''} ${invoice.creditNotes.map((c) => c.number).join(', ')}. Delete ${invoice.creditNotes.length > 1 ? 'them' : 'it'} first, then delete the invoice.` };
+    }
+    await prisma.$transaction(async (tx) => {
+      if (invoice.status === 'DRAFT') {
+        await postStockChanges(tx, {
+          direction: 'out',
+          before: invoiceHeld(invoice.stockTaken, await withStockQty(tx, invoice.items)),
+          after: new Map(),
+          increaseType: 'SALE',
+          decreaseType: 'SALE_RETURN',
+          meta: { invoiceId: id, invoiceNumber: invoice.number, userId: user.id, note: 'Draft deleted' },
+        });
+      }
+      await tx.invoice.delete({ where: { id } }); // cascades to items + payments
+    }, TX_OPTIONS);
+    if (invoice.pdfUrl) await deleteUploadedImage(invoice.pdfUrl);
+    await logActivity({
+      userId: user.id,
+      action: 'invoice.delete',
+      entityType: 'invoice',
+      entityId: id,
+      summary: `Deleted ${invoice.number} (${invoice.customer.shopName || invoice.customer.name}, ${fmtInr(Number(invoice.total))})`,
+    });
+    revalidatePath('/invoices');
+    revalidatePath('/dashboard');
+    return {};
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+export async function duplicateInvoice(id: string): Promise<{ error?: string; invoiceId?: string }> {
+  try {
+    const [user, src, company] = await Promise.all([requireUser(), prisma.invoice.findUnique({ where: { id }, include: { items: true, customer: { select: { active: true, name: true } } } }), getCompany()]);
+    if (!src) return { error: 'Invoice not found' };
+    if (!src.customer.active) return { error: `${src.customer.name} is disabled. Enable them in Customers to bill them again.` };
+
+    const created = await prisma.$transaction(async (tx) => {
+      const number = await claimInvoiceNumber(tx, company.id);
+      const today = new Date();
+      // Re-derived from the products' current units, not copied — the
+      // source's snapshot may predate a unit change.
+      const stockQtys = await lineStockQuantities(tx, src.items.map((it) => ({ productId: it.productId, qty: Number(it.qty), unit: it.unit })));
+      const dup = await tx.invoice.create({
+        data: {
+          customerId: src.customerId,
+          number,
+          date: today,
+          due: today,
+          // A draft — which, like any saved invoice, takes its stock.
+          status: 'DRAFT',
+          overallDiscountType: src.overallDiscountType,
+          overallDiscountValue: src.overallDiscountValue,
+          notes: src.notes,
+          deliveryInstructions: src.deliveryInstructions,
+          showTransportDetails: src.showTransportDetails,
+          transportVehicleNo: src.transportVehicleNo,
+          transportDriverName: src.transportDriverName,
+          transportDriverPhone: src.transportDriverPhone,
+          // A duplicate clones the source's GST config exactly — "duplicate
+          // this exact invoice" semantics, not re-derived from Company.
+          cgstRate: src.cgstRate,
+          sgstRate: src.sgstRate,
+          igstRate: src.igstRate,
+          cgstEnabled: src.cgstEnabled,
+          sgstEnabled: src.sgstEnabled,
+          igstEnabled: src.igstEnabled,
+          showBankDetails: src.showBankDetails,
+          showHsnSummary: src.showHsnSummary,
+          showUpiQr: src.showUpiQr,
+          showGpayNumber: src.showGpayNumber,
+          taxable: src.taxable,
+          cgst: src.cgst,
+          sgst: src.sgst,
+          igst: src.igst,
+          total: src.total,
+          interState: src.interState,
+          items: {
+            create: src.items.map((it, i) => ({
+              productId: it.productId,
+              name: it.name,
+              unit: it.unit,
+              qty: it.qty,
+              rate: it.rate,
+              discount: it.discount,
+              hsn: it.hsn,
+              batch: it.batch,
+              altUnit: it.altUnit,
+              altQtyPerUnit: it.altQtyPerUnit,
+              stockQty: stockQtys[i],
+            })),
+          },
+        },
+      });
+      await postStockChanges(tx, {
+        direction: 'out',
+        before: new Map(),
+        after: sumByProduct(src.items.map((it, i) => ({ productId: it.productId, stockQty: stockQtys[i] }))),
+        increaseType: 'SALE',
+        decreaseType: 'SALE_RETURN',
+        meta: { invoiceId: dup.id, invoiceNumber: number, userId: user.id, date: today },
+      });
+      return dup;
+    }, TX_OPTIONS);
+    await logActivity({ userId: user.id, action: 'invoice.duplicate', entityType: 'invoice', entityId: created.id, summary: `Duplicated ${src.number} as ${created.number}` });
+    revalidatePath('/invoices');
+    revalidatePath('/dashboard');
+    return { invoiceId: created.id };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+async function requestOrigin() {
+  const h = await headers();
+  const host = h.get('x-forwarded-host') ?? h.get('host');
+  const proto = h.get('x-forwarded-proto') ?? (host?.startsWith('localhost') ? 'http' : 'https');
+  return host ? `${proto}://${host}` : '';
+}
+
+/** A link the customer can open without signing in (the invoice PDF), for
+ * WhatsApp sharing and payment reminders. */
+export async function getInvoiceShareLink(invoiceId: string): Promise<{ error?: string; url?: string }> {
+  try {
+    await requireUser();
+    const exists = await prisma.invoice.findUnique({ where: { id: invoiceId }, select: { id: true } });
+    if (!exists) return { error: 'Invoice not found' };
+    schedulePdfBuild(invoiceId);
+    return { url: `${await requestOrigin()}/api/share/${invoiceShareToken(invoiceId)}` };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+/** Stamps "reminded just now" on an overdue invoice. Raw SQL on purpose:
+ * Prisma's @updatedAt would otherwise bump updatedAt, which is part of the
+ * stored PDF's cache key, and a reminder doesn't change the document. */
+export async function markReminded(invoiceId: string): Promise<{ error?: string }> {
+  try {
+    const user = await requireUser();
+    const n = await prisma.$executeRaw`UPDATE "Invoice" SET "lastRemindedAt" = NOW() WHERE id = ${invoiceId}`;
+    if (!n) return { error: 'Invoice not found' };
+    await logActivity({ userId: user.id, action: 'invoice.remind', entityType: 'invoice', entityId: invoiceId, summary: 'Sent a payment reminder on WhatsApp' });
+    revalidatePath('/invoices');
+    return {};
+  } catch (e) {
+    return toActionError(e);
+  }
 }
 
 const DispatchDetailsSchema = z.object({
@@ -579,8 +837,8 @@ const DispatchDetailsSchema = z.object({
   destination: z.string().optional().nullable(),
 });
 
-/** The standard Tally-style reference fields on the CLASSIC template's
- * header grid (Delivery Note, Buyer's Order No, Dispatch Doc No, Bill of
+/** The standard Tally-style reference fields on the GST templates' header
+ * grid (Delivery Note, Buyer's Order No, Dispatch Doc No, Bill of
  * Lading/LR-RR No, Other References, Destination) — pure print/reference
  * fields, no GST math or NIC payload depends on them, so this is a plain
  * update with no recompute/side effects. */
@@ -588,21 +846,26 @@ export async function updateDispatchDetails(invoiceId: string, input: z.infer<ty
   const parsed = DispatchDetailsSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid dispatch details' };
 
-  await requireUser();
-  const { count } = await prisma.invoice.updateMany({
-    where: { id: invoiceId },
-    data: {
-      deliveryNote: parsed.data.deliveryNote,
-      deliveryNoteDate: parsed.data.deliveryNoteDate ? new Date(parsed.data.deliveryNoteDate) : null,
-      buyersOrderNo: parsed.data.buyersOrderNo,
-      buyersOrderDate: parsed.data.buyersOrderDate ? new Date(parsed.data.buyersOrderDate) : null,
-      dispatchDocNo: parsed.data.dispatchDocNo,
-      otherReferences: parsed.data.otherReferences,
-      billOfLadingNo: parsed.data.billOfLadingNo,
-      destination: parsed.data.destination,
-    },
-  });
-  if (!count) return { error: 'Invoice not found.' };
-  revalidatePath(`/invoices/${invoiceId}`);
-  return {};
+  try {
+    await requireUser();
+    const { count } = await prisma.invoice.updateMany({
+      where: { id: invoiceId },
+      data: {
+        deliveryNote: parsed.data.deliveryNote,
+        deliveryNoteDate: parsed.data.deliveryNoteDate ? new Date(parsed.data.deliveryNoteDate) : null,
+        buyersOrderNo: parsed.data.buyersOrderNo,
+        buyersOrderDate: parsed.data.buyersOrderDate ? new Date(parsed.data.buyersOrderDate) : null,
+        dispatchDocNo: parsed.data.dispatchDocNo,
+        otherReferences: parsed.data.otherReferences,
+        billOfLadingNo: parsed.data.billOfLadingNo,
+        destination: parsed.data.destination,
+      },
+    });
+    if (!count) return { error: 'Invoice not found.' };
+    schedulePdfBuild(invoiceId);
+    revalidatePath(`/invoices/${invoiceId}`);
+    return {};
+  } catch (e) {
+    return toActionError(e);
+  }
 }

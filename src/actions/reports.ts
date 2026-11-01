@@ -3,8 +3,11 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireUser } from '@/lib/session';
-import { istDayRangeUtc } from '@/lib/dates';
+import { istDayRangeUtc, todayIst } from '@/lib/dates';
 import { STATUS_ORDER, STATUS_LABEL } from '@/lib/report-status';
+import { formatStock, round6, unitFactor } from '@/lib/stock-units';
+import { averagePurchaseCosts, loadProductMeta } from '@/app/(app)/reports/report-data';
+import { loadLoadingSheet, normalizeLoadingParams, type LoadingSheet } from '@/app/(app)/reports/loading-sheet/loading-sheet-data';
 
 // Every report here is a SQL aggregate over Invoice's stored totals columns
 // (see schema.prisma / src/lib/invoice-totals.ts) — none of them load
@@ -215,26 +218,169 @@ export async function getStatusBreakdown(filters?: ReportFilters): Promise<Statu
   return STATUS_ORDER.filter((k) => byStatus.has(k)).map((k) => ({ status: k, label: STATUS_LABEL[k], count: byStatus.get(k)!.count, total: byStatus.get(k)!.total }));
 }
 
-export type TopProduct = { key: string; name: string; qty: number; revenue: number };
+export type TopProduct = {
+  key: string;
+  name: string;
+  /** Main units (see src/lib/stock-units.ts) — or the line's own unit for
+   * ad-hoc lines, which have no product to convert through. */
+  qty: number;
+  /** "4 Box + 6 Pc" — formatted server-side so the chart needs no tiers. */
+  qtyLabel: string;
+  /** Pre-tax value after line AND invoice-level discounts, less credit
+   * notes in the same period. */
+  revenue: number;
+};
 
-/** Best-selling line items (by pre-tax line revenue) across the filtered
- * invoice set. Custom/ad-hoc line items (no productId) are grouped by name
- * instead, same as everywhere else a line item stands in for its catalog
- * product. */
-export async function getTopProducts(filters?: ReportFilters, limit = 8): Promise<TopProduct[]> {
+export type TopProducts = { byValue: TopProduct[]; byQty: TopProduct[] };
+
+/** Best-selling products across the filtered invoice set, ranked two ways:
+ * by sales value and by quantity in main units ("how many boxes went out"),
+ * which is what the owner actually reorders by. Custom/ad-hoc line items
+ * (no productId) are grouped by name + unit. */
+export async function getTopProducts(filters?: ReportFilters, limit = 8): Promise<TopProducts> {
   await requireUser();
-  return prisma.$queryRaw<TopProduct[]>`
+  const { rows, products } = await salesByProduct(filters);
+  const list: TopProduct[] = rows.map((r) => ({
+    key: r.key,
+    name: r.name,
+    qty: r.mainQty,
+    qtyLabel: r.productId && products.get(r.productId) ? formatStock(r.mainQty, products.get(r.productId)!) : `${trim2(r.mainQty)} ${r.unit}`,
+    revenue: r.revenue,
+  }));
+  return {
+    byValue: [...list].sort((a, b) => b.revenue - a.revenue).slice(0, limit),
+    byQty: [...list].filter((p) => p.qty > 0).sort((a, b) => b.qty - a.qty || b.revenue - a.revenue).slice(0, limit),
+  };
+}
+
+function trim2(n: number) {
+  return String(Math.round(n * 100) / 100);
+}
+
+type ProductSales = {
+  key: string;
+  productId: string | null;
+  name: string;
+  category: string;
+  /** Ad-hoc lines only — the unit their qty is in. */
+  unit: string;
+  /** Net of credit notes: sales − returns, pre-tax. */
+  revenue: number;
+  /** Main units sold (ad-hoc: own unit). */
+  mainQty: number;
+  /** Main units that came back into stock on credit notes. */
+  restockedQty: number;
+};
+
+/** Sales per product for the filtered (non-draft) invoices, net of credit
+ * notes in the same period/customer.
+ *
+ * Revenue is the line value with the invoice's overall discount spread
+ * across its lines pro rata (line × invoice taxable ÷ Σ lines), so it adds
+ * up to the invoices' taxable value exactly. Quantity is the line's
+ * main-unit snapshot (InvoiceItem.stockQty), converted through the
+ * product's current units for older lines that don't have one. */
+async function salesByProduct(filters?: ReportFilters) {
+  const lineSql = (conds: Prisma.Sql[]) => Prisma.sql`
+    WITH l AS (
+      SELECT
+        it."productId",
+        it.name,
+        it.unit,
+        it.qty,
+        it."stockQty",
+        it.qty * it.rate * (1 - it.discount / 100) AS line,
+        i.taxable AS "docTaxable",
+        SUM(it.qty * it.rate * (1 - it.discount / 100)) OVER (PARTITION BY it."invoiceId") AS "docSub"
+      FROM "InvoiceItem" it JOIN "Invoice" i ON i.id = it."invoiceId"
+      ${whereSql(conds)}
+    )
     SELECT
-      COALESCE(it."productId", 'custom:' || it.name) AS "key",
-      MAX(it.name) AS "name",
-      SUM(it.qty)::float8 AS "qty",
-      SUM(it.qty * it.rate * (1 - it.discount / 100))::float8 AS "revenue"
-    FROM "InvoiceItem" it JOIN "Invoice" i ON i.id = it."invoiceId"
-    ${whereSql(filterConds(filters, { excludeDrafts: true }))}
-    GROUP BY 1
-    ORDER BY "revenue" DESC
-    LIMIT ${limit}
+      COALESCE("productId", 'custom:' || lower(name) || '|' || lower(unit)) AS "key",
+      "productId",
+      MAX(name) AS "name",
+      unit AS "unit",
+      COALESCE(SUM("stockQty"), 0)::float8 AS "stockQty",
+      COALESCE(SUM(qty) FILTER (WHERE "stockQty" IS NULL), 0)::float8 AS "qtyNoSnapshot",
+      COALESCE(SUM(CASE WHEN "docSub" > 0 THEN line * "docTaxable" / "docSub" ELSE 0 END), 0)::float8 AS "revenue"
+    FROM l
+    GROUP BY 1, 2, 4
   `;
+
+  type LineAgg = { key: string; productId: string | null; name: string; unit: string; stockQty: number; qtyNoSnapshot: number; revenue: number };
+
+  const creditConds = creditNoteConds(filters);
+  const [saleRows, returnRows] = await Promise.all([
+    prisma.$queryRaw<LineAgg[]>(lineSql(filterConds(filters, { excludeDrafts: true }))),
+    prisma.$queryRaw<(LineAgg & { restockedStockQty: number; restockedNoSnapshot: number })[]>`
+      WITH l AS (
+        SELECT
+          ci."productId",
+          ci.name,
+          ci.unit,
+          ci.qty,
+          ci."stockQty",
+          cn.restock,
+          ci.qty * ci.rate * (1 - ci.discount / 100) AS line,
+          cn.taxable AS "docTaxable",
+          SUM(ci.qty * ci.rate * (1 - ci.discount / 100)) OVER (PARTITION BY ci."creditNoteId") AS "docSub"
+        FROM "CreditNoteItem" ci JOIN "CreditNote" cn ON cn.id = ci."creditNoteId"
+        ${whereSql(creditConds)}
+      )
+      SELECT
+        COALESCE("productId", 'custom:' || lower(name) || '|' || lower(unit)) AS "key",
+        "productId",
+        MAX(name) AS "name",
+        unit AS "unit",
+        COALESCE(SUM("stockQty"), 0)::float8 AS "stockQty",
+        COALESCE(SUM(qty) FILTER (WHERE "stockQty" IS NULL), 0)::float8 AS "qtyNoSnapshot",
+        COALESCE(SUM("stockQty") FILTER (WHERE restock), 0)::float8 AS "restockedStockQty",
+        COALESCE(SUM(qty) FILTER (WHERE restock AND "stockQty" IS NULL), 0)::float8 AS "restockedNoSnapshot",
+        COALESCE(SUM(CASE WHEN "docSub" > 0 THEN line * "docTaxable" / "docSub" ELSE 0 END), 0)::float8 AS "revenue"
+      FROM l
+      GROUP BY 1, 2, 4
+    `,
+  ]);
+
+  const ids = [...new Set([...saleRows, ...returnRows].map((r) => r.productId).filter((id): id is string => !!id))];
+  const products = await loadProductMeta(ids);
+  const toMain = (productId: string | null, unit: string, stockQty: number, noSnapshot: number) => {
+    const p = productId ? products.get(productId) : undefined;
+    return round6(stockQty + (p ? noSnapshot * unitFactor(p, unit) : noSnapshot));
+  };
+
+  const byKey = new Map<string, ProductSales>();
+  const entry = (r: LineAgg) => {
+    const p = r.productId ? products.get(r.productId) : undefined;
+    let e = byKey.get(r.key);
+    if (!e) {
+      e = { key: r.key, productId: r.productId, name: p?.name ?? r.name, category: p?.category ?? '', unit: r.unit, revenue: 0, mainQty: 0, restockedQty: 0 };
+      byKey.set(r.key, e);
+    }
+    return e;
+  };
+  for (const r of saleRows) {
+    const e = entry(r);
+    e.revenue += r.revenue;
+    e.mainQty = round6(e.mainQty + toMain(r.productId, r.unit, r.stockQty, r.qtyNoSnapshot));
+  }
+  for (const r of returnRows) {
+    const e = entry(r);
+    e.revenue -= r.revenue;
+    e.restockedQty = round6(e.restockedQty + toMain(r.productId, r.unit, r.restockedStockQty, r.restockedNoSnapshot));
+  }
+  return { rows: [...byKey.values()], products };
+}
+
+/** Conditions on `"CreditNote" cn` — the date range and customer from the
+ * report filters. Credit notes have no status, so the status filter
+ * doesn't apply to them. */
+function creditNoteConds(filters: ReportFilters | undefined): Prisma.Sql[] {
+  const conds: Prisma.Sql[] = [];
+  if (filters?.customerId) conds.push(Prisma.sql`cn."customerId" = ${filters.customerId}`);
+  if (filters?.dateFrom) conds.push(Prisma.sql`cn.date >= ${istDayRangeUtc(filters.dateFrom).gte}`);
+  if (filters?.dateTo) conds.push(Prisma.sql`cn.date < ${istDayRangeUtc(filters.dateTo).lt}`);
+  return conds;
 }
 
 /** Payments collected per calendar month for the last `months` months
@@ -298,4 +444,160 @@ export async function getTopCustomers(filters?: ReportFilters, limit?: number) {
     ORDER BY "total" DESC
     ${limit ? Prisma.sql`LIMIT ${limit}` : Prisma.empty}
   `;
+}
+
+// ---------------------------------------------------------------------------
+// GST summary
+// ---------------------------------------------------------------------------
+
+export type TaxHeads = { taxable: number; cgst: number; sgst: number; igst: number; count: number };
+
+export type GstSummary = {
+  /** Output tax on issued (non-draft) invoices. */
+  sales: TaxHeads;
+  /** Credit notes in the period — reduce output tax. */
+  returns: TaxHeads;
+  /** Input tax on supplier bills. Null when the report is narrowed to one
+   * customer: purchases aren't per customer, so "net payable" for one
+   * customer would be meaningless. */
+  input: TaxHeads | null;
+  /** Taxable value of the sales above, split by whether the buyer has a
+   * GSTIN (B2B, goes in GSTR-1 invoice-wise) or not (B2C, summarised). */
+  b2b: { taxable: number; count: number };
+  b2c: { taxable: number; count: number };
+};
+
+/** The period's GST position: output tax (invoices − credit notes) less
+ * input tax (purchases) — the same arithmetic as GSTR-3B, as a quick check
+ * before the accountant files. Uses the date range and customer filter but
+ * deliberately not the status filter: GST is owed on an invoice when it's
+ * issued, paid or not. */
+export async function getGstSummary(filters?: ReportFilters): Promise<GstSummary> {
+  await requireUser();
+  const range = { dateFrom: filters?.dateFrom, dateTo: filters?.dateTo, customerId: filters?.customerId };
+
+  const purchaseConds: Prisma.Sql[] = [];
+  if (range.dateFrom) purchaseConds.push(Prisma.sql`p.date >= ${istDayRangeUtc(range.dateFrom).gte}`);
+  if (range.dateTo) purchaseConds.push(Prisma.sql`p.date < ${istDayRangeUtc(range.dateTo).lt}`);
+
+  const heads = (alias: string) =>
+    Prisma.raw(`
+      COALESCE(SUM(${alias}.taxable), 0)::float8 AS "taxable",
+      COALESCE(SUM(${alias}.cgst), 0)::float8 AS "cgst",
+      COALESCE(SUM(${alias}.sgst), 0)::float8 AS "sgst",
+      COALESCE(SUM(${alias}.igst), 0)::float8 AS "igst",
+      COUNT(*)::int AS "count"`);
+
+  const [[sales], [returns], input] = await Promise.all([
+    prisma.$queryRaw<(TaxHeads & { b2bTaxable: number; b2bCount: number })[]>`
+      SELECT ${heads('i')},
+        COALESCE(SUM(i.taxable) FILTER (WHERE COALESCE(c.gstin, '') <> ''), 0)::float8 AS "b2bTaxable",
+        (COUNT(*) FILTER (WHERE COALESCE(c.gstin, '') <> ''))::int AS "b2bCount"
+      FROM "Invoice" i JOIN "Customer" c ON c.id = i."customerId"
+      ${whereSql(filterConds(range, { excludeDrafts: true }))}
+    `,
+    prisma.$queryRaw<TaxHeads[]>`
+      SELECT ${heads('cn')} FROM "CreditNote" cn ${whereSql(creditNoteConds(range))}
+    `,
+    range.customerId
+      ? Promise.resolve(null)
+      : prisma.$queryRaw<TaxHeads[]>`SELECT ${heads('p')} FROM "Purchase" p ${whereSql(purchaseConds)}`.then((r) => r[0]),
+  ]);
+
+  const { b2bTaxable, b2bCount, ...salesHeads } = sales;
+  return {
+    sales: salesHeads,
+    returns,
+    input,
+    b2b: { taxable: b2bTaxable, count: b2bCount },
+    b2c: { taxable: salesHeads.taxable - b2bTaxable, count: salesHeads.count - b2bCount },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Profit estimate
+// ---------------------------------------------------------------------------
+
+export type ProfitRow = { key: string; name: string; revenue: number; cost: number; profit: number; margin: number; qtyLabel: string };
+
+export type ProfitEstimate = {
+  /** Net sales (pre-tax, after credit notes) across every product. */
+  revenue: number;
+  /** The part of `revenue` whose products have a known purchase cost. */
+  knownRevenue: number;
+  cost: number;
+  profit: number;
+  /** profit ÷ knownRevenue, as a fraction. Null when nothing is costed. */
+  margin: number | null;
+  unknown: { products: number; revenue: number; share: number };
+  top: ProfitRow[];
+};
+
+/** Gross profit estimate for the filtered invoices: net sales − cost of
+ * goods sold, where cost = each product's weighted average purchase cost
+ * per main unit (src/app/(app)/reports/report-data.ts) × main units sold,
+ * less any that came back into stock on a credit note. Products with no
+ * purchase cost on file are kept out of the profit figure entirely (not
+ * counted as zero-cost, which would overstate profit) and reported as
+ * "cost unknown" so the owner knows the figure is partial. */
+export async function getProfitEstimate(filters?: ReportFilters, limit = 8): Promise<ProfitEstimate> {
+  await requireUser();
+  const { rows, products } = await salesByProduct(filters);
+  const costs = await averagePurchaseCosts(products);
+
+  let revenue = 0;
+  let knownRevenue = 0;
+  let cost = 0;
+  let unknownRevenue = 0;
+  let unknownProducts = 0;
+  const costed: ProfitRow[] = [];
+
+  for (const r of rows) {
+    revenue += r.revenue;
+    const unitCost = r.productId ? costs.get(r.productId) : undefined;
+    if (unitCost === undefined) {
+      if (r.revenue > 0.004 || r.mainQty > 0) {
+        unknownProducts++;
+        unknownRevenue += Math.max(r.revenue, 0);
+      }
+      continue;
+    }
+    const netQty = Math.max(r.mainQty - r.restockedQty, 0);
+    const lineCost = unitCost * netQty;
+    knownRevenue += r.revenue;
+    cost += lineCost;
+    const p = r.productId ? products.get(r.productId) : undefined;
+    costed.push({
+      key: r.key,
+      name: r.name,
+      revenue: r.revenue,
+      cost: lineCost,
+      profit: r.revenue - lineCost,
+      margin: r.revenue > 0 ? (r.revenue - lineCost) / r.revenue : 0,
+      qtyLabel: p ? formatStock(netQty, p) : String(netQty),
+    });
+  }
+
+  const profit = knownRevenue - cost;
+  return {
+    revenue,
+    knownRevenue,
+    cost,
+    profit,
+    margin: knownRevenue > 0 ? profit / knownRevenue : null,
+    unknown: { products: unknownProducts, revenue: unknownRevenue, share: revenue > 0 ? unknownRevenue / revenue : 0 },
+    top: costed.sort((a, b) => b.profit - a.profit).slice(0, limit),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Daily loading sheet
+// ---------------------------------------------------------------------------
+
+/** One day's loading sheet (load list + drop list per vehicle or route) —
+ * see src/app/(app)/reports/loading-sheet/loading-sheet-data.ts. Input is
+ * normalised there, so a hand-edited URL can't break the query. */
+export async function getLoadingSheet(input: { date?: string; group?: string; includeDrafts?: boolean }): Promise<LoadingSheet> {
+  await requireUser();
+  return loadLoadingSheet(normalizeLoadingParams({ date: input.date, group: input.group, drafts: input.includeDrafts ?? false }, todayIst()));
 }

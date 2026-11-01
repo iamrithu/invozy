@@ -24,7 +24,8 @@ const ProfileSchema = z
 export type ProfileFormState = { error?: string; fieldErrors?: Record<string, string> };
 
 export async function updateMyProfile(_prev: ProfileFormState, formData: FormData): Promise<ProfileFormState> {
-  const userId = await requireUserId();
+  const me = await requireUser();
+  const userId = me.id;
   const parsed = ProfileSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) {
     return { error: 'Check the highlighted fields.', fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string> };
@@ -39,11 +40,12 @@ export async function updateMyProfile(_prev: ProfileFormState, formData: FormDat
     return { error: 'That email or phone is already used by another account.', fieldErrors: { email: 'Already in use' } };
   }
 
-  // Company.email mirrors the login email (see src/actions/company.ts) —
-  // this is the single place that value is ever written after setup.
+  // Company.email mirrors the *owner's* login email (see
+  // src/actions/company.ts) — a staff login changing its own email must
+  // never rewrite what prints on every invoice.
   await prisma.$transaction([
     prisma.user.update({ where: { id: userId }, data: { email, phone } }),
-    prisma.company.update({ where: { id: COMPANY_ID }, data: { email } }),
+    ...(me.role === 'OWNER' ? [prisma.company.update({ where: { id: COMPANY_ID }, data: { email } })] : []),
   ]);
   revalidatePath('/account');
   revalidatePath('/company');

@@ -2,7 +2,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 
 // Mirrors products-client.tsx's CURRENT layout: header, a toolbar row
 // (search + category pills + live-only switch + sort select), then a
-// full-width table with icon-sized action skeletons on the right — so
+// full-width table (with its stock column) and a single ⋯ menu per row — so
 // there's no layout shift once the real data (fetched server-side in
 // page.tsx) replaces it.
 export default function ProductsLoading() {
@@ -38,7 +38,7 @@ export default function ProductsLoading() {
           <Skeleton className="h-3 w-14" />
           <Skeleton className="h-3 w-16" />
           <Skeleton className="h-3 w-14" />
-          <Skeleton className="ml-auto h-3 w-10" />
+          <Skeleton className="h-3 w-14" />
         </div>
         {Array.from({ length: 6 }).map((_, i) => (
           <div key={i} className="flex items-center gap-4 border-b border-line bg-surface px-4 py-3.5 last:border-0">
@@ -49,12 +49,9 @@ export default function ProductsLoading() {
             <Skeleton className="h-3.5 w-20 flex-shrink-0" />
             <Skeleton className="h-3.5 w-14 flex-shrink-0" />
             <Skeleton className="h-3.5 w-16 flex-shrink-0" />
+            <Skeleton className="h-5 w-20 flex-shrink-0 rounded-sm2" />
             <Skeleton className="h-5 w-14 flex-shrink-0 rounded-sm2" />
-            <div className="flex flex-shrink-0 gap-1.5">
-              <Skeleton className="h-8 w-8 rounded-sm2" />
-              <Skeleton className="h-8 w-8 rounded-sm2" />
-              <Skeleton className="h-8 w-8 rounded-sm2" />
-            </div>
+            <Skeleton className="h-8 w-8 flex-shrink-0 rounded-sm2" />
           </div>
         ))}
       </div>

@@ -91,6 +91,23 @@ model Company {
   nicPasswordEnc     String?
   nicClientId        String?
   nicClientSecretEnc String?
+  // Bumped on every profile/branding/template change — part of each stored
+  // invoice PDF's cache key (see src/lib/invoice-pdf.ts), so a new logo or
+  // template makes every cached PDF stale without touching the invoices.
+  updatedAt          DateTime        @default(now()) @updatedAt
+  // Credit notes and payment receipts get their own sequential numbers,
+  // claimed the same way as invoice numbers (claimInvoiceNumber).
+  creditNotePrefix   String          @default("CN")
+  nextCreditNoteNo   Int             @default(1)
+  receiptPrefix      String          @default("RCPT")
+  nextReceiptNo      Int             @default(1)
+  // Inventory tuning — how many days of sales a reorder should cover, and
+  // how far ahead a batch's expiry date starts showing as "expiring soon".
+  reorderLeadDays    Int             @default(7)
+  expiryAlertDays    Int             @default(30)
+  // Ledger names the Tally XML export posts to — must match the ledgers in
+  // the accountant's Tally company. Null = the defaults in src/lib/tally.ts.
+  tallyLedgers       Json?
 }
 
 /// A login for the company — created only by `npm run setup` (there is no
@@ -103,6 +120,14 @@ model User {
   createdAt    DateTime             @default(now())
   onboardedAt  DateTime?
   resetTokens  PasswordResetToken[]
+  // OWNER (everyone created by `npm run setup`) can do everything; STAFF
+  // can bill, take payments and receive stock, but can't delete, change
+  // company settings or manage logins — see src/lib/session.ts requireOwner.
+  name         String?
+  role         UserRole             @default(OWNER)
+  active       Boolean              @default(true)
+  activities   ActivityLog[]
+  movements    StockMovement[]
 }
 
 /// One row per login identifier (email/phone) — tracks recent failures so repeated wrong passwords lock the identifier
@@ -129,15 +154,15 @@ model PasswordResetToken {
 }
 
 model Product {
-  id            String        @id @default(cuid())
+  id            String             @id @default(cuid())
   name          String
   category      String
   unit          String
   price         Decimal
   packQty       Int?
-  active        Boolean       @default(true)
+  active        Boolean            @default(true)
   desc          String?
-  images        String[]      @default([])
+  images        String[]           @default([])
   // HSN/SAC code — snapshotted onto InvoiceItem at invoice-creation time
   // (see InvoiceItem.hsn), needed for the CLASSIC template's item table,
   // HSN-wise tax summary, and the e-Invoice ItemList payload.
@@ -156,6 +181,21 @@ model Product {
   // used by dashboard/reports/list views; the invoice builder reads
   // `priceTiers` to offer every pricing option. See src/actions/products.ts.
   priceTiers    ProductPriceTier[]
+
+  // Inventory — always counted in this product's main `unit` (the first
+  // price tier). Off by default so products that were never counted don't
+  // block billing; entering a first count on the Inventory screen turns it
+  // on. `stockQty` is a cached running balance — StockMovement is the
+  // ledger it's derived from, and every change goes through
+  // src/lib/stock.ts's applyMovement so the two never disagree.
+  trackStock     Boolean          @default(false)
+  stockQty       Decimal          @default(0)
+  lowStockAt     Decimal?
+  stockMovements StockMovement[]
+  customerPrices CustomerPrice[]
+  schemes        Scheme[]
+  purchaseItems  PurchaseItem[]
+  creditItems    CreditNoteItem[]
 
   @@index([category, name])
   @@index([active])
@@ -179,7 +219,7 @@ model ProductPriceTier {
 }
 
 model Customer {
-  id          String    @id @default(cuid())
+  id          String          @id @default(cuid())
   name        String
   shopName    String?
   contact     String?
@@ -190,16 +230,62 @@ model Customer {
   district    String?
   gstin       String?
   address     String?
-  terms       String    @default("Due on receipt")
-  creditLimit Decimal   @default(0)
-  guest       Boolean   @default(false)
+  terms       String          @default("Due on receipt")
+  creditLimit Decimal         @default(0)
+  guest       Boolean         @default(false)
   // Buyer-block fields for the CLASSIC template + e-Invoice BuyerDtls/ShipDtls
   // — `contact`/`phone` above already cover "Contact person"/"Contact".
   fssaiNo     String?
   pincode     String?
   invoices    Invoice[]
+  // Disabled customers keep all their history but drop out of the Bill To
+  // picker and the active directory — the safe alternative to deleting a
+  // customer who has invoices on file.
+  active      Boolean         @default(true)
+  images      String[]        @default([])
+  // Delivery route/beat — groups the daily loading sheet.
+  route       String?
+  // Part of each invoice PDF's cache key — the buyer block reads the live
+  // customer row, so editing an address must invalidate stored PDFs.
+  updatedAt   DateTime        @default(now()) @updatedAt
+  prices      CustomerPrice[]
+  creditNotes CreditNote[]
 
   @@index([guest, name])
+  @@index([active, name])
+}
+
+/// A customer-specific price for one product+unit, used by the invoice
+/// builder in place of the catalog price for this customer.
+model CustomerPrice {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  unit       String
+  price      Decimal
+
+  @@unique([customerId, productId, unit])
+  @@index([productId])
+}
+
+/// "Buy N, get M free" on one product+unit — the builder suggests the free
+/// line (rate 0) once a line's quantity reaches `buyQty`.
+model Scheme {
+  id        String    @id @default(cuid())
+  productId String
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String?
+  unit      String
+  buyQty    Decimal
+  freeQty   Decimal
+  active    Boolean   @default(true)
+  validFrom DateTime?
+  validTo   DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([productId])
 }
 
 model Invoice {
@@ -248,19 +334,19 @@ model Invoice {
   // approximation for any invoice whose company GST config changed since it
   // was originally created — the true historical value was never recorded
   // before this feature.
-  cgstRate             Decimal       @default(9)
-  sgstRate             Decimal       @default(9)
-  igstRate             Decimal       @default(18)
-  cgstEnabled          Boolean       @default(true)
-  sgstEnabled          Boolean       @default(true)
-  igstEnabled          Boolean       @default(true)
-  showBankDetails      Boolean       @default(true)
-  showHsnSummary       Boolean       @default(false)
+  cgstRate        Decimal @default(9)
+  sgstRate        Decimal @default(9)
+  igstRate        Decimal @default(18)
+  cgstEnabled     Boolean @default(true)
+  sgstEnabled     Boolean @default(true)
+  igstEnabled     Boolean @default(true)
+  showBankDetails Boolean @default(true)
+  showHsnSummary  Boolean @default(false)
   // Same snapshot treatment as the fields above, for the UPI QR / GPay
   // number shown near the Authorised Signatory block — see Company.
   // showUpiQr/showGpayNumber for what each one renders.
-  showUpiQr            Boolean       @default(false)
-  showGpayNumber       Boolean       @default(false)
+  showUpiQr       Boolean @default(false)
+  showGpayNumber  Boolean @default(false)
 
   // Computed totals, STORED — written by every action that changes an
   // invoice's lines, discount, GST snapshot, customer, or payments (see
@@ -270,18 +356,34 @@ model Invoice {
   // filter), and customer ledgers can aggregate in SQL instead of loading
   // every invoice with all its items and payments into memory.
   // `interState` is computeTotals' `useIgst` (IGST vs CGST+SGST).
-  taxable              Decimal       @default(0)
-  cgst                 Decimal       @default(0)
-  sgst                 Decimal       @default(0)
-  igst                 Decimal       @default(0)
-  total                Decimal       @default(0)
-  interState           Boolean       @default(false)
-  amountPaid           Decimal       @default(0)
+  taxable    Decimal @default(0)
+  cgst       Decimal @default(0)
+  sgst       Decimal @default(0)
+  igst       Decimal @default(0)
+  total      Decimal @default(0)
+  interState Boolean @default(false)
+  amountPaid Decimal @default(0)
 
-  items                InvoiceItem[]
-  payments             Payment[]
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
+  items     InvoiceItem[]
+  payments  Payment[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  // The stored PDF (Vercel Blob URL, or a local cache path in dev) and the
+  // hash of everything it was rendered from — see src/lib/invoice-pdf.ts.
+  // A mismatch means the PDF is stale and gets rebuilt on next request.
+  pdfUrl         String?
+  pdfKey         String?
+  // Last WhatsApp payment reminder sent from the app, for "reminded 2 days
+  // ago" on overdue invoices.
+  lastRemindedAt DateTime?
+  stockMovements StockMovement[]
+  creditNotes    CreditNote[]
+  // Whether this invoice has taken its lines out of stock. Every save does
+  // — drafts included — so this is only false on drafts saved before drafts
+  // took stock (set by the 20261101000000 migration): those hold nothing,
+  // and take their stock the next time they're saved, sent or paid.
+  stockTaken     Boolean        @default(true)
 
   // e-Invoice (NIC IRP) result — see src/lib/nic/einvoice.ts.
   irn            String?
@@ -348,21 +450,222 @@ model InvoiceItem {
   // Snapshotted from Product.altUnit/altQtyPerUnit — see that field's comment.
   altUnit       String?
   altQtyPerUnit Decimal?
+  // How much of the product's main stock unit this line consumes (qty ×
+  // unit factor, e.g. 6 Piece of a 12-per-Box product = 0.5), fixed at save
+  // time so a later change to the product's units can't rewrite history.
+  // Null for ad-hoc lines and untracked products.
+  stockQty      Decimal?
 
   @@index([invoiceId])
   @@index([productId])
 }
 
 model Payment {
-  id        String   @id @default(cuid())
-  invoiceId String
-  invoice   Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  amount    Decimal
-  date      DateTime
-  mode      String?
+  id           String      @id @default(cuid())
+  invoiceId    String
+  invoice      Invoice     @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amount       Decimal
+  date         DateTime
+  mode         String?
+  // UPI transaction id, cheque number, bank reference…
+  reference    String?
+  // Sequential receipt number (Company.receiptPrefix/nextReceiptNo) —
+  // null for payments recorded before receipts existed.
+  receiptNo    String?     @unique
+  // Set when this "payment" is really a credit note applied against the
+  // invoice — deleting the credit note removes it.
+  creditNoteId String?     @unique
+  creditNote   CreditNote? @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+  createdAt    DateTime    @default(now())
 
   @@index([invoiceId])
   @@index([date])
+}
+
+/// The inventory ledger — one row per change to a product's stock, always
+/// in the product's main unit. `qty` is signed (+ in, − out) and
+/// `balanceAfter` is Product.stockQty right after this row was applied.
+model StockMovement {
+  id            String            @id @default(cuid())
+  productId     String
+  product       Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  type          StockMovementType
+  qty           Decimal
+  balanceAfter  Decimal
+  // Source documents — SetNull so deleting a document keeps the history
+  // row (its own reversal row is posted first); `invoiceNumber` keeps the
+  // human reference readable after the invoice itself is gone.
+  invoiceId     String?
+  invoice       Invoice?          @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  invoiceNumber String?
+  purchaseId    String?
+  purchase      Purchase?         @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  creditNoteId  String?
+  creditNote    CreditNote?       @relation(fields: [creditNoteId], references: [id], onDelete: SetNull)
+  reference     String?
+  unitCost      Decimal?
+  note          String?
+  // Batch/expiry of stock coming in (OPENING/PURCHASE) — which batches are
+  // still on hand is derived first-in-first-out, see src/lib/stock.ts.
+  batchNo       String?
+  expiryDate    DateTime?
+  userId        String?
+  user          User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  date          DateTime          @default(now())
+  createdAt     DateTime          @default(now())
+
+  @@index([productId, date])
+  @@index([invoiceId])
+  @@index([purchaseId])
+  @@index([creditNoteId])
+}
+
+model Supplier {
+  id        String     @id @default(cuid())
+  name      String
+  contact   String?
+  phone     String?
+  email     String?
+  gstin     String?
+  state     String?
+  address   String?
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @default(now()) @updatedAt
+  purchases Purchase[]
+
+  @@index([active, name])
+}
+
+/// A supplier bill — posting it adds stock (PURCHASE movements) and records
+/// the input GST paid. Totals are stored, same convention as Invoice.
+model Purchase {
+  id             String               @id @default(cuid())
+  supplierId     String
+  supplier       Supplier             @relation(fields: [supplierId], references: [id])
+  billNo         String?
+  date           DateTime
+  notes          String?
+  taxable        Decimal              @default(0)
+  cgst           Decimal              @default(0)
+  sgst           Decimal              @default(0)
+  igst           Decimal              @default(0)
+  total          Decimal              @default(0)
+  items          PurchaseItem[]
+  stockMovements StockMovement[]
+  attachments    PurchaseAttachment[]
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @default(now()) @updatedAt
+
+  @@index([date])
+  @@index([supplierId, date])
+}
+
+/// A file kept on a purchase for reference — the supplier's bill as a PDF,
+/// photos of it or of the delivery. Never read for stock or GST. The file
+/// itself lives in upload storage (src/lib/uploads.ts) at `url`; the
+/// purchase actions delete it when it's removed from the bill or the bill
+/// is deleted.
+model PurchaseAttachment {
+  id          String   @id @default(cuid())
+  purchaseId  String
+  purchase    Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  url         String
+  // The file's original name, for the list ("CM-7802.pdf").
+  name        String
+  contentType String
+  size        Int
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([purchaseId])
+}
+
+model PurchaseItem {
+  id         String    @id @default(cuid())
+  purchaseId String
+  purchase   Purchase  @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  productId  String?
+  product    Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  name       String
+  unit       String
+  qty        Decimal
+  rate       Decimal
+  gstRate    Decimal   @default(0)
+  stockQty   Decimal?
+  batchNo    String?
+  expiryDate DateTime?
+
+  @@index([purchaseId])
+  @@index([productId])
+}
+
+/// GST credit note against an invoice (goods returned or price corrected).
+/// Its value is applied to the invoice as a Payment row (mode "Credit
+/// note"), capped at the invoice's balance; anything beyond that is
+/// `refundDue`. Restocked lines post SALE_RETURN movements.
+model CreditNote {
+  id             String           @id @default(cuid())
+  number         String           @unique
+  date           DateTime
+  invoiceId      String?
+  invoice        Invoice?         @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  invoiceNumber  String?
+  customerId     String
+  customer       Customer         @relation(fields: [customerId], references: [id])
+  reason         String?
+  restock        Boolean          @default(true)
+  cgstRate       Decimal          @default(0)
+  sgstRate       Decimal          @default(0)
+  igstRate       Decimal          @default(0)
+  interState     Boolean          @default(false)
+  taxable        Decimal          @default(0)
+  cgst           Decimal          @default(0)
+  sgst           Decimal          @default(0)
+  igst           Decimal          @default(0)
+  total          Decimal          @default(0)
+  refundDue      Decimal          @default(0)
+  items          CreditNoteItem[]
+  payment        Payment?
+  stockMovements StockMovement[]
+  createdAt      DateTime         @default(now())
+
+  @@index([customerId, date])
+  @@index([invoiceId])
+  @@index([date])
+}
+
+model CreditNoteItem {
+  id           String     @id @default(cuid())
+  creditNoteId String
+  creditNote   CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+  productId    String?
+  product      Product?   @relation(fields: [productId], references: [id], onDelete: SetNull)
+  name         String
+  unit         String
+  hsn          String?
+  qty          Decimal
+  rate         Decimal
+  discount     Decimal    @default(0)
+  stockQty     Decimal?
+
+  @@index([creditNoteId])
+  @@index([productId])
+}
+
+/// Who did what — written by src/lib/activity.ts from the server actions.
+model ActivityLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String?
+  summary    String
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
 }
 
 enum InvoiceStatus {
@@ -380,6 +683,22 @@ enum DiscountType {
 enum InvoiceTemplate {
   MODERN
   CLASSIC
+  CLEAN
+}
+
+enum UserRole {
+  OWNER
+  STAFF
+}
+
+enum StockMovementType {
+  OPENING
+  PURCHASE
+  PURCHASE_RETURN
+  SALE
+  SALE_RETURN
+  ADJUSTMENT
+  DAMAGE
 }
 
 enum EinvoiceStatus {

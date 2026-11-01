@@ -1,0 +1,15 @@
+{
+  // Same as the app's, plus stand-ins for the Next.js/session pieces a
+  // server action needs outside a request — see run.ts.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/lib/session": ["stubs/session.ts"],
+      "@/lib/get-company": ["stubs/get-company.ts"],
+      "@/lib/invoice-pdf": ["stubs/invoice-pdf.ts"],
+      "next/cache": ["stubs/next-cache.ts"],
+      "@/*": ["../../src/*"]
+    }
+  }
+}

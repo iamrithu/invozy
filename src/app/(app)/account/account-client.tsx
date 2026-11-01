@@ -2,16 +2,18 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useActionState } from 'react';
-import { Mail, Phone, ShieldCheck, Building2, Pencil, Check, KeyRound, IdCard } from 'lucide-react';
+import { Mail, Phone, ShieldCheck, Building2, Pencil, Check, KeyRound, IdCard, UserRound, UsersRound, History, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import Link from 'next/link';
 import { updateMyProfile, changeMyPassword, type ProfileFormState, type PasswordFormState } from '@/actions/account';
+import { updateMyName } from '@/actions/team';
+import { roleLabel, userLabel, type UserRoleName } from '@/components/current-user';
 import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetIcon, SheetBody, SheetFooter } from '@/components/ui/sheet';
 import { initials, hashColor } from '@/lib/avatar';
 
-type AccountUser = { email: string | null; phone: string | null; companyName: string };
+type AccountUser = { name: string | null; email: string | null; phone: string | null; role: UserRoleName; companyName: string };
 
 const TABS = [
   { id: 'profile', label: 'Profile', icon: IdCard },
@@ -21,7 +23,8 @@ const TABS = [
 export function AccountClient({ user }: { user: AccountUser }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<(typeof TABS)[number]['id']>('profile');
-  const displayName = user.email ?? user.phone ?? 'U';
+  const displayName = userLabel(user);
+  const isOwner = user.role === 'OWNER';
 
   function openTab(t: (typeof TABS)[number]['id']) {
     setTab(t);
@@ -39,11 +42,16 @@ export function AccountClient({ user }: { user: AccountUser }) {
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[18px] font-extrabold text-ink">{user.email ?? user.phone}</span>
-            <span className="rounded-sm2 bg-brand-light px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-dark">
-              <ShieldCheck size={10} className="mr-1 inline" /> Owner
+            <span className="text-[18px] font-extrabold text-ink">{displayName}</span>
+            <span
+              className={`rounded-sm2 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                isOwner ? 'bg-brand-light text-brand-dark' : 'bg-surface-alt text-ink-soft'
+              }`}
+            >
+              {isOwner ? <ShieldCheck size={10} className="mr-1 inline" /> : <UserRound size={10} className="mr-1 inline" />} {roleLabel(user.role)}
             </span>
           </div>
+          {user.name && (user.email || user.phone) && <div className="mt-0.5 truncate text-[12px] text-ink-soft">{user.email ?? user.phone}</div>}
           <Link href="/company" className="mt-1 flex items-center gap-1.5 text-[12px] text-ink-faint hover:text-brand">
             <Building2 size={12} /> {user.companyName}
           </Link>
@@ -51,14 +59,23 @@ export function AccountClient({ user }: { user: AccountUser }) {
       </div>
 
       <InfoCard icon={<IdCard size={13} />} title="Profile" className="lg:col-span-6" action={<EditButton onClick={() => openTab('profile')} />}>
+        <InfoRow icon={<UserRound size={12} />} k="Name" v={user.name ?? 'Not set'} />
         <InfoRow icon={<Mail size={12} />} k="Email" v={user.email ?? 'Not set'} />
         <InfoRow icon={<Phone size={12} />} k="Phone" v={user.phone ?? 'Not set'} />
+        {!isOwner && <p className="pt-2 text-[11.5px] text-ink-faint">The email/phone you sign in with is set by the owner.</p>}
       </InfoCard>
 
       <InfoCard icon={<KeyRound size={13} />} title="Security" className="lg:col-span-6" action={<EditButton label="Change password" onClick={() => openTab('security')} />}>
         <InfoRow icon={<KeyRound size={12} />} k="Password" v="••••••••" />
-        <p className="pt-2 text-[11.5px] text-ink-faint">Keep this to yourself — anyone with it can sign in to your workspace.</p>
+        <p className="pt-2 text-[11.5px] text-ink-faint">Keep this to yourself — anyone with it can sign in to your account.</p>
       </InfoCard>
+
+      {isOwner && (
+        <InfoCard icon={<UsersRound size={13} />} title="Team" className="lg:col-span-12">
+          <LinkRow href="/team" icon={<UsersRound size={14} />} title="Team & logins" hint="Add staff logins, reset passwords, switch someone off" />
+          <LinkRow href="/activity" icon={<History size={14} />} title="Activity log" hint="Who created, changed or deleted what, and when" />
+        </InfoCard>
+      )}
 
       <Sheet
         open={open}
@@ -94,7 +111,7 @@ export function AccountClient({ user }: { user: AccountUser }) {
             })}
           </div>
 
-          {tab === 'profile' ? <ProfileTab user={user} onSaved={() => setOpen(false)} /> : <SecurityTab onSaved={() => setOpen(false)} />}
+          {tab === 'profile' ? <ProfileTab user={user} isOwner={isOwner} onSaved={() => setOpen(false)} /> : <SecurityTab onSaved={() => setOpen(false)} />}
         </SheetContent>
       </Sheet>
     </div>
@@ -145,8 +162,34 @@ function InfoRow({ icon, k, v }: { icon: React.ReactNode; k: string; v: string }
   );
 }
 
-function ProfileTab({ user, onSaved }: { user: AccountUser; onSaved: () => void }) {
-  const [state, formAction, pending] = useActionState<ProfileFormState, FormData>(updateMyProfile, {});
+function LinkRow({ href, icon, title, hint }: { href: string; icon: React.ReactNode; title: string; hint: string }) {
+  return (
+    <Link href={href} className="-mx-1.5 flex items-center gap-2.5 rounded-sm2 border-b border-dashed border-line px-1.5 py-2 transition-colors last:border-0 hover:bg-surface-alt">
+      <span className="flex-shrink-0 text-ink-faint">{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[12.5px] font-bold text-ink">{title}</span>
+        <span className="block truncate text-[11.5px] text-ink-faint">{hint}</span>
+      </span>
+      <ChevronRight size={14} className="flex-shrink-0 text-ink-faint" />
+    </Link>
+  );
+}
+
+/** Name is saved for everyone (updateMyName); the sign-in email/phone only
+ * for owners — a staff login's identifiers are set by the owner on the
+ * Team page, and updateMyProfile also mirrors the email onto the company
+ * profile, which must stay the owner's. */
+function ProfileTab({ user, isOwner, onSaved }: { user: AccountUser; isOwner: boolean; onSaved: () => void }) {
+  const [state, formAction, pending] = useActionState<ProfileFormState, FormData>(async (prev, formData) => {
+    const name = String(formData.get('name') ?? '');
+    // A login created by `npm run setup` has no name yet — leaving it blank
+    // mustn't block an email/phone change. Clearing an existing name does.
+    if (name.trim() || user.name) {
+      const named = await updateMyName(name);
+      if (named.error) return { error: named.error, fieldErrors: named.fieldErrors };
+    }
+    return isOwner ? updateMyProfile(prev, formData) : {};
+  }, {});
   const submittedRef = useRef(false);
 
   useEffect(() => {
@@ -164,9 +207,16 @@ function ProfileTab({ user, onSaved }: { user: AccountUser; onSaved: () => void 
     <form action={formAction} onSubmit={() => (submittedRef.current = true)} className="contents">
       <SheetBody>
         <div className="space-y-3">
-          <Field label="Email" name="email" type="email" icon={Mail} defaultValue={user.email ?? ''} error={state.fieldErrors?.email} />
-          <Field label="Phone" name="phone" icon={Phone} defaultValue={user.phone ?? ''} error={state.fieldErrors?.phone} />
-          <p className="text-[11px] text-ink-faint">Your company&apos;s contact email on the Company profile always matches this email.</p>
+          <Field label="Name" name="name" icon={UserRound} defaultValue={user.name ?? ''} placeholder="How your name shows in the app" error={state.fieldErrors?.name} />
+          {isOwner ? (
+            <>
+              <Field label="Email" name="email" type="email" icon={Mail} defaultValue={user.email ?? ''} error={state.fieldErrors?.email} />
+              <Field label="Phone" name="phone" icon={Phone} defaultValue={user.phone ?? ''} error={state.fieldErrors?.phone} />
+              <p className="text-[11px] text-ink-faint">Your company&apos;s contact email on the Company profile always matches this email.</p>
+            </>
+          ) : (
+            <p className="text-[11px] text-ink-faint">To change the email or phone you sign in with, ask the owner.</p>
+          )}
           {state.error && <p className="text-[12.5px] font-bold text-destructive">{state.error}</p>}
         </div>
       </SheetBody>

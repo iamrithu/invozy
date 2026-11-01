@@ -31,8 +31,8 @@ import { currentIndianFY } from '../src/lib/gst';
 // customer's state to decide CGST+SGST vs IGST. The company email is the
 // login email passed on the command line.
 const COMPANY: Omit<Prisma.CompanyCreateInput, 'id' | 'email' | 'invoiceFY'> & { invoiceFY?: string } = {
-  name: '',
-  state: '',
+  name: 'ASB FOODS & KULFI',
+  state: 'Tamil Nadu',
   district: null,
   address: null,
   pincode: null,

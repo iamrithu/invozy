@@ -29,7 +29,9 @@ export function mmToPx(mm: number): number {
 }
 
 /** A4 usable content height (297mm page, 14mm top+bottom margins — matches
- * both `@page` in globals.css and the PDF route's `page.pdf()` margins),
+ * both `@page` in globals.css and PDF_PAGE in src/lib/pdf-browser.ts, which
+ * the PDF renderer prints with; content width there is 186mm, the width
+ * the print pages lay the sheet out at),
  * minus a safety band. This one is genuinely template-agnostic — every
  * physical page both templates print to has the same shape — so, unlike
  * the section heights below, it doesn't need measuring.
@@ -52,6 +54,16 @@ export function mmToPx(mm: number): number {
 export const USABLE_MM = 250;
 export const USABLE_PX = mmToPx(USABLE_MM);
 export const ENDBAND_PX = mmToPx(10);
+
+/** How far down the page the CLEAN template's ruled frame is drawn on its
+ * last page (an explicit-pixel filler row inside the item table, never a
+ * min-height). Closer to the true 269mm than USABLE_MM because it's only
+ * ever applied when the page's *measured* sections already fit beneath it,
+ * and 7mm of slack covers any rounding between that sum and Chromium's own
+ * print layout — verified against real renders with 1–15 lines, HSN
+ * summary and notes on and off. Never used to decide the page split. */
+export const FRAME_FILL_MM = 262;
+export const FRAME_FILL_PX = mmToPx(FRAME_FILL_MM);
 
 export type PaginationResult<T> = {
   pages: T[][];
@@ -200,6 +212,10 @@ export type ProbeContent = {
   buyer: ReactNode;
   /** The items table's `<thead>` content (just the header row(s)). */
   itemsTableHead: ReactNode;
+  /** The real items `<table>`'s own classes (font size, layout) — applied
+   * to the probe's table too, so a row is measured at the size it prints
+   * at rather than at whatever the wrapper's text size happens to be. */
+  itemsTableClassName?: string;
   /** One representative `<tr>`'s content — used to measure a single row's
    * real height (font size, padding, borders all included). */
   itemRow: ReactNode;
@@ -278,14 +294,22 @@ export function useMeasuredSections(content: ProbeContent): { heights: MeasuredH
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const probe = (
+  // Unmounted as soon as the final measurement is in — it has nothing left
+  // to do, and while mounted it's a second, hidden copy of the invoice's
+  // text sitting under page 1. (Hidden by inline visibility alone it wasn't
+  // even reliably hidden: `.invoice-print *` in globals.css sets
+  // `visibility: visible` on every descendant, which beats an inherited
+  // `hidden` — so its text could end up in the PDF. `data-measure-probe`
+  // gets an !important hide in globals.css for the moments it does exist.)
+  const probe = ready ? null : (
     <div
       aria-hidden="true"
+      data-measure-probe=""
       style={{ position: 'absolute', visibility: 'hidden', top: 0, left: 0, width: '100%', zIndex: -1, pointerEvents: 'none' }}
     >
       <div ref={headerRef}>{content.header}</div>
       <div ref={buyerRef}>{content.buyer}</div>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <table className={content.itemsTableClassName} style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead ref={theadRef}>{content.itemsTableHead}</thead>
         <tbody>
           <tr ref={rowRef}>{content.itemRow}</tr>

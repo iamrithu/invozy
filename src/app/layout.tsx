@@ -10,13 +10,18 @@ import { APP_NAME } from '@/lib/brand';
 // earlier geometric picks (Poppins, then Outfit). Plex Mono also gives
 // numbers/GSTINs/invoice amounts a real monospace face for the first time —
 // every "font-mono" in this app previously just re-used the sans font.
+//
+// 'latin-ext' as well as 'latin': Google's latin subset stops at the euro
+// sign — the rupee sign (U+20B9) lives in latin-ext. With only 'latin', a ₹
+// fell back to whatever font the machine had, which in the headless PDF
+// renderer's minimal Chromium can be none at all (a box on every amount).
 const plexSans = IBM_Plex_Sans({
-  subsets: ['latin'],
+  subsets: ['latin', 'latin-ext'],
   weight: ['400', '500', '600', '700'],
   variable: '--font-plex-sans',
 });
 const plexMono = IBM_Plex_Mono({
-  subsets: ['latin'],
+  subsets: ['latin', 'latin-ext'],
   weight: ['500', '600'],
   variable: '--font-plex-mono',
 });

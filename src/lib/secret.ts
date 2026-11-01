@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 
 /**
- * At-rest encryption for per-tenant third-party API secrets (NIC e-Invoice/
+ * At-rest encryption for the company's third-party API secrets (NIC e-Invoice/
  * e-Way Bill username/password, client secret — see Company.nicPasswordEnc/
  * nicClientSecretEnc). Reuses AUTH_SECRET (already required for NextAuth
  * session signing) as the key source via scrypt, so no new secret needs to
@@ -10,8 +10,10 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypt
  * Format: `${ivHex}:${authTagHex}:${ciphertextHex}` — AES-256-GCM, random IV
  * per call.
  */
-function deriveKey() {
-  const secret = process.env.AUTH_SECRET;
+/** `secret` defaults to this deployment's AUTH_SECRET — passing another one
+ * is only for re-encrypting values brought over from a deployment with a
+ * different secret (scripts/migrate-from-invozy.ts). */
+function deriveKey(secret = process.env.AUTH_SECRET) {
   if (!secret) throw new Error('AUTH_SECRET must be set to encrypt/decrypt stored credentials.');
   return scryptSync(secret, 'invozy-nic-credentials', 32);
 }
@@ -24,10 +26,10 @@ export function encryptSecret(plain: string): string {
   return `${iv.toString('hex')}:${authTag.toString('hex')}:${ciphertext.toString('hex')}`;
 }
 
-export function decryptSecret(enc: string): string {
+export function decryptSecret(enc: string, secret?: string): string {
   const [ivHex, authTagHex, ciphertextHex] = enc.split(':');
   if (!ivHex || !authTagHex || !ciphertextHex) throw new Error('Malformed encrypted secret.');
-  const decipher = createDecipheriv('aes-256-gcm', deriveKey(), Buffer.from(ivHex, 'hex'));
+  const decipher = createDecipheriv('aes-256-gcm', deriveKey(secret), Buffer.from(ivHex, 'hex'));
   decipher.setAuthTag(Buffer.from(authTagHex, 'hex'));
   const plain = Buffer.concat([decipher.update(Buffer.from(ciphertextHex, 'hex')), decipher.final()]);
   return plain.toString('utf8');

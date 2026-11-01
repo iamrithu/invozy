@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Package, Ruler, FileText, Eye, EyeOff, Trash2, Check, Sparkles, Hash, Plus, Tag, ImagePlus } from 'lucide-react';
+import Link from 'next/link';
+import { Package, Ruler, FileText, Eye, EyeOff, Trash2, Check, Sparkles, Hash, Plus, Tag, ImagePlus, Boxes, History } from 'lucide-react';
 import { toast } from 'sonner';
 import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
@@ -13,6 +14,8 @@ import { useCreateProduct, useUpdateProduct, useDeleteProduct, useToggleProductA
 import { CategoryCombobox } from '@/components/products/category-combobox';
 import { ProductImagesField, type PendingImages } from '@/components/products/product-images-field';
 import { UNITS } from '@/lib/units';
+import { formatStock, needsPackSize, unitFactor, type UnitProduct } from '@/lib/stock-units';
+import { StockBadge } from '@/components/products/stock-badge';
 
 type PriceTier = { id?: string; unit: string; price: string | number; approxQty: string | number | null };
 
@@ -28,6 +31,9 @@ type Product = {
   images: string[];
   hsn?: string | null;
   priceTiers?: PriceTier[];
+  trackStock?: boolean;
+  stockQty?: string | number;
+  lowStockAt?: string | number | null;
 };
 
 type TierRow = { unit: string; price: string; approxQty: string };
@@ -37,11 +43,43 @@ type TierRow = { unit: string; price: string; approxQty: string };
  * "≈ Quantity per X"; a loose Piece never needs this at all. Always optional
  * and purely informational — see ProductPriceTier.approxQty in
  * schema.prisma — never a purchase minimum. */
-function approxQtyLabel(unit: string): string | null {
+function approxQtyLabel(unit: string, required = false): string | null {
   const u = unit.trim().toLowerCase();
   if (!u || u === 'piece') return null;
-  if (u === 'box' || u === 'bag') return `≈ Pieces per ${formatUnit(unit)} (optional)`;
-  return `≈ Quantity per ${formatUnit(unit)} (optional)`;
+  const hint = required ? '(needed for stock)' : '(optional)';
+  if (u === 'box' || u === 'bag') return `Pieces in 1 ${formatUnit(unit)} ${hint}`;
+  return `≈ Quantity per ${formatUnit(unit)} ${hint}`;
+}
+
+/** The form's tiers in the shape src/lib/stock-units.ts converts with —
+ * the first tier is the main (stock-counting) unit. */
+function unitShape(tiers: TierRow[]): UnitProduct {
+  const rows = tiers.filter((t) => t.unit.trim());
+  return {
+    unit: rows[0]?.unit ?? '',
+    packQty: rows[0]?.approxQty ? parseFloat(rows[0].approxQty) : null,
+    priceTiers: rows.map((t) => ({ unit: t.unit, approxQty: t.approxQty.trim() ? parseFloat(t.approxQty) : null })),
+  };
+}
+
+/** One line under the stock fields explaining how other units convert into
+ * the main one, e.g. Counted in Box. Selling 1 Piece takes away 1/12 Box,
+ * shown as "19 Box + 11 Pc". */
+function conversionHint(shape: UnitProduct, opening: number): string {
+  const main = formatUnit(shape.unit);
+  if (!main) return '';
+  if (needsPackSize(shape)) return `Counted in ${main}. Set the pieces in 1 ${main} above so smaller sales can be taken out of stock.`;
+  const others = (shape.priceTiers ?? []).filter((t) => t.unit.trim().toLowerCase() !== shape.unit.trim().toLowerCase());
+  const smaller = others.find((t) => unitFactor(shape, t.unit) < 1);
+  if (smaller) {
+    const f = unitFactor(shape, smaller.unit);
+    const n = Math.round(1 / f);
+    const example = opening > f ? opening - f : 4 + 6 * f;
+    return `Counted in ${main}. Selling 1 ${formatUnit(smaller.unit)} takes away 1/${n} ${main}, shown as "${formatStock(example, shape)}".`;
+  }
+  const bigger = others.find((t) => unitFactor(shape, t.unit) > 1);
+  if (bigger) return `Counted in ${main}. Selling 1 ${formatUnit(bigger.unit)} takes away ${unitFactor(shape, bigger.unit)} ${main}.`;
+  return `Counted in ${main}.`;
 }
 
 /** Seeds the tier list from `product.priceTiers` when editing (every
@@ -100,6 +138,12 @@ export function ProductFormDialog({
   const [error, setError] = useState<string | undefined>();
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // Stock section — create mode only switches tracking on; once a product
+  // exists, tracking and counts are managed from Inventory (every change
+  // recorded there), and only the low-stock alert is editable here.
+  const [trackStock, setTrackStock] = useState(false);
+  const [openingStock, setOpeningStock] = useState('');
+  const [lowStockAt, setLowStockAt] = useState(product?.lowStockAt != null ? String(Number(product.lowStockAt)) : '');
 
   const createProduct = useCreateProduct();
   const updateProduct = useUpdateProduct(product?.id ?? '');
@@ -111,7 +155,15 @@ export function ProductFormDialog({
     setCategory('');
     setTiers([{ unit: 'box', price: '', approxQty: '' }]);
     setImages({ existing: [], files: [] });
+    setTrackStock(false);
+    setOpeningStock('');
+    setLowStockAt('');
   }
+
+  const tracked = mode === 'create' ? trackStock : !!product?.trackStock;
+  const shape = unitShape(tiers);
+  const packSizeMissing = tracked && needsPackSize(shape);
+  const mainUnit = formatUnit(shape.unit) || 'unit';
 
   function updateTier(i: number, patch: Partial<TierRow>) {
     setTiers((prev) => prev.map((t, idx) => (idx === i ? { ...t, ...patch } : t)));
@@ -133,6 +185,21 @@ export function ProductFormDialog({
       setError('Add at least one pricing option — a unit and a price above 0.');
       setFieldErrors({ tiers: 'Add at least one pricing option — a unit and a price above 0.' });
       return;
+    }
+    if (tracked && needsPackSize({ unit: validTiers[0].unit, packQty: validTiers[0].approxQty, priceTiers: validTiers })) {
+      const msg = `Set how many pieces are in 1 ${formatUnit(validTiers[0].unit)} — stock is counted in ${formatUnit(validTiers[0].unit)}, so smaller sales can't be converted without it.`;
+      setError(msg);
+      setFieldErrors({ tiers: msg });
+      return;
+    }
+    if (mode === 'create') {
+      formData.set('trackStock', String(trackStock));
+      if (trackStock) {
+        formData.set('openingStock', openingStock.trim());
+        formData.set('lowStockAt', lowStockAt.trim());
+      }
+    } else if (product?.trackStock) {
+      formData.set('lowStockAt', lowStockAt.trim());
     }
     // Product.unit/price/packQty stay the "primary" fields (dashboard/
     // reports/quick list keep reading them directly, and packQty is also
@@ -187,7 +254,11 @@ export function ProductFormDialog({
               <label className="flex flex-shrink-0 cursor-pointer items-center gap-2">
                 {product.active ? <Eye size={13} className="text-green" /> : <EyeOff size={13} className="text-ink-faint" />}
                 <span className={`text-[11px] font-bold ${product.active ? 'text-green' : 'text-ink-faint'}`}>{product.active ? 'Live' : 'Hidden'}</span>
-                <Switch checked={product.active} disabled={toggleActive.isPending} onChange={() => toggleActive.mutate(product.id)} />
+                <Switch
+                  checked={product.active}
+                  disabled={toggleActive.isPending}
+                  onChange={() => toggleActive.mutate({ id: product.id, active: !product.active }, { onError: (e) => toast.error(e.message) })}
+                />
               </label>
             )}
           </SheetHeader>
@@ -213,7 +284,9 @@ export function ProductFormDialog({
                 />
                 <div className="mt-3 space-y-2.5">
                   {tiers.map((t, i) => {
-                    const approxLabel = approxQtyLabel(t.unit);
+                    // The main (first) unit's pack size is what stock
+                    // conversion hangs on — flag it when tracking needs it.
+                    const approxLabel = approxQtyLabel(t.unit, i === 0 && packSizeMissing);
                     const approxQtyNum = parseFloat(t.approxQty);
                     const priceNum = parseFloat(t.price);
                     // Divides this tier's own price by its approx quantity to
@@ -269,7 +342,9 @@ export function ProductFormDialog({
                                 type="number"
                                 value={t.approxQty}
                                 onChange={(e) => updateTier(i, { approxQty: e.target.value })}
-                                className="w-full rounded-sm2 border border-line bg-surface px-2.5 py-2 font-mono text-[13px] text-ink outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
+                                className={`w-full rounded-sm2 border bg-surface px-2.5 py-2 font-mono text-[13px] text-ink outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+                                  i === 0 && packSizeMissing ? 'border-gold' : 'border-line'
+                                }`}
                               />
                             </div>
                           )}
@@ -292,6 +367,20 @@ export function ProductFormDialog({
                 </button>
                 {fieldErrors.tiers && <p className="mt-1.5 text-[11px] font-semibold text-destructive">{fieldErrors.tiers}</p>}
               </section>
+
+              <StockSection
+                mode={mode}
+                product={product}
+                trackStock={trackStock}
+                onTrackStockChange={setTrackStock}
+                openingStock={openingStock}
+                onOpeningStockChange={setOpeningStock}
+                lowStockAt={lowStockAt}
+                onLowStockAtChange={setLowStockAt}
+                mainUnit={mainUnit}
+                hint={conversionHint(shape, parseFloat(openingStock) || 0)}
+                fieldErrors={fieldErrors}
+              />
 
               <section className="border-t border-line pt-5">
                 <SectionHeading icon={FileText} title="Additional details" />
@@ -331,17 +420,131 @@ export function ProductFormDialog({
         <ConfirmDialog
           open={deleteOpen}
           onOpenChange={setDeleteOpen}
-          title="Remove product"
-          description={
-            <>
-              Remove <b className="font-bold text-ink">{product.name}</b> from the catalog? This can&apos;t be undone.
-            </>
-          }
+          title={`Delete ${product.name}?`}
+          description="Old invoices keep this product's name, rate and HSN. Its stock history is removed. To keep it but stop selling it, hide it instead."
+          icon={Trash2}
+          confirmIcon={Trash2}
           confirmLabel="Delete product"
           pending={deleteProduct.isPending}
           onConfirm={handleDelete}
         />
       )}
     </Sheet>
+  );
+}
+
+const stockInputClass =
+  'w-full rounded-sm2 border border-line bg-surface px-2.5 py-2 font-mono text-[13px] text-ink outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20';
+
+/** Create mode: optional opening stock — "Track stock" off leaves the
+ * product untracked (billing works as before); on with an empty opening
+ * count starts it at 0. Edit mode: current stock read-only with a link to
+ * its history, plus the low-stock alert. */
+function StockSection({
+  mode,
+  product,
+  trackStock,
+  onTrackStockChange,
+  openingStock,
+  onOpeningStockChange,
+  lowStockAt,
+  onLowStockAtChange,
+  mainUnit,
+  hint,
+  fieldErrors,
+}: {
+  mode: 'create' | 'edit';
+  product?: Product;
+  trackStock: boolean;
+  onTrackStockChange: (v: boolean) => void;
+  openingStock: string;
+  onOpeningStockChange: (v: string) => void;
+  lowStockAt: string;
+  onLowStockAtChange: (v: string) => void;
+  mainUnit: string;
+  hint: string;
+  fieldErrors: Record<string, string>;
+}) {
+  const lowStockField = (
+    <div>
+      <label htmlFor="lowStockAt" className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-ink-faint">
+        Low-stock alert at
+      </label>
+      <div className="flex items-center gap-2">
+        <input id="lowStockAt" type="number" min="0" step="any" inputMode="decimal" value={lowStockAt} onChange={(e) => onLowStockAtChange(e.target.value)} placeholder="Optional" className={stockInputClass} />
+        <span className="flex-shrink-0 text-[12px] font-bold text-ink-soft">{mainUnit}</span>
+      </div>
+      {fieldErrors.lowStockAt ? (
+        <p className="mt-1 text-[11px] font-semibold text-destructive">{fieldErrors.lowStockAt}</p>
+      ) : (
+        <p className="mt-1 text-[11px] text-ink-faint">Shows amber on Inventory at or below this.</p>
+      )}
+    </div>
+  );
+
+  if (mode === 'edit' && product) {
+    const tracked = !!product.trackStock;
+    return (
+      <section className="border-t border-line pt-5">
+        <SectionHeading icon={Boxes} title="Stock" description={tracked ? 'Counts change through Inventory, so every change is recorded.' : undefined} />
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md2 border border-line bg-bg px-3 py-2.5">
+          <div className="flex items-center gap-2 text-[12.5px]">
+            <span className="text-ink-faint">{tracked ? 'In stock' : 'Stock'}</span>
+            <StockBadge product={{ ...product, trackStock: tracked, stockQty: product.stockQty ?? 0 }} />
+          </div>
+          <Link href={`/inventory/${product.id}`} className="flex items-center gap-1 text-[12px] font-bold text-brand hover:underline">
+            <History size={12} /> {tracked ? 'View stock history' : 'Start tracking in Inventory'}
+          </Link>
+        </div>
+        {tracked && <div className="mt-3 sm:max-w-[50%]">{lowStockField}</div>}
+      </section>
+    );
+  }
+
+  return (
+    <section className="-mx-[22px] border-t border-line bg-brand-light px-[22px] py-5">
+      <SectionHeading icon={Boxes} title="Stock (optional)" />
+      <label className="mt-3 flex cursor-pointer items-center gap-3 rounded-md2 border border-line bg-surface px-3 py-2.5">
+        <span className="min-w-0 flex-1">
+          <span className="block text-[13px] font-bold text-ink">Track stock for this product</span>
+          <span className="block text-[11.5px] text-ink-soft">Invoices that are sent or paid take it out of stock.</span>
+        </span>
+        <Switch checked={trackStock} onChange={(e) => onTrackStockChange(e.target.checked)} aria-label="Track stock" />
+      </label>
+      {trackStock ? (
+        <>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label htmlFor="openingStock" className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-ink-faint">
+                Opening stock
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="openingStock"
+                  type="number"
+                  min="0"
+                  step="any"
+                  inputMode="decimal"
+                  value={openingStock}
+                  onChange={(e) => onOpeningStockChange(e.target.value)}
+                  placeholder="0"
+                  className={stockInputClass}
+                />
+                <span className="flex-shrink-0 text-[12px] font-bold text-ink-soft">{mainUnit}</span>
+              </div>
+              {fieldErrors.openingStock ? (
+                <p className="mt-1 text-[11px] font-semibold text-destructive">{fieldErrors.openingStock}</p>
+              ) : (
+                <p className="mt-1 text-[11px] text-ink-faint">Leave empty to start at 0 and add stock later.</p>
+              )}
+            </div>
+            {lowStockField}
+          </div>
+          {hint && <p className="mt-3 rounded-sm2 bg-surface px-2.5 py-2 text-[11.5px] font-semibold text-ink-soft">{hint}</p>}
+        </>
+      ) : (
+        <p className="mt-2 text-[11.5px] text-ink-faint">Not tracked. Invoices won&apos;t check stock for this product. You can start tracking later from Inventory.</p>
+      )}
+    </section>
   );
 }

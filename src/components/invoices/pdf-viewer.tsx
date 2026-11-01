@@ -35,6 +35,9 @@ const DEFAULT_MAX_PAGE_WIDTH = 900;
  * container (e.g. the full-screen viewer dialog) — defaults to a compact
  * card-sized width, callers with more room to give (like a full-viewport
  * dialog) pass a larger one.
+ *
+ * `src` is any URL pdf.js can fetch — PdfViewerDialog passes an object URL
+ * for a PDF it has already downloaded, so rendering costs no extra request.
  */
 export function PdfViewer({
   src,
@@ -77,7 +80,7 @@ export function PdfViewer({
         onLoadError={(e) => setError(e.message || 'Could not load the PDF.')}
         loading={
           <div className="flex h-[70vh] items-center justify-center gap-2 text-[13px] font-semibold text-ink-faint">
-            <Loader2 size={16} className="animate-spin" /> Generating PDF…
+            <Loader2 size={16} className="animate-spin" /> Opening PDF…
           </div>
         }
         error={

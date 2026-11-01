@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { put, del } from '@vercel/blob';
+import { put, del, list } from '@vercel/blob';
 
 const UPLOAD_ROOT = path.join(process.cwd(), 'public', 'uploads');
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -10,8 +10,10 @@ const ALLOWED_TYPES: Record<string, string> = {
   'image/png': 'png',
   'image/webp': 'webp',
 };
+// Reference documents (a purchase's bill copies) can also be PDFs.
+const DOCUMENT_TYPES: Record<string, string> = { ...ALLOWED_TYPES, 'application/pdf': 'pdf' };
 
-export type UploadKind = 'products' | 'company' | 'signature';
+export type UploadKind = 'products' | 'customers' | 'company' | 'signature' | 'purchases';
 
 /** Vercel's serverless functions have a read-only filesystem (aside from
  * /tmp, which doesn't persist or get served publicly) — writing to
@@ -29,7 +31,35 @@ export async function saveUploadedImage(file: File, kind: UploadKind): Promise<s
   const ext = ALLOWED_TYPES[file.type];
   if (!ext) throw new Error('Only JPG, PNG, or WEBP images are allowed.');
   if (file.size > MAX_BYTES) throw new Error('Images must be 4MB or smaller.');
+  return store(file, kind, ext);
+}
 
+/** saveUploadedImage for reference documents — a PDF or an image, same
+ * size cap and storage. */
+export async function saveUploadedDocument(file: File, kind: UploadKind): Promise<string> {
+  const ext = DOCUMENT_TYPES[file.type];
+  if (!ext) throw new Error(`"${file.name}" isn't a PDF, JPG, PNG or WEBP file.`);
+  if (file.size > MAX_BYTES) throw new Error(`"${file.name}" is over 4MB.`);
+  return store(file, kind, ext);
+}
+
+/** Whether `url` is a file this app stored under `kind` — URLs that come
+ * back from the client are checked with this before they're saved or
+ * deleted, so a record can only ever point at our own uploads. */
+export function isOwnUpload(url: string, kind: UploadKind): boolean {
+  if (url.startsWith('/uploads/')) {
+    const resolved = path.join(process.cwd(), 'public', url);
+    return resolved.startsWith(path.join(UPLOAD_ROOT, kind) + path.sep);
+  }
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && u.hostname.endsWith('.blob.vercel-storage.com') && u.pathname.startsWith(`/${kind}/`);
+  } catch {
+    return false;
+  }
+}
+
+async function store(file: File, kind: UploadKind, ext: string): Promise<string> {
   const filename = `${randomUUID()}.${ext}`;
 
   if (useBlob) {
@@ -44,7 +74,7 @@ export async function saveUploadedImage(file: File, kind: UploadKind): Promise<s
   // so BLOB_READ_WRITE_TOKEN gets auto-injected and the branch above is used.
   const isServerless = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME;
   if (isServerless) {
-    throw new Error('Image uploads need a Vercel Blob store connected to this project — ask an admin to connect one under Storage in the Vercel dashboard.');
+    throw new Error('Uploads need a Vercel Blob store connected to this project — connect one under Storage in the Vercel dashboard.');
   }
 
   const dir = path.join(UPLOAD_ROOT, kind);
@@ -77,4 +107,22 @@ export async function deleteUploadedImage(url: string): Promise<void> {
   } catch {
     // already gone — nothing to do
   }
+}
+
+/** Deletes Blob files under `kind/` older than `minAgeMs` that `keep`
+ * doesn't list — uploads that never made it onto a record (the browser
+ * closed between uploading and saving). Blob storage only; local files are
+ * left alone. Returns how many were deleted. */
+export async function sweepOrphanUploads(kind: UploadKind, keep: Set<string>, minAgeMs: number): Promise<number> {
+  if (!useBlob) return 0;
+  const cutoff = Date.now() - minAgeMs;
+  const stale: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await list({ prefix: `${kind}/`, cursor, limit: 1000 });
+    for (const b of page.blobs) if (!keep.has(b.url) && b.uploadedAt.getTime() < cutoff) stale.push(b.url);
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+  if (stale.length) await del(stale);
+  return stale.length;
 }

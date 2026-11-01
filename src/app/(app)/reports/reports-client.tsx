@@ -1,21 +1,34 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Receipt, Percent, TrendingUp, TrendingDown, Wallet, Users, BarChart3, Download, Printer, FileText, PieChart, Package } from 'lucide-react';
-import { toast } from 'sonner';
+import Link from 'next/link';
+import { Receipt, Percent, TrendingUp, TrendingDown, Wallet, Users, BarChart3, FileText, PieChart, Package, Truck, Landmark, PiggyBank } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { DateRangeFilter } from '@/components/filters/date-range-filter';
 import { BillingTrendChart } from '@/components/charts/billing-trend-chart';
 import { StatusBreakdownChart } from '@/components/charts/status-breakdown-chart';
-import { TopProductsChart } from '@/components/charts/top-products-chart';
+import { TopProductsChart, TopProductsToggle, type TopProductsRank } from '@/components/charts/top-products-chart';
+import { ExportMenu } from '@/components/reports/export-menu';
+import { GstSummaryCard } from '@/components/reports/gst-summary-card';
+import { ProfitCard } from '@/components/reports/profit-card';
 import { useCustomersForFilter } from '@/hooks/use-customers';
-import { useReportStats, usePreviousPeriodStats, useBillingTrend, useTopCustomers, useStatusBreakdown, useTopProducts } from '@/hooks/use-reports';
+import {
+  useReportStats,
+  usePreviousPeriodStats,
+  useBillingTrend,
+  useTopCustomers,
+  useStatusBreakdown,
+  useTopProducts,
+  useGstSummary,
+  useProfitEstimate,
+} from '@/hooks/use-reports';
 import { fmtInr } from '@/lib/gst';
 import { customerDisplayName } from '@/lib/customer';
 import { resolveDateRange, type DateFilterMode } from '@/lib/dates';
-import type { getReportStats, getBillingTrend, getTopCustomers, getStatusBreakdown, getTopProducts, ReportFilters } from '@/actions/reports';
+import type { getReportStats, getBillingTrend, getTopCustomers, getStatusBreakdown, getTopProducts, getGstSummary, ReportFilters } from '@/actions/reports';
 
 type Stats = Awaited<ReturnType<typeof getReportStats>>;
 type TopCustomer = Awaited<ReturnType<typeof getTopCustomers>>[number];
@@ -26,6 +39,7 @@ export function ReportsClient({
   initialTopCustomers,
   initialStatusBreakdown,
   initialTopProducts,
+  initialGst,
   currency,
 }: {
   initialStats: Stats;
@@ -33,6 +47,7 @@ export function ReportsClient({
   initialTopCustomers: TopCustomer[];
   initialStatusBreakdown: Awaited<ReturnType<typeof getStatusBreakdown>>;
   initialTopProducts: Awaited<ReturnType<typeof getTopProducts>>;
+  initialGst: Awaited<ReturnType<typeof getGstSummary>>;
   currency?: string;
 }) {
   const [dateMode, setDateMode] = useState<DateFilterMode>('all');
@@ -53,6 +68,11 @@ export function ReportsClient({
   const { data: topCustomers } = useTopCustomers(filters, isDefault ? initialTopCustomers : undefined);
   const { data: statusBreakdown } = useStatusBreakdown(filters, isDefault ? initialStatusBreakdown : undefined);
   const { data: topProducts } = useTopProducts(filters, isDefault ? initialTopProducts : undefined);
+  const { data: gst } = useGstSummary(filters, isDefault ? initialGst : undefined);
+  // Not server-seeded: it's the heaviest query here and sits below the
+  // fold, so the page paints without waiting for it.
+  const { data: profit } = useProfitEstimate(filters);
+  const [productRank, setProductRank] = useState<TopProductsRank>('value');
 
   const s = stats ?? initialStats;
   const totalTax = s.cgst + s.sgst + s.igst;
@@ -71,56 +91,22 @@ export function ReportsClient({
     [s, previousStats]
   );
 
-  function exportCsv() {
-    const rows: string[][] = [
-      ['Report', 'Value'],
-      ['Taxable value', s.taxable.toFixed(2)],
-      ['CGST', s.cgst.toFixed(2)],
-      ['SGST', s.sgst.toFixed(2)],
-      ['IGST', s.igst.toFixed(2)],
-      ['Total billed', s.total.toFixed(2)],
-      ['Outstanding', s.outstanding.toFixed(2)],
-      ['Invoice count', String(s.invoiceCount)],
-      [],
-      ['Status', 'Count', 'Total'],
-      ...statuses.map((st) => [st.label, String(st.count), st.total.toFixed(2)]),
-      [],
-      ['Product', 'Qty', 'Revenue'],
-      ...products.map((p) => [p.name, String(p.qty), p.revenue.toFixed(2)]),
-      [],
-      ['Customer', 'State', 'Invoices', 'Total billed', 'Outstanding'],
-      ...customers.map((c) => [customerDisplayName(c), c.state, String(c.count), c.total.toFixed(2), c.balance.toFixed(2)]),
-    ];
-    const csv = rows.map((r) => r.map((cell) => (/[",\n]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell)).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const rangeLabel = dateMode === 'all' ? 'all-time' : `${dateFrom ?? 'start'}_to_${dateTo ?? 'now'}`;
-    a.download = `report-${rangeLabel}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    toast.success('Report exported');
-  }
-
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3 print:hidden">
         <div>
-          <h1 className="flex items-center gap-2 text-[20px] font-extrabold text-ink">
+          <h1 className="flex items-center gap-2 text-[18px] sm:text-[20px] font-extrabold text-ink">
             <BarChart3 size={18} className="text-brand" /> Reports
           </h1>
           <p className="mt-1 text-[12.5px] text-ink-faint">Sent and paid invoices only — drafts aren&apos;t counted until they go out.</p>
         </div>
         <div className="flex flex-shrink-0 gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={exportCsv}>
-            <Download size={13} /> Export CSV
+          <Button type="button" variant="outline" size="sm" asChild>
+            <Link href="/reports/loading-sheet">
+              <Truck size={13} /> Loading sheet
+            </Link>
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => window.print()}>
-            <Printer size={13} /> Print / Save PDF
-          </Button>
+          <ExportMenu range={{ from: dateFrom, to: dateTo }} rangeLabel={rangeLabel(dateFrom, dateTo)} />
         </div>
       </div>
 
@@ -191,13 +177,23 @@ export function ReportsClient({
         </ReportCard>
       </div>
 
+      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[7fr_5fr]">
+        <ReportCard icon={<Landmark size={13} className="text-brand" />} title="GST summary">
+          <GstSummaryCard data={gst ?? initialGst} currency={currency} />
+        </ReportCard>
+
+        <ReportCard icon={<PiggyBank size={13} className="text-brand" />} title="Profit estimate">
+          {profit ? <ProfitCard data={profit} currency={currency} /> : <ProfitSkeleton />}
+        </ReportCard>
+      </div>
+
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
         <ReportCard icon={<PieChart size={13} className="text-brand" />} title="Status breakdown">
           <StatusBreakdownChart data={statuses} currency={currency} />
         </ReportCard>
 
-        <ReportCard icon={<Package size={13} className="text-brand" />} title="Top products">
-          <TopProductsChart data={products} currency={currency} />
+        <ReportCard icon={<Package size={13} className="text-brand" />} title="Top products" action={<TopProductsToggle by={productRank} onChange={setProductRank} />}>
+          <TopProductsChart data={products} by={productRank} currency={currency} />
         </ReportCard>
       </div>
 
@@ -238,15 +234,43 @@ export function ReportsClient({
   );
 }
 
-function ReportCard({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
+function ReportCard({ icon, title, action, children }: { icon: React.ReactNode; title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="rounded-xl2 border border-line bg-surface p-3 shadow-card">
       <div className="mb-2.5 flex items-center gap-1.5 text-[12.5px] font-extrabold text-ink">
         {icon} {title}
+        {action && <div className="ml-auto">{action}</div>}
       </div>
       {children}
     </div>
   );
+}
+
+function ProfitSkeleton() {
+  return (
+    <div>
+      <div className="grid grid-cols-3 gap-2">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-[46px] w-full" />
+        ))}
+      </div>
+      <div className="mt-3 space-y-2.5">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-4 w-full" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** "All time", "31 Oct 2026", "1 Oct – 31 Oct 2026" — what the export
+ * menu says it's about to export. */
+function rangeLabel(from?: string, to?: string): string {
+  const fmt = (d: string, withYear = true) =>
+    new Date(`${d}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', ...(withYear ? { year: 'numeric' } : {}), timeZone: 'UTC' });
+  if (!from && !to) return 'All time';
+  if (from && to) return from === to ? fmt(from) : `${fmt(from, from.slice(0, 4) !== to.slice(0, 4))} – ${fmt(to)}`;
+  return from ? `From ${fmt(from)}` : `Until ${fmt(to!)}`;
 }
 
 /** % change vs the previous equivalent period — hidden entirely when there's

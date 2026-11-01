@@ -2,7 +2,8 @@
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Receipt, Copy, Trash2, Eye, Pencil, IndianRupee, ArrowRight, Filter, Plus, SlidersHorizontal, X } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Receipt, Copy, Trash2, Pencil, IndianRupee, Filter, Plus, SlidersHorizontal, X, Download, MoreHorizontal, MessageCircle, FileMinus } from 'lucide-react';
 import { toast } from 'sonner';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Input } from '@/components/ui/input';
@@ -12,13 +13,15 @@ import { SkeletonTable } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Sheet, SheetBody, SheetContent, SheetFooter, SheetHeader, SheetIcon, SheetTitle } from '@/components/ui/sheet';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { RecordPaymentDialog } from '@/components/invoices/record-payment-dialog';
+import { useCurrentUser } from '@/components/current-user';
 import { DateRangeFilter } from '@/components/filters/date-range-filter';
 import { fmtInr } from '@/lib/gst';
 import { customerDisplayName } from '@/lib/customer';
 import { resolveDateRange, type DateFilterMode } from '@/lib/dates';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
-import { useInvoicesPage, useInvoiceStatusCounts, useDeleteInvoice, useDuplicateInvoice, useRecordPayment } from '@/hooks/use-invoices';
+import { useInvoicesPage, useInvoiceStatusCounts, useDeleteInvoice, useDuplicateInvoice, useWhatsAppShare } from '@/hooks/use-invoices';
 import { useCustomersForFilter } from '@/hooks/use-customers';
 import type { InvoiceSort } from '@/actions/invoices';
 
@@ -30,7 +33,8 @@ type Invoice = {
   date: string;
   due: string;
   status: 'DRAFT' | 'SENT' | 'PARTIALLY_PAID' | 'PAID';
-  customer: { name: string; shopName?: string | null; state: string };
+  customer: { name: string; shopName?: string | null; state: string; phone?: string | null };
+  lastRemindedAt?: string | null;
   computedTotal: number;
   amountPaid: number;
   balanceDue: number;
@@ -62,10 +66,13 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
   const search = useDebouncedValue(searchInput, 300);
   const [sort, setSort] = useState<InvoiceSort>('newest');
   const [page, setPage] = useState(1);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const router = useRouter();
+  const { isOwner } = useCurrentUser();
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [paymentTarget, setPaymentTarget] = useState<Invoice | null>(null);
   const deleteInvoice = useDeleteInvoice();
   const duplicateInvoice = useDuplicateInvoice();
+  const whatsApp = useWhatsAppShare();
   const { data: customerOptions } = useCustomersForFilter();
 
   // Defaults to all-time (matching the server's SSR-seeded fetch — see
@@ -98,6 +105,13 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
   const pageItems = (data?.items ?? []) as Invoice[];
   const total = data?.total ?? 0;
 
+  // Deleting the last row on the last page would otherwise leave an empty
+  // page ("Showing 11–10 of 10") — step back to the last page with rows.
+  useEffect(() => {
+    const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (!isFetching && page > lastPage) setPage(lastPage);
+  }, [total, page, isFetching]);
+
   // Full-set counts (not just this page) for the "Overdue · N" group labels.
   const { data: statusCounts } = useInvoiceStatusCounts(search, dateFrom, dateTo, { customerId: customerId === 'all' ? undefined : customerId, amountMin, amountMax, gstType });
 
@@ -108,48 +122,70 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
     return GROUP_ORDER.filter((k) => map.has(k)).map((k) => ({ key: k, items: map.get(k)!, count: statusCounts?.[k] ?? map.get(k)!.length }));
   }, [pageItems, filter, total, statusCounts]);
 
-  const selected = pageItems.find((i) => i.id === selectedId) ?? null;
   const deleteTarget = pageItems.find((i) => i.id === deleteTargetId) ?? null;
-
-  function selectRow(id: string) {
-    setSelectedId((prev) => (prev === id ? null : id));
-  }
 
   async function handleDelete() {
     if (!deleteTargetId) return;
     try {
       await deleteInvoice.mutateAsync(deleteTargetId);
       toast.success('Invoice deleted');
-      if (selectedId === deleteTargetId) setSelectedId(null);
-      setDeleteTargetId(null);
     } catch (e: any) {
       toast.error(e.message ?? 'Could not delete this invoice');
+    } finally {
+      setDeleteTargetId(null);
     }
   }
 
   async function handleDuplicate(id: string) {
     try {
-      const newId = await duplicateInvoice.mutateAsync(id);
-      window.location.href = `/invoices/${newId}`;
+      const { invoiceId } = await duplicateInvoice.mutateAsync(id);
+      toast.success('Duplicated as a new draft');
+      if (invoiceId) router.push(`/invoices/${invoiceId}`);
     } catch (e: any) {
       toast.error(e.message ?? 'Could not duplicate this invoice');
     }
+  }
+
+  function sendReminder(inv: Invoice) {
+    const win = window.open('', '_blank');
+    const name = customerDisplayName(inv.customer);
+    whatsApp.mutate(
+      {
+        invoiceId: inv.id,
+        phone: inv.customer.phone ?? null,
+        win,
+        reminder: true,
+        buildMessage: (url) =>
+          `Hello ${name}, a gentle reminder: invoice ${inv.number} has ${fmtInr(inv.balanceDue)} due (due ${new Date(inv.due).toLocaleDateString('en-IN')}).\n\nView invoice: ${url}\n\nThank you!`,
+      },
+      {
+        onSuccess: () => toast.success('Reminder opened in WhatsApp'),
+        onError: (e: any) => toast.error(e?.message ?? 'Could not create the reminder link'),
+      }
+    );
   }
 
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="flex items-center gap-2 text-[20px] font-extrabold text-ink">
+          <h1 className="flex items-center gap-2 text-[18px] sm:text-[20px] font-extrabold text-ink">
             <Receipt size={18} className="text-brand" /> Invoices
           </h1>
-          <p className="mt-1 text-[12px] text-ink-faint">Search, filter, and drill into any invoice's status and payment history.</p>
+          <p className="mt-1 text-[12px] text-ink-faint">Click an invoice to open it. Paid invoices open as a preview first.</p>
         </div>
-        <Button asChild>
-          <Link href="/invoices/new">
-            <Plus size={13} /> New invoice
-          </Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline">
+            <Link href="/credit-notes">
+              <FileMinus size={13} /> Credit notes
+            </Link>
+          </Button>
+          <Button asChild>
+            <Link href="/invoices/new">
+              <Plus size={13} /> New invoice
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <div className="mb-4 rounded-xl2 border border-line bg-surface p-3 shadow-card">
@@ -201,6 +237,7 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
                 {customerOptions?.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
                     {customerDisplayName(c)}
+                    {'active' in c && c.active === false ? ' (disabled)' : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -294,74 +331,67 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
                   {g.items.map((inv) => (
                     <TableRow
                       key={inv.id}
-                      onClick={() => selectRow(inv.id)}
-                      className={`cursor-pointer ${selectedId === inv.id ? 'bg-brand-light' : ''}`}
+                      onClick={() => router.push(`/invoices/${inv.id}`)}
+                      onKeyDown={(e) => e.key === 'Enter' && e.currentTarget === e.target && router.push(`/invoices/${inv.id}`)}
+                      tabIndex={0}
+                      className="cursor-pointer"
                     >
                       <TableCell className="font-mono font-bold text-ink">{inv.number}</TableCell>
                       <TableCell className="text-ink-body">{customerDisplayName(inv.customer)}</TableCell>
                       <TableCell className="text-ink-faint">{new Date(inv.date).toLocaleDateString('en-IN')}</TableCell>
-                      <TableCell className="text-ink-faint">{new Date(inv.due).toLocaleDateString('en-IN')}</TableCell>
-                      <TableCell>
-                        <StatusBadge status={inv.status} />
+                      <TableCell className="text-ink-faint">
+                        {new Date(inv.due).toLocaleDateString('en-IN')}
+                        {inv.isOverdue && inv.lastRemindedAt && (
+                          <div className="text-[10px] text-ink-faint">reminded {new Date(inv.lastRemindedAt).toLocaleDateString('en-IN')}</div>
+                        )}
                       </TableCell>
-                      <TableCell className="text-right font-mono font-bold text-ink-soft">{fmtInr(inv.computedTotal)}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="ghost"
-                            aria-label="View invoice"
-                            className="h-8 w-8"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              selectRow(inv.id);
-                            }}
-                          >
-                            <Eye size={14} />
+                      <TableCell>
+                        <StatusBadge status={inv.status} overdue={inv.isOverdue} />
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-bold text-ink-soft">
+                        {fmtInr(inv.computedTotal)}
+                        {inv.status === 'PARTIALLY_PAID' && <div className="text-[10.5px] font-semibold text-red">{fmtInr(inv.balanceDue)} due</div>}
+                      </TableCell>
+                      <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-0.5">
+                          <Button type="button" size="icon" variant="ghost" aria-label={`Download ${inv.number} PDF`} className="h-8 w-8" asChild>
+                            <a href={`/api/invoices/${inv.id}/pdf`} download>
+                              <Download size={14} />
+                            </a>
                           </Button>
-                          {inv.status !== 'PAID' && (
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="ghost"
-                              aria-label="Edit invoice"
-                              className="h-8 w-8"
-                              asChild
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <Link href={`/invoices/new?edit=${inv.id}`}>
-                                <Pencil size={14} />
-                              </Link>
-                            </Button>
-                          )}
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="ghost"
-                            aria-label="Duplicate invoice"
-                            className="h-8 w-8"
-                            disabled={duplicateInvoice.isPending}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDuplicate(inv.id);
-                            }}
-                          >
-                            <Copy size={14} />
-                          </Button>
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="ghost"
-                            aria-label="Delete invoice"
-                            className="h-8 w-8 hover:bg-brand-light hover:text-brand-dark"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteTargetId(inv.id);
-                            }}
-                          >
-                            <Trash2 size={14} />
-                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button type="button" size="icon" variant="ghost" aria-label={`More actions for ${inv.number}`} className="h-8 w-8">
+                                <MoreHorizontal size={14} />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="min-w-[200px]">
+                              <DropdownMenuItem onClick={() => router.push(inv.status === 'PAID' ? `/invoices/${inv.id}?edit=1` : `/invoices/${inv.id}`)}>
+                                <Pencil size={14} /> Edit
+                              </DropdownMenuItem>
+                              {inv.balanceDue > 0.004 && (
+                                <DropdownMenuItem onClick={() => setPaymentTarget(inv)}>
+                                  <IndianRupee size={14} /> Record payment
+                                </DropdownMenuItem>
+                              )}
+                              {inv.balanceDue > 0.004 && inv.status !== 'DRAFT' && (
+                                <DropdownMenuItem onClick={() => sendReminder(inv)}>
+                                  <MessageCircle size={14} /> WhatsApp reminder
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem onClick={() => handleDuplicate(inv.id)} disabled={duplicateInvoice.isPending}>
+                                <Copy size={14} /> Duplicate
+                              </DropdownMenuItem>
+                              {isOwner && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem className="text-red focus:text-red" onClick={() => setDeleteTargetId(inv.id)}>
+                                    <Trash2 size={14} /> Delete
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -375,19 +405,15 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
 
       <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
 
-      <Sheet open={selectedId !== null} onOpenChange={(open) => !open && setSelectedId(null)}>
-        <SheetContent>
-          {selected && (
-            <InvoiceDetail
-              key={selected.id}
-              invoice={selected}
-              onDeleteClick={() => setDeleteTargetId(selected.id)}
-              onDuplicate={() => handleDuplicate(selected.id)}
-              duplicatePending={duplicateInvoice.isPending}
-            />
-          )}
-        </SheetContent>
-      </Sheet>
+      {paymentTarget && (
+        <RecordPaymentDialog
+          open={!!paymentTarget}
+          onOpenChange={(open) => !open && setPaymentTarget(null)}
+          invoiceId={paymentTarget.id}
+          invoiceNumber={paymentTarget.number}
+          balanceDue={paymentTarget.balanceDue}
+        />
+      )}
 
       <ConfirmDialog
         open={deleteTargetId !== null}
@@ -395,165 +421,17 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
         title="Delete invoice"
         description={
           <>
-            Delete <b className="font-mono font-bold text-ink">{deleteTarget?.number}</b>? This can&apos;t be undone.
+            Delete <b className="font-mono font-bold text-ink">{deleteTarget?.number}</b> with its items and payments?{' '}
+            {deleteTarget?.status === 'DRAFT'
+              ? 'Its stock goes back.'
+              : 'Its stock is not put back: if the goods never went out, open it, move it back to draft and then delete it; if they came back, raise a credit note instead.'}{' '}
+            This can&apos;t be undone.
           </>
         }
         confirmLabel="Delete invoice"
         pending={deleteInvoice.isPending}
         onConfirm={handleDelete}
       />
-    </div>
-  );
-}
-
-function InvoiceDetail({
-  invoice,
-  onDeleteClick,
-  onDuplicate,
-  duplicatePending,
-}: {
-  invoice: Invoice;
-  onDeleteClick: () => void;
-  onDuplicate: () => void;
-  duplicatePending: boolean;
-}) {
-  const [showPayment, setShowPayment] = useState(false);
-
-  return (
-    <>
-      <SheetHeader>
-        <SheetIcon>
-          <Receipt size={16} />
-        </SheetIcon>
-        <div className="min-w-0 flex-1">
-          <SheetTitle className="font-mono">{invoice.number}</SheetTitle>
-          <p className="truncate text-[12px] text-ink-soft">
-            {customerDisplayName(invoice.customer)} · {new Date(invoice.date).toLocaleDateString('en-IN')}
-          </p>
-        </div>
-        <StatusBadge status={invoice.status} overdue={invoice.isOverdue} />
-      </SheetHeader>
-
-      <SheetBody>
-        <div className="mb-4 grid grid-cols-4 gap-2.5">
-          <Stat label="Total" value={fmtInr(invoice.computedTotal)} />
-          <Stat label="Paid" value={fmtInr(invoice.amountPaid)} good={invoice.amountPaid > 0} />
-          <Stat label="Balance due" value={fmtInr(invoice.balanceDue)} warn={invoice.balanceDue > 0} />
-          <Stat label="Line items" value={String(invoice.itemCount)} />
-        </div>
-
-        <div className="space-y-1.5 text-[12.5px]">
-          <Row k="Due" v={new Date(invoice.due).toLocaleDateString('en-IN')} />
-          <Row k="Bill to" v={`${customerDisplayName(invoice.customer)} · ${invoice.customer.state}`} />
-        </div>
-
-        {invoice.payments.length > 0 && (
-          <div className="mt-4">
-            <div className="mb-1.5 text-[11px] font-extrabold uppercase tracking-wide text-ink-soft">Payment history</div>
-            {invoice.payments.map((p, i) => (
-              <Row key={i} k={`${new Date(p.date).toLocaleDateString('en-IN')}${p.mode ? ' · ' + p.mode : ''}`} v={`+${fmtInr(p.amount)}`} good />
-            ))}
-          </div>
-        )}
-
-        {showPayment && (
-          <PaymentForm
-            invoiceId={invoice.id}
-            maxAmount={invoice.balanceDue}
-            onDone={() => setShowPayment(false)}
-            onCancel={() => setShowPayment(false)}
-          />
-        )}
-      </SheetBody>
-
-      <SheetFooter>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={onDeleteClick} className="border-red-soft text-red hover:bg-red-soft">
-            <Trash2 size={12} /> Delete
-          </Button>
-          {invoice.status !== 'PAID' && (
-            <Button asChild variant="outline" size="sm">
-              <Link href={`/invoices/new?edit=${invoice.id}`}>
-                <Pencil size={12} /> Edit
-              </Link>
-            </Button>
-          )}
-          <Button type="button" variant="outline" size="sm" onClick={onDuplicate} disabled={duplicatePending}>
-            <Copy size={12} /> Duplicate
-          </Button>
-          {invoice.balanceDue > 0 && !showPayment && (
-            <Button type="button" variant="outline" size="sm" onClick={() => setShowPayment(true)}>
-              <IndianRupee size={12} /> Record payment
-            </Button>
-          )}
-        </div>
-        <Button asChild>
-          <Link href={`/invoices/${invoice.id}`}>
-            Open full view <ArrowRight size={13} />
-          </Link>
-        </Button>
-      </SheetFooter>
-    </>
-  );
-}
-
-function PaymentForm({
-  invoiceId,
-  maxAmount,
-  onDone,
-  onCancel,
-}: {
-  invoiceId: string;
-  maxAmount: number;
-  onDone: () => void;
-  onCancel: () => void;
-}) {
-  const [amount, setAmount] = useState(maxAmount.toFixed(2));
-  const recordPayment = useRecordPayment(invoiceId);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    const amt = parseFloat(amount);
-    if (!amt || amt <= 0) return;
-    try {
-      await recordPayment.mutateAsync({ amount: amt, date: new Date().toISOString() });
-      toast.success('Payment recorded');
-      onDone();
-    } catch (e: any) {
-      toast.error(e.message ?? 'Could not record this payment');
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="mt-4 flex items-end gap-2 rounded-md2 border border-line bg-bg p-3">
-      <div className="flex-1">
-        <label className="mb-1 block text-[11px] font-bold text-ink-faint">Amount (₹)</label>
-        <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="font-mono" />
-      </div>
-      <Button type="submit" disabled={recordPayment.isPending}>
-        {recordPayment.isPending ? 'Saving…' : 'Received'}
-      </Button>
-      <Button type="button" variant="outline" onClick={onCancel}>
-        Cancel
-      </Button>
-    </form>
-  );
-}
-
-function Stat({ label, value, warn, good }: { label: string; value: string; warn?: boolean; good?: boolean }) {
-  return (
-    <div className="rounded-md2 bg-bg p-2.5 text-center">
-      <div className={`font-mono text-[14px] font-extrabold ${warn ? 'text-red' : good ? 'text-green' : 'text-ink'}`}>{value}</div>
-      <div className="mt-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-faint">{label}</div>
-    </div>
-  );
-}
-
-function Row({ k, v, good }: { k: string; v: string; good?: boolean }) {
-  return (
-    <div className="flex justify-between border-b border-dashed border-line py-1.5 last:border-0">
-      <span className="text-ink-faint">{k}</span>
-      <span className={`font-mono font-bold ${good ? 'text-green' : 'text-ink-body'}`}>{v}</span>
     </div>
   );
 }

@@ -1,94 +1,22 @@
-import { notFound, redirect } from 'next/navigation';
-import { prisma } from '@/lib/prisma';
+import { redirect } from 'next/navigation';
 import { getCompany } from '@/lib/get-company';
 import { listProducts } from '@/actions/products';
+import { toPublicCompany } from '@/lib/public-company';
 import { BuilderClient } from './builder-client';
 
 export const dynamic = 'force-dynamic';
 
 export default async function NewInvoicePage({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
   const { edit } = await searchParams;
-  // All three reads in parallel — the edit target doesn't depend on the
-  // other two. getCompany() also enforces sign-in, so the invoice read is
-  // discarded (Promise.all rejects) for an unauthenticated request.
-  const [products, company, invoice] = await Promise.all([
-    listProducts({ activeOnly: true }),
-    getCompany(),
-    edit
-      ? prisma.invoice.findUnique({
-          where: { id: edit },
-          include: { customer: true, items: { include: { product: { select: { packQty: true } } } } },
-        })
-      : null,
-  ]);
+  // Old "Edit" links (bookmarks, other tabs) pointed here with ?edit=<id>;
+  // saved invoices are now edited at their own URL.
+  if (edit) redirect(`/invoices/${edit}?edit=1`);
 
-  let editInvoice = null;
-  if (edit) {
-    if (!invoice) notFound();
-    // Editing in place is allowed any time up to (not including) PAID —
-    // once fully paid it's treated as settled/closed (recordPayment /
-    // duplicateInvoice are the supported paths after that point). A stale
-    // Edit link (opened before the status changed elsewhere) lands on the
-    // real invoice instead of a dead end.
-    if (invoice.status === 'PAID') redirect(`/invoices/${edit}`);
-
-    editInvoice = {
-      id: invoice.id,
-      number: invoice.number,
-      status: invoice.status,
-      customer: invoice.customer,
-      date: invoice.date.toISOString().slice(0, 10),
-      due: invoice.due.toISOString().slice(0, 10),
-      overallDiscountType: invoice.overallDiscountType,
-      overallDiscountValue: Number(invoice.overallDiscountValue),
-      notes: invoice.notes ?? '',
-      deliveryInstructions: invoice.deliveryInstructions ?? '',
-      showTransportDetails: invoice.showTransportDetails,
-      transportVehicleNo: invoice.transportVehicleNo ?? '',
-      transportDriverName: invoice.transportDriverName ?? '',
-      transportDriverPhone: invoice.transportDriverPhone ?? '',
-      irn: invoice.irn,
-      // The invoice's own frozen GST snapshot — pre-fills the builder's
-      // Settings sheet so editing never silently resets to Company's
-      // current live values (see schema.prisma's Invoice.cgstRate comment).
-      cgstRate: Number(invoice.cgstRate),
-      sgstRate: Number(invoice.sgstRate),
-      igstRate: Number(invoice.igstRate),
-      cgstEnabled: invoice.cgstEnabled,
-      sgstEnabled: invoice.sgstEnabled,
-      igstEnabled: invoice.igstEnabled,
-      showBankDetails: invoice.showBankDetails,
-      showHsnSummary: invoice.showHsnSummary,
-      showUpiQr: invoice.showUpiQr,
-      showGpayNumber: invoice.showGpayNumber,
-      lines: invoice.items.map((it) => ({
-        lineId: it.id,
-        productId: it.productId,
-        name: it.name,
-        unit: it.unit,
-        qty: Number(it.qty),
-        rate: Number(it.rate),
-        discount: Number(it.discount),
-        packQty: it.product?.packQty ?? null,
-        hsn: it.hsn,
-        batch: it.batch,
-        altUnit: it.altUnit,
-        altQtyPerUnit: it.altQtyPerUnit ? Number(it.altQtyPerUnit) : null,
-      })),
-    };
-  }
-
+  const [products, company] = await Promise.all([listProducts({ activeOnly: true }), getCompany()]);
   return (
-    // Keyed on the edit target (or "new") — without this, navigating between
-    // /invoices/new and /invoices/new?edit=<id> (e.g. clicking "New invoice"
-    // from the top bar while editing a draft) reuses the same BuilderClient
-    // instance, so its internal state (customer, lines, dates, notes…) from
-    // the previous session would otherwise carry over instead of resetting.
-    <BuilderClient
-      key={editInvoice?.id ?? 'new'}
-      products={JSON.parse(JSON.stringify(products))}
-      company={JSON.parse(JSON.stringify(company))}
-      editInvoice={editInvoice ? JSON.parse(JSON.stringify(editInvoice)) : null}
-    />
+    // Keyed so navigating here from an invoice's editor (e.g. the top bar's
+    // "New invoice") mounts a fresh builder instead of carrying that
+    // invoice's state over.
+    <BuilderClient key="new" products={JSON.parse(JSON.stringify(products))} company={JSON.parse(JSON.stringify(toPublicCompany(company)))} editInvoice={null} />
   );
 }

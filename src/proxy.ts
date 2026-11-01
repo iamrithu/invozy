@@ -19,5 +19,13 @@ export const config = {
     '/reports/:path*',
     '/company/:path*',
     '/account/:path*',
+    '/inventory/:path*',
+    '/purchases/:path*',
+    '/suppliers/:path*',
+    '/credit-notes/:path*',
+    '/activity/:path*',
+    '/team/:path*',
+    // Not /print/* — the headless PDF renderer reaches those with a signed
+    // token instead of a session cookie (src/lib/signed-token.ts).
   ],
 };

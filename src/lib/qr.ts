@@ -8,15 +8,22 @@ import QRCode from 'qrcode';
  * Returns null (rather than throwing) if the payload can't be encoded —
  * e.g. it exceeds what's representable at this error-correction level.
  * The invoice PDF/detail page is expected to still render without the QR
- * image rather than fail outright over one unencodable code. */
+ * image rather than fail outright over one unencodable code.
+ *
+ * 240px wide: the sheets print these at 88px (CLEAN) or less, so this
+ * keeps every module crisp at print resolution. */
 export async function qrDataUrl(payload: string): Promise<string | null> {
   try {
-    return await QRCode.toDataURL(payload, { errorCorrectionLevel: 'M', margin: 1, width: 180 });
+    return await QRCode.toDataURL(payload, { errorCorrectionLevel: 'M', margin: 1, width: 240 });
   } catch (e) {
     console.error('qrDataUrl: failed to encode e-Invoice QR payload', e);
     return null;
   }
 }
+
+// The company's UPI QR is the same image on every invoice — encode it once
+// per process (per distinct UPI ID/name) instead of on every PDF render.
+const upiQrCache = new Map<string, Promise<string | null>>();
 
 /** Builds the standard UPI deep-link URI (`upi://pay?...`) that any UPI app
  * (GPay, PhonePe, Paytm, etc.) recognises when scanned — `pa` (payee
@@ -28,5 +35,11 @@ export async function upiQrDataUrl(upiId: string | null | undefined, payeeName: 
   const vpa = upiId?.trim();
   if (!vpa) return null;
   const uri = `upi://pay?pa=${encodeURIComponent(vpa)}&pn=${encodeURIComponent(payeeName)}`;
-  return qrDataUrl(uri);
+  let cached = upiQrCache.get(uri);
+  if (!cached) {
+    if (upiQrCache.size > 20) upiQrCache.clear();
+    cached = qrDataUrl(uri);
+    upiQrCache.set(uri, cached);
+  }
+  return cached;
 }

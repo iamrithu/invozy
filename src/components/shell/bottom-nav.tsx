@@ -3,24 +3,30 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import clsx from 'clsx';
-import { LayoutDashboard, Package, Users, Receipt, MoreHorizontal, BarChart3, Building2 } from 'lucide-react';
+import { LayoutDashboard, Package, Users, Receipt, MoreHorizontal, BarChart3, Building2, Boxes, ShoppingCart } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
+// Same order as the sidebar. Four slots plus More is all a phone's width
+// takes, so stock and purchases sit under More; Products stays in the bar
+// because the onboarding tour points at it (data-tour).
 const NAV = [
   { href: '/dashboard', label: 'Home', icon: LayoutDashboard, tour: 'mobile-nav-dashboard' },
-  { href: '/products', label: 'Products', icon: Package, tour: 'mobile-nav-products' },
-  { href: '/customers', label: 'Customers', icon: Users, tour: 'mobile-nav-customers' },
   { href: '/invoices', label: 'Invoices', icon: Receipt },
+  { href: '/customers', label: 'Customers', icon: Users, tour: 'mobile-nav-customers' },
+  { href: '/products', label: 'Products', icon: Package, tour: 'mobile-nav-products' },
 ];
 
 const MORE = [
+  { href: '/inventory', label: 'Inventory', icon: Boxes },
+  { href: '/purchases', label: 'Purchases', icon: ShoppingCart },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
   { href: '/company', label: 'Company', icon: Building2 },
 ];
 
 export function BottomNav() {
   const pathname = usePathname();
-  const moreActive = MORE.some((item) => pathname?.startsWith(item.href));
+  // Suppliers is reached from Purchases, so it lights up More too.
+  const moreActive = [...MORE.map((item) => item.href), '/suppliers'].some((href) => pathname?.startsWith(href));
 
   return (
     <nav

@@ -1,8 +1,8 @@
 import { Skeleton } from '@/components/ui/skeleton';
 
 // Mirrors page.tsx's layout (greeting, stat cards, month-over-month +
-// quick-actions row, top-customers strip, recent-invoices table) so there's
-// no layout shift once the real data replaces it.
+// quick-actions row, stock cards, top-customers strip, recent-invoices
+// table) so there's little layout shift once the real data replaces it.
 export default function DashboardLoading() {
   return (
     <div className="space-y-4">
@@ -26,10 +26,28 @@ export default function DashboardLoading() {
           <Skeleton className="h-9 w-full" />
         </div>
         <div className="flex flex-wrap gap-2.5">
-          {Array.from({ length: 4 }).map((_, i) => (
+          {Array.from({ length: 5 }).map((_, i) => (
             <Skeleton key={i} className="h-10 w-32 rounded-xl2" />
           ))}
         </div>
+      </div>
+
+      {/* Low stock / Expiring soon cards */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {Array.from({ length: 2 }).map((_, c) => (
+          <div key={c} className="rounded-xl2 border border-line bg-surface shadow-card">
+            <div className="border-b border-line px-3.5 py-3">
+              <Skeleton className="h-3.5 w-28" />
+            </div>
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 border-b border-line px-3.5 py-2.5 last:border-0">
+                <Skeleton className="h-3 flex-1" />
+                <Skeleton className="h-3 w-16" />
+                <Skeleton className="h-5 w-14 rounded-sm2" />
+              </div>
+            ))}
+          </div>
+        ))}
       </div>
 
       <div>

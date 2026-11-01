@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Plus, Package, Pencil, Trash2, Eye, EyeOff, ImageOff } from 'lucide-react';
+import { Plus, Package, Pencil, Trash2, Eye, EyeOff, ImageOff, MoreHorizontal, History, Boxes } from 'lucide-react';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -14,11 +15,14 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Sheet, SheetContent, SheetHeader, SheetIcon, SheetBody, SheetTitle } from '@/components/ui/sheet';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { ZoomableImage } from '@/components/ui/image-lightbox';
 import { fmtInr, formatUnit } from '@/lib/gst';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useProductsPage, useProductCategories, useDeleteProduct, useToggleProductActive } from '@/hooks/use-products';
 import { ProductFormDialog } from '@/components/products/product-form-dialog';
+import { ProductOffers } from '@/components/products/product-offers';
+import { StockBadge } from '@/components/products/stock-badge';
 import type { ProductSort } from '@/actions/products';
 
 type PriceTier = { id?: string; unit: string; price: string | number; approxQty: string | number | null };
@@ -33,7 +37,11 @@ type Product = {
   active: boolean;
   desc: string | null;
   images: string[];
+  hsn?: string | null;
   priceTiers?: PriceTier[];
+  trackStock: boolean;
+  stockQty: string | number;
+  lowStockAt: string | number | null;
 };
 
 /** Every pricing option for a product — falls back to a single synthetic
@@ -56,12 +64,14 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
   const [sort, setSort] = useState<ProductSort>('name');
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [snapshot, setSnapshot] = useState<Product | null>(null);
   const [viewOpen, setViewOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [addPrefill, setAddPrefill] = useState<{ name?: string; unit?: string; price?: string } | undefined>();
-  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
   const deleteProduct = useDeleteProduct();
+  const toggleActive = useToggleProductActive();
 
   // Arriving from the dashboard's "you keep billing this by hand" nudge —
   // open the add-product sheet pre-filled instead of a blank form.
@@ -89,32 +99,48 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
   const total = data?.total ?? 0;
   const { data: categories = [] } = useProductCategories();
 
-  const selected = items.find((p) => p.id === selectedId) ?? null;
-  const deleteTarget = items.find((p) => p.id === deleteTargetId) ?? null;
+  // The fresh list row when it's on this page, else the copy taken on
+  // click — hiding a product under "Live only" drops it from the page while
+  // its sheet is still open, which used to unmount the sheet mid-action.
+  const selected = items.find((p) => p.id === selectedId) ?? (snapshot?.id === selectedId ? snapshot : null);
 
-  function openView(id: string) {
-    setSelectedId(id);
+  function openView(p: Product) {
+    setSnapshot(p);
+    setSelectedId(p.id);
     setViewOpen(true);
   }
 
-  function openEdit(id: string) {
-    setSelectedId(id);
+  function openEdit(p: Product) {
+    setSnapshot(p);
+    setSelectedId(p.id);
     setEditOpen(true);
   }
 
-  async function handleDelete() {
-    if (!deleteTargetId) return;
+  async function setLive(p: Product, active: boolean) {
     try {
-      await deleteProduct.mutateAsync(deleteTargetId);
-      toast.success('Product removed');
-      if (selectedId === deleteTargetId) {
+      await toggleActive.mutateAsync({ id: p.id, active });
+      toast.success(active ? `${p.name} is live` : `${p.name} hidden from new invoices`);
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  }
+
+  // Closes on failure too — the toast carries the reason.
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    try {
+      await deleteProduct.mutateAsync(target.id);
+      toast.success(`${target.name} deleted`);
+      if (selectedId === target.id) {
         setSelectedId(null);
         setViewOpen(false);
         setEditOpen(false);
       }
-      setDeleteTargetId(null);
     } catch (e: any) {
       toast.error(e.message);
+    } finally {
+      setDeleteTarget(null);
     }
   }
 
@@ -122,7 +148,7 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
     <div>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="flex items-center gap-2 text-[20px] font-extrabold text-ink">
+          <h1 className="flex items-center gap-2 text-[18px] sm:text-[20px] font-extrabold text-ink">
             <Package size={18} className="text-brand" /> Products
           </h1>
           <p className="mt-1 text-[12px] text-ink-faint">Your catalog of ice products, prices and units — what shows up when building an invoice.</p>
@@ -181,15 +207,18 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
                 <TableHead>Category</TableHead>
                 <TableHead>Units</TableHead>
                 <TableHead>Price</TableHead>
+                <TableHead>Stock</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="text-right">&nbsp;</TableHead>
+                <TableHead className="w-12 text-right">
+                  <span className="sr-only">Actions</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.map((p) => {
                 const tiers = tiersFor(p);
                 return (
-                <TableRow key={p.id} onClick={() => openView(p.id)} className={`cursor-pointer ${!p.active ? 'opacity-50' : ''}`}>
+                <TableRow key={p.id} onClick={() => openView(p)} className={`cursor-pointer ${!p.active ? 'opacity-50' : ''}`}>
                   <TableCell>
                     <div className="flex items-center gap-3">
                       <span
@@ -215,50 +244,40 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
                   <TableCell className="text-ink-soft">{tiers.map((t) => formatUnit(t.unit)).join(' · ')}</TableCell>
                   <TableCell className="font-mono font-bold text-ink-soft">{tiers.map((t) => fmtInr(Number(t.price))).join(' · ')}</TableCell>
                   <TableCell>
+                    <StockBadge product={p} />
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={p.active ? 'green' : 'outline'}>{p.active ? 'Live' : 'Hidden'}</Badge>
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        aria-label="View product"
-                        className="h-8 w-8"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openView(p.id);
-                        }}
-                      >
-                        <Eye size={14} />
-                      </Button>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        aria-label="Edit product"
-                        className="h-8 w-8"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openEdit(p.id);
-                        }}
-                      >
-                        <Pencil size={14} />
-                      </Button>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        aria-label="Delete product"
-                        className="h-8 w-8 hover:bg-brand-light hover:text-brand-dark"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteTargetId(p.id);
-                        }}
-                      >
-                        <Trash2 size={14} />
-                      </Button>
-                    </div>
+                  {/* Stops row clicks — the menu's portal still bubbles through here in React's tree. */}
+                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                    <DropdownMenu modal={false}>
+                      <DropdownMenuTrigger asChild>
+                        <Button type="button" size="icon" variant="ghost" className="h-8 w-8" aria-label={`Actions for ${p.name}`}>
+                          <MoreHorizontal size={15} />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-48">
+                        <DropdownMenuItem onSelect={() => openView(p)}>
+                          <Eye size={13} /> View details
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => openEdit(p)}>
+                          <Pencil size={13} /> Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => setLive(p, !p.active)}>
+                          {p.active ? <EyeOff size={13} /> : <Eye size={13} />} {p.active ? 'Hide' : 'Make live'}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem asChild>
+                          <Link href={`/inventory/${p.id}`}>
+                            <History size={13} /> Stock history
+                          </Link>
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onSelect={() => setDeleteTarget(p)} className="text-red focus:bg-red-soft focus:text-red">
+                          <Trash2 size={13} /> Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </TableCell>
                 </TableRow>
                 );
@@ -291,20 +310,20 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
             setViewOpen(false);
             setEditOpen(true);
           }}
-          onDeleteClick={() => setDeleteTargetId(selected.id)}
+          onDeleteClick={() => setDeleteTarget(selected)}
+          onToggleLive={(active) => setLive(selected, active)}
+          toggling={toggleActive.isPending}
         />
       )}
       {selected && <ProductFormDialog key={`edit-${selected.id}`} open={editOpen} onOpenChange={setEditOpen} mode="edit" product={selected} />}
 
       <ConfirmDialog
-        open={deleteTargetId !== null}
-        onOpenChange={(open) => !open && setDeleteTargetId(null)}
-        title="Remove product"
-        description={
-          <>
-            Remove <b className="font-bold text-ink">{deleteTarget?.name}</b> from the catalog? This can&apos;t be undone.
-          </>
-        }
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={`Delete ${deleteTarget?.name ?? 'product'}?`}
+        description="Old invoices keep this product's name, rate and HSN. Its stock history is removed. To keep it but stop selling it, hide it instead."
+        icon={Trash2}
+        confirmIcon={Trash2}
         confirmLabel="Delete product"
         pending={deleteProduct.isPending}
         onConfirm={handleDelete}
@@ -319,15 +338,17 @@ function ProductViewSheet({
   onOpenChange,
   onEdit,
   onDeleteClick,
+  onToggleLive,
+  toggling,
 }: {
   product: Product;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onEdit: () => void;
   onDeleteClick: () => void;
+  onToggleLive: (active: boolean) => void;
+  toggling: boolean;
 }) {
-  const toggleActive = useToggleProductActive();
-
   const tiers = tiersFor(product);
 
   return (
@@ -359,15 +380,31 @@ function ProductViewSheet({
         </SheetHeader>
 
         <SheetBody>
-          {product.images.length > 1 && (
+          {product.images.length > 0 && (
             <div className="mb-4 flex gap-2 overflow-x-auto">
               {product.images.map((url) => (
                 <span key={url} className="block h-16 w-16 flex-shrink-0 overflow-hidden rounded-md2 border border-line">
-                  <ZoomableImage src={url} alt={product.name} />
+                  <ZoomableImage src={url} alt={product.name} gallery={product.images} />
                 </span>
               ))}
             </div>
           )}
+
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg2 border border-line bg-bg px-3 py-2.5">
+            <div className="flex items-center gap-2 text-[12.5px]">
+              <Boxes size={13} className="text-ink-faint" />
+              <span className="text-ink-faint">Stock</span>
+              <StockBadge product={product} />
+              {product.trackStock && product.lowStockAt != null && (
+                <span className="text-[11px] text-ink-faint">
+                  alert at {Number(product.lowStockAt)} {formatUnit(product.unit)}
+                </span>
+              )}
+            </div>
+            <Link href={`/inventory/${product.id}`} className="flex items-center gap-1 text-[12px] font-bold text-brand hover:underline">
+              <History size={12} /> {product.trackStock ? 'Stock history' : 'Track in Inventory'}
+            </Link>
+          </div>
 
           <div className="mb-4 overflow-hidden rounded-lg2 border border-line">
             <table className="w-full text-[12.5px]">
@@ -412,10 +449,12 @@ function ProductViewSheet({
               <label className="flex cursor-pointer items-center gap-2">
                 {product.active ? <Eye size={13} className="text-green" /> : <EyeOff size={13} className="text-ink-faint" />}
                 <span className={`font-bold ${product.active ? 'text-green' : 'text-ink-faint'}`}>{product.active ? 'Live' : 'Hidden'}</span>
-                <Switch checked={product.active} disabled={toggleActive.isPending} onChange={() => toggleActive.mutate(product.id)} />
+                <Switch checked={product.active} disabled={toggling} onChange={(e) => onToggleLive(e.target.checked)} />
               </label>
             </div>
           </div>
+
+          <ProductOffers productId={product.id} units={tiers.map((t) => t.unit)} />
         </SheetBody>
       </SheetContent>
     </Sheet>

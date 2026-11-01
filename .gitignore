@@ -27,3 +27,6 @@ npm-debug.log*
 *.tsbuildinfo
 next-env.d.ts
 tsconfig.tsbuildinfo
+
+# local database backups (contain business data — never commit)
+/.backups

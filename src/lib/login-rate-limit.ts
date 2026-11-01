@@ -1,8 +1,7 @@
 import { prisma } from '@/lib/prisma';
 
 // Locks an identifier (login email/phone) out for a cooldown after too many
-// wrong passwords in a row, so credentials can't be brute-forced — applies
-// to both the tenant login and the fixed super-admin account.
+// wrong passwords in a row, so credentials can't be brute-forced.
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS = 15 * 60 * 1000;
 

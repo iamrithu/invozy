@@ -81,7 +81,7 @@ export function formatInvoiceNumber(prefix: string, fy: string, seq: number): st
   return `${prefix}/${fy}/${String(seq).padStart(4, '0')}`;
 }
 
-/** Indian financial year (April–March) for a brand-new company at signup —
+/** Indian financial year (April–March) for a brand-new company at setup —
  * e.g. a company created in June 2026 or February 2027 both get "2026-27". */
 export function currentIndianFY(date = new Date()): string {
   const startYear = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;

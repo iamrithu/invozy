@@ -1,4 +1,4 @@
-import { getBillingTrend, getReportStats, getTopCustomers, getStatusBreakdown, getTopProducts } from '@/actions/reports';
+import { getBillingTrend, getReportStats, getTopCustomers, getStatusBreakdown, getTopProducts, getGstSummary } from '@/actions/reports';
 import { getCompany } from '@/lib/get-company';
 import { ReportsClient } from './reports-client';
 
@@ -9,13 +9,16 @@ export default async function ReportsPage() {
   // fetch (the default filter state in reports-client.tsx) so the page
   // renders with real data immediately instead of a loading flash, exactly
   // mirroring the Invoices list's SSR-seed pattern (see invoices/page.tsx).
-  const [company, stats, trend, topCustomers, statusBreakdown, topProducts] = await Promise.all([
+  // The profit estimate is the one card left to load client-side (see
+  // reports-client.tsx) — it's the heaviest query and sits below the fold.
+  const [company, stats, trend, topCustomers, statusBreakdown, topProducts, gst] = await Promise.all([
     getCompany(),
     getReportStats(),
     getBillingTrend(),
     getTopCustomers(),
     getStatusBreakdown(),
     getTopProducts(),
+    getGstSummary(),
   ]);
   return (
     <ReportsClient
@@ -24,6 +27,7 @@ export default async function ReportsPage() {
       initialTopCustomers={topCustomers}
       initialStatusBreakdown={statusBreakdown}
       initialTopProducts={topProducts}
+      initialGst={gst}
       currency={company.currency}
     />
   );

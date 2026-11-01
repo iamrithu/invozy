@@ -1,9 +1,13 @@
 import Link from 'next/link';
-import { AlertTriangle, TrendingUp, Wallet, CheckCircle2, Package, Users, ArrowRight, Clock, Plus, BarChart3, Receipt, Building2, Tag } from 'lucide-react';
+import { AlertTriangle, TrendingUp, Wallet, CheckCircle2, Package, Users, ArrowRight, Clock, Plus, BarChart3, Receipt, Building2, Tag, Boxes, CalendarClock, Truck } from 'lucide-react';
 import { getDashboardStats, getBillingTrend, getCollectedTrend, getMonthOverMonth, getTopCustomers } from '@/actions/reports';
 import { getFrequentCustomItems } from '@/actions/products';
+import { getInventorySummary, type InventorySummary } from '@/actions/inventory';
 import { getCompany } from '@/lib/get-company';
 import { fmtInr } from '@/lib/gst';
+import { todayIst } from '@/lib/dates';
+import { SoftBadge, StockStatusBadge } from '@/components/inventory/stock-badges';
+import { expiryText } from '@/components/inventory/stock-meta';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Sparkline } from '@/components/ui/sparkline';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
@@ -13,7 +17,7 @@ import { customerDisplayName } from '@/lib/customer';
 export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
-  const [company, stats, invoicedTrend, collectedTrend, mom, topCustomers, frequentCustomItems] = await Promise.all([
+  const [company, stats, invoicedTrend, collectedTrend, mom, topCustomers, frequentCustomItems, stock] = await Promise.all([
     getCompany(),
     getDashboardStats(),
     getBillingTrend(),
@@ -21,6 +25,12 @@ export default async function DashboardPage() {
     getMonthOverMonth(),
     getTopCustomers(undefined, 10),
     getFrequentCustomItems(),
+    // The stock cards are extras — if they fail, the rest of the dashboard
+    // still renders without them.
+    getInventorySummary().catch((err) => {
+      console.error('inventory summary failed', err);
+      return null;
+    }),
   ]);
 
   const pct = mom.lastMonthTotal > 0 ? ((mom.thisMonthTotal - mom.lastMonthTotal) / mom.lastMonthTotal) * 100 : null;
@@ -34,7 +44,7 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="flex items-center gap-2 text-[20px] font-extrabold text-ink">{greeting()}, {company.name}</h1>
+        <h1 className="flex items-center gap-2 text-[18px] sm:text-[20px] font-extrabold text-ink">{greeting()}, {company.name}</h1>
         <p className="mt-0.5 text-[12px] text-ink-faint">
           Press <b className="font-mono">N</b> for a new invoice, or <b className="font-mono">⌘K</b> to jump anywhere.
         </p>
@@ -131,8 +141,36 @@ export default async function DashboardPage() {
           <QuickPill href="/products" icon={<Package size={13} />} label="Add product" />
           <QuickPill href="/customers" icon={<Users size={13} />} label="Add customer" />
           <QuickPill href="/reports" icon={<BarChart3 size={13} />} label="View reports" />
+          <QuickPill href="/reports/loading-sheet" icon={<Truck size={13} />} label="Today's loading sheet" />
         </div>
       </div>
+
+      {stock && stock.tracked > 0 ? (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <LowStockCard stock={stock} currency={company.currency} />
+          {stock.expiringCount > 0 && <ExpiringCard stock={stock} alertDays={company.expiryAlertDays} />}
+        </div>
+      ) : (
+        stock &&
+        !isBrandNew &&
+        stats.activeProducts > 0 && (
+          // Every product starts untracked — one quiet line points at where
+          // tracking starts, instead of an empty stock card.
+          <Link
+            href="/inventory"
+            className="flex items-center gap-3 rounded-lg2 border border-line bg-surface p-3 shadow-card transition-colors hover:border-brand/50"
+          >
+            <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-sm2 bg-brand-light text-brand-dark">
+              <Boxes size={16} />
+            </span>
+            <div className="flex-1">
+              <div className="text-[13.5px] font-extrabold text-ink">Keep track of your stock</div>
+              <div className="mt-0.5 text-[12px] text-ink-soft">Count each product once on the Inventory screen — sent and paid invoices keep it up to date after that.</div>
+            </div>
+            <ArrowRight size={15} className="flex-shrink-0 text-ink-soft" />
+          </Link>
+        )
+      )}
 
       <div>
         <div className="mb-2 flex items-center gap-2 text-[13.5px] font-extrabold text-ink">
@@ -257,6 +295,84 @@ function StatCard({ icon, label, value, spark, color }: { icon: React.ReactNode;
       <div className="mt-2 font-mono text-[16.5px] font-extrabold text-ink">{value}</div>
       <div className="mt-0.5 text-[11px] text-ink-faint">{label}</div>
       {spark && <Sparkline values={spark} color={color} />}
+    </div>
+  );
+}
+
+/** The five tracked products closest to running out (out of stock first),
+ * plus the value of what's on the shelf. */
+function LowStockCard({ stock, currency }: { stock: InventorySummary; currency: string }) {
+  return (
+    <div className="rounded-xl2 border border-line bg-surface shadow-card">
+      <div className="flex items-center gap-2 border-b border-line px-3.5 py-2.5">
+        <Boxes size={14} className="text-brand" />
+        <span className="text-[13.5px] font-extrabold text-ink">Low stock</span>
+        {(stock.out > 0 || stock.low > 0) && (
+          <span className="text-[11.5px] text-ink-faint">
+            {[stock.out ? `${stock.out} out` : null, stock.low ? `${stock.low} low` : null].filter(Boolean).join(' · ')}
+          </span>
+        )}
+        <Link
+          href={`/inventory?status=${stock.low === 0 && stock.out > 0 ? 'out' : 'low'}`}
+          className="ml-auto flex items-center gap-1 text-[12px] font-bold text-brand hover:underline"
+        >
+          Inventory <ArrowRight size={12} />
+        </Link>
+      </div>
+      {stock.lowItems.length === 0 ? (
+        <div className="flex items-center gap-2 px-3.5 py-4 text-[12.5px] text-ink-soft">
+          <CheckCircle2 size={15} className="text-green" /> All {stock.tracked} tracked product{stock.tracked === 1 ? ' is' : 's are'} above their alert level.
+        </div>
+      ) : (
+        <div className="divide-y divide-line">
+          {stock.lowItems.map((p) => (
+            <Link key={p.id} href={`/inventory/${p.id}`} className="flex items-center gap-3 px-3.5 py-2 transition-colors hover:bg-bg">
+              <span className="min-w-0 flex-1 truncate text-[12.5px] font-bold text-ink">{p.name}</span>
+              <span className="flex-shrink-0 font-mono text-[12px] text-ink-soft">{p.stockText}</span>
+              <StockStatusBadge status={p.status} />
+            </Link>
+          ))}
+        </div>
+      )}
+      <div className="border-t border-line px-3.5 py-2 text-[11.5px] text-ink-faint">
+        Stock on hand worth <b className="font-mono font-bold text-ink-soft">{fmtInr(stock.stockValue, currency)}</b>
+        {stock.valuedPartlyAtPrice ? ' (at cost where known, else selling price)' : ' at cost'}
+      </div>
+    </div>
+  );
+}
+
+/** Batches on hand that expire inside the company's alert window — sell
+ * these first, or write them off. */
+function ExpiringCard({ stock, alertDays }: { stock: InventorySummary; alertDays: number }) {
+  const today = todayIst();
+  return (
+    <div className="rounded-xl2 border border-line bg-surface shadow-card">
+      <div className="flex items-center gap-2 border-b border-line px-3.5 py-2.5">
+        <CalendarClock size={14} className="text-brand" />
+        <span className="text-[13.5px] font-extrabold text-ink">Expiring soon</span>
+        <span className="text-[11.5px] text-ink-faint">next {alertDays} days</span>
+        <Link href="/inventory?status=expiring" className="ml-auto flex items-center gap-1 text-[12px] font-bold text-brand hover:underline">
+          {stock.expiringCount > stock.expiring.length ? `All ${stock.expiringCount}` : 'View'} <ArrowRight size={12} />
+        </Link>
+      </div>
+      <div className="divide-y divide-line">
+        {stock.expiring.map((b, i) => {
+          const exp = expiryText(b.expiryDate, today, alertDays);
+          return (
+            <Link key={`${b.productId}-${i}`} href={`/inventory/${b.productId}`} className="flex items-center gap-3 px-3.5 py-2 transition-colors hover:bg-bg">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[12.5px] font-bold text-ink">{b.name}</div>
+                <div className="truncate text-[11px] text-ink-faint">
+                  {b.batchNo ? `Batch ${b.batchNo} · ` : ''}
+                  {b.remainingText} left
+                </div>
+              </div>
+              <SoftBadge className={exp.tone === 'red' ? 'bg-red-soft text-red' : 'bg-gold-soft text-gold'}>{exp.text}</SoftBadge>
+            </Link>
+          );
+        })}
+      </div>
     </div>
   );
 }

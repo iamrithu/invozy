@@ -12,7 +12,8 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "setup": "tsx scripts/setup-company.ts"
+    "setup": "tsx scripts/setup-company.ts",
+    "test:actions": "tsx --tsconfig scripts/test-actions/tsconfig.json scripts/test-actions/run.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",

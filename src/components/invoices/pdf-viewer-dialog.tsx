@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import dynamic from 'next/dynamic';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { Loader2, Minus, Plus, RotateCcw, X } from 'lucide-react';
+import { AlertTriangle, Loader2, Minus, Plus, RotateCcw, X } from 'lucide-react';
 import { Dialog, DialogPortal, DialogOverlay, DialogTrigger } from '@/components/ui/dialog';
-import { DownloadPdfButton } from './download-pdf-button';
+import { Button } from '@/components/ui/button';
+import { DownloadPdfButton, invoicePdfUrl } from './download-pdf-button';
 
 const MIN_SCALE = 0.6;
 const MAX_SCALE = 2.5;
@@ -21,28 +22,33 @@ const DIALOG_MAX_PAGE_WIDTH = 1100;
 // required so it only ever mounts in the browser.
 const PdfViewer = dynamic(() => import('./pdf-viewer').then((m) => m.PdfViewer), {
   ssr: false,
-  loading: () => (
-    <div className="flex h-[70vh] items-center justify-center gap-2 text-[13px] font-semibold text-white/70">
-      <Loader2 size={16} className="animate-spin" /> Loading viewer…
-    </div>
-  ),
+  loading: () => <Loading label="Loading viewer…" />,
 });
 
+function Loading({ label }: { label: string }) {
+  return (
+    <div className="flex h-[70vh] items-center justify-center gap-2 text-[13px] font-semibold text-white/70">
+      <Loader2 size={16} className="animate-spin" /> {label}
+    </div>
+  );
+}
+
+type PdfState = { status: 'loading' } | { status: 'ready'; url: string } | { status: 'error'; message: string };
+
 /**
- * True full-viewport PDF viewer — unlike the shared DialogContent's
- * `mobileFullScreen` (full screen only below md, a centered card above it),
- * this fills the whole browser window at every breakpoint. Replaces both
- * the old embedded-in-page preview (cramped into an 80vh scroll box on the
- * invoice detail page) and the separate /preview route (still bounded by
- * the app shell's sidebar/top bar either way) with one consistent
- * full-screen experience — same pdf.js/canvas renderer as before, just
- * given the whole screen to render into instead of a small fixed column.
+ * True full-viewport PDF viewer — fills the whole browser window at every
+ * breakpoint, rendered with pdf.js on a canvas (see pdf-viewer.tsx for why
+ * not an <iframe>).
+ *
+ * Fetches the PDF once per opening and keeps it as a blob: the viewer
+ * renders from it and the Download button saves that same blob, so viewing
+ * then downloading never asks the server twice.
  */
 export function PdfViewerDialog({
   invoiceId,
   invoiceNumber,
   trigger,
-  open,
+  open: openProp,
   onOpenChange,
 }: {
   invoiceId: string;
@@ -54,11 +60,45 @@ export function PdfViewerDialog({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
+  const [openState, setOpenState] = useState(false);
+  const open = openProp ?? openState;
+  const setOpen = (next: boolean) => {
+    if (openProp === undefined) setOpenState(next);
+    onOpenChange?.(next);
+  };
   const [scale, setScale] = useState(1);
   const [numPages, setNumPages] = useState<number | null>(null);
+  const [pdf, setPdf] = useState<PdfState>({ status: 'loading' });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    let url: string | null = null;
+    setPdf({ status: 'loading' });
+    setNumPages(null);
+    fetch(invoicePdfUrl(invoiceId, { inline: true }), { cache: 'no-store' })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error ?? `Could not load the PDF (HTTP ${res.status}).`);
+        }
+        const blob = await res.blob();
+        if (cancelled) return;
+        url = URL.createObjectURL(blob);
+        setPdf({ status: 'ready', url });
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setPdf({ status: 'error', message: e instanceof Error ? e.message : 'Could not load the PDF.' });
+      });
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [open, invoiceId, attempt]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={setOpen}>
       {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
       <DialogPortal>
         <DialogOverlay />
@@ -102,7 +142,9 @@ export function PdfViewerDialog({
             )}
 
             <div className="ml-auto flex flex-shrink-0 items-center gap-2">
-              <DownloadPdfButton invoiceId={invoiceId} invoiceNumber={invoiceNumber} />
+              {/* Saves the blob already on screen; falls back to the route
+                  itself until it's here. */}
+              <DownloadPdfButton invoiceId={invoiceId} invoiceNumber={invoiceNumber} href={pdf.status === 'ready' ? pdf.url : undefined} />
               <DialogPrimitive.Close
                 aria-label="Close"
                 className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-sm2 text-white/80 transition-colors hover:bg-white/10 hover:text-white focus:outline-none"
@@ -114,7 +156,18 @@ export function PdfViewerDialog({
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-8">
-            <PdfViewer src={`/api/invoices/${invoiceId}/pdf?inline=1`} scale={scale} maxWidth={DIALOG_MAX_PAGE_WIDTH} onNumPages={setNumPages} />
+            {pdf.status === 'loading' && <Loading label="Preparing PDF…" />}
+            {pdf.status === 'error' && (
+              <div className="flex h-[50vh] flex-col items-center justify-center gap-2 px-6 text-center text-white">
+                <AlertTriangle size={22} className="text-gold" />
+                <div className="text-[13.5px] font-bold">Couldn&apos;t load the PDF</div>
+                <div className="max-w-[420px] text-[11.5px] text-white/70">{pdf.message}</div>
+                <Button variant="outline" size="sm" className="mt-2" onClick={() => setAttempt((n) => n + 1)}>
+                  Try again
+                </Button>
+              </div>
+            )}
+            {pdf.status === 'ready' && <PdfViewer src={pdf.url} scale={scale} maxWidth={DIALOG_MAX_PAGE_WIDTH} onNumPages={setNumPages} />}
           </div>
         </DialogPrimitive.Content>
       </DialogPortal>

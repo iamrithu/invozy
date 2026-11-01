@@ -8,15 +8,22 @@ import ws from 'ws';
 // cold function invocation used to pay a full TCP+TLS handshake before its
 // first query (measured locally at ~650ms vs ~50-130ms once warm); this
 // adapter is Neon's own answer to that cold-start cost.
-neonConfig.webSocketConstructor = ws;
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaNeon(pool);
+//
+// A non-Neon DATABASE_URL (a local Postgres used for testing against a copy
+// of the data) gets a plain TCP client instead — the WebSocket adapter can
+// only talk to Neon.
+const isNeon = /\.neon\.tech/.test(process.env.DATABASE_URL ?? '');
+function makeClient() {
+  if (!isNeon) return new PrismaClient();
+  neonConfig.webSocketConstructor = ws;
+  return new PrismaClient({ adapter: new PrismaNeon(new Pool({ connectionString: process.env.DATABASE_URL })) });
+}
 
 // Standard Next.js dev-mode singleton — prevents exhausting the DB connection
 // pool from hot-reload creating a new PrismaClient on every file save.
 const globalForPrisma = globalThis as unknown as { prismaBase?: PrismaClient };
 
-const base = globalForPrisma.prismaBase ?? new PrismaClient({ adapter });
+const base = globalForPrisma.prismaBase ?? makeClient();
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prismaBase = base;
 
@@ -53,3 +60,9 @@ export const prisma = base.$extends({
     },
   },
 });
+
+/** The client handed to `prisma.$transaction(async (tx) => …)` callbacks.
+ * Because `prisma` above is an *extended* client, its transaction client
+ * isn't Prisma.TransactionClient — helpers that take a `tx` (src/lib/stock.ts
+ * and friends) must use this type instead. */
+export type Tx = Omit<typeof prisma, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;

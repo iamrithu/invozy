@@ -2,10 +2,18 @@
 const nextConfig = {
   experimental: {
     serverActions: {
-      // Default is 1mb, too small for a product/company image upload (up to
-      // 6 photos per product, each capped at 4MB in src/lib/uploads.ts).
-      bodySizeLimit: '10mb',
+      // Default is 1mb, too small for a product/customer/company image
+      // upload: up to 6 photos per product or customer, each capped at 4MB
+      // in src/lib/uploads.ts, plus multipart overhead. (The photo picker
+      // also shrinks large camera photos before upload, so real requests
+      // are usually far smaller than this.)
+      bodySizeLimit: '25mb',
     },
+    // src/proxy.ts runs on /products and /customers, and a proxy buffers
+    // the request body up to this limit (default 10mb) — anything beyond it
+    // is silently cut off before the server action sees it, so it has to
+    // be at least the server-action limit above.
+    proxyClientMaxBodySize: '25mb',
   },
   // Vercel's build only bundles files it can trace a static require()/import
   // to. playwright-core's coreBundle.js resolves browsers.json via a
@@ -26,13 +34,15 @@ const nextConfig = {
   // silently does nothing. `*` in that same position does. Do not "fix" this
   // back to `[id]` bracket notation without re-verifying against a real
   // build's .nft.json — it looks more idiomatic but is actually broken.
-  outputFileTracingIncludes: {
-    '/api/invoices/*/pdf': [
-      './node_modules/playwright-core/**/*',
-      './node_modules/playwright-core/browsers.json',
-      './node_modules/@sparticuz/chromium/**/*',
-    ],
-  },
+  // Every route that renders a PDF in headless Chromium needs the same
+  // three entries — invoices, credit notes, receipts, statements, the
+  // loading sheet, and the cron warm-up.
+  outputFileTracingIncludes: Object.fromEntries(
+    ['/api/invoices/*/pdf', '/api/pdf/credit-notes/*', '/api/pdf/receipts/*', '/api/pdf/statements/*', '/api/pdf/loading-sheet', '/api/cron/warm'].map((route) => [
+      route,
+      ['./node_modules/playwright-core/**/*', './node_modules/playwright-core/browsers.json', './node_modules/@sparticuz/chromium/**/*'],
+    ])
+  ),
 };
 
 module.exports = nextConfig;

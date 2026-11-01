@@ -145,8 +145,10 @@ main:has(> .invoice-builder-root) {
 /* Professional print/PDF output for invoices (via the browser's native
    print-to-PDF, no image/canvas capture involved) — everything outside the
    invoice sheet is hidden and the sheet fills the printed page edge-to-edge.
-   Applied to both the invoice detail page and the invoice builder's preview
-   dialog (see .invoice-print usages).
+   Applied wherever an in-app page keeps a print-only copy of a sheet (see
+   .invoice-print usages). The PDF itself comes from the dedicated print
+   pages under src/app/print instead (`.print-doc`), which have nothing
+   else on them to hide.
    The CLASSIC template (invoice-sheet-classic.tsx) does its own explicit
    multi-page layout — pre-splitting line items into physical <div
    className="invoice-page"> blocks with the header/buyer markup duplicated
@@ -158,6 +160,11 @@ main:has(> .invoice-builder-root) {
   @page {
     size: A4;
     margin: 14mm 12mm;
+  }
+  /* Paper is white — not the app's off-white page background. */
+  html,
+  body {
+    background: #fff !important;
   }
   /* Deliberately NOT given a min-height to force its footer/closing block
      flush against the very bottom of the page — that was tried, and it
@@ -185,7 +192,9 @@ main:has(> .invoice-builder-root) {
     visibility: hidden;
   }
   .invoice-print,
-  .invoice-print * {
+  .invoice-print *,
+  .print-doc,
+  .print-doc * {
     visibility: visible;
   }
   .invoice-print {
@@ -198,7 +207,8 @@ main:has(> .invoice-builder-root) {
     border: none !important;
     box-shadow: none !important;
   }
-  .invoice-print table thead {
+  .invoice-print table thead,
+  .print-doc table thead {
     display: table-header-group;
   }
   /* tfoot's UA-default display (table-footer-group) repeats it on every
@@ -207,7 +217,8 @@ main:has(> .invoice-builder-root) {
      rows that means "Subtotal…Total" printing again on every page instead
      of once at the end. Demoting to table-row-group makes it behave like
      an ordinary row group: printed once, wherever the last row lands. */
-  .invoice-print table tfoot {
+  .invoice-print table tfoot,
+  .print-doc table tfoot {
     display: table-row-group;
   }
   /* Defensive only, at this point — the CLASSIC template's own page-chunking
@@ -215,7 +226,8 @@ main:has(> .invoice-builder-root) {
      row should ever need to split. This just guards against a single row
      splitting mid-row if some unusually long content (e.g. a wrapped product
      name) pushes a page slightly over. */
-  .invoice-print table tbody tr {
+  .invoice-print table tbody tr,
+  .print-doc table tbody tr {
     break-inside: avoid;
   }
   /* CLASSIC template's e-Way Bill sheet (invoice-eway-bill-sheet.tsx) is a
@@ -261,6 +273,12 @@ main:has(> .invoice-builder-root) {
 .invoice-sheet-mono * {
   color: #000 !important;
 }
+/* The CLEAN template's secondary text (labels, "You saved…") is a dark
+   grey that still prints clearly — the one exception to the force-black
+   rule above (two classes outrank it). */
+.invoice-clean .clean-soft {
+  color: #4b5563 !important;
+}
 /* The rest of the app deliberately mixes IBM Plex Sans (prose) with IBM
    Plex Mono (font-mono, used throughout for amounts/GSTIN/invoice numbers
    so digits line up) — on an invoice sheet specifically (screen or print)
@@ -274,4 +292,31 @@ main:has(> .invoice-builder-root) {
 .invoice-sheet-mono * {
   font-family: var(--font-plex-sans), 'IBM Plex Sans', system-ui, sans-serif !important;
   font-variant-numeric: tabular-nums;
+}
+
+/* CLEAN template (invoice-sheet-classic.tsx variant="clean"): one weight
+   and one family for every piece of text, hierarchy by size alone — so no
+   utility class inside it (font-bold, font-mono…) can reintroduce a
+   second weight or the monospace face. The company name is the one
+   exception: `.clean-strong` (higher specificity, so it wins over the
+   rule above). */
+.invoice-clean,
+.invoice-clean * {
+  font-family: var(--font-plex-sans), 'IBM Plex Sans', system-ui, sans-serif !important;
+  font-weight: 500 !important;
+  font-variant-numeric: tabular-nums;
+}
+.invoice-clean .clean-strong {
+  font-weight: 700 !important;
+}
+.invoice-clean {
+  color: #1c1c1c;
+}
+
+/* The sheets' hidden measurement copy (print-pagination.tsx) — never part
+   of the printed output, whatever `.invoice-print *` says about visibility.
+   It's unmounted once measured; this covers the moment before that. */
+[data-measure-probe],
+[data-measure-probe] * {
+  visibility: hidden !important;
 }
