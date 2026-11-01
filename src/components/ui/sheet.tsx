@@ -33,8 +33,8 @@ SheetOverlay.displayName = DialogPrimitive.Overlay.displayName;
  * Full-screen on mobile, 45% of the screen from sm: up. */
 const SheetContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { wide?: boolean }
->(({ className, children, wide, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { wide?: boolean; hideClose?: boolean }
+>(({ className, children, wide, hideClose, ...props }, ref) => (
   <SheetPortal>
     <SheetOverlay />
     <DialogPrimitive.Content
@@ -49,10 +49,13 @@ const SheetContent = React.forwardRef<
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 z-10 flex h-7 w-7 items-center justify-center rounded-sm2 bg-bg text-ink-faint transition-colors hover:bg-brand-light hover:text-brand focus:outline-none">
-        <X size={14} />
-        <span className="sr-only">Close</span>
-      </DialogPrimitive.Close>
+      {/* Form sheets put their own close button in the header row instead. */}
+      {!hideClose && (
+        <DialogPrimitive.Close className="absolute right-4 top-4 z-10 flex h-7 w-7 items-center justify-center rounded-sm2 bg-bg text-ink-faint transition-colors hover:bg-brand-light hover:text-brand focus:outline-none">
+          <X size={14} />
+          <span className="sr-only">Close</span>
+        </DialogPrimitive.Close>
+      )}
     </DialogPrimitive.Content>
   </SheetPortal>
 ));

@@ -332,7 +332,7 @@ export function CustomersClient({ initialData }: { initialData: CustomersPageDat
         </SheetContent>
       </Sheet>
 
-      <CustomerFormDialog open={addOpen} onOpenChange={setAddOpen} mode="create" onSaved={(c) => openView({ ...(c as Customer), invoiceCount: 0 })} />
+      <CustomerFormDialog open={addOpen} onOpenChange={setAddOpen} mode="create" addAnother onSaved={(c) => openView({ ...(c as Customer), invoiceCount: 0 })} />
       {selected && (
         // Keyed by updatedAt so the form re-reads the customer after any
         // change made elsewhere (e.g. the Active switch in the detail sheet)

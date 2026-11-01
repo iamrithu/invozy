@@ -2,8 +2,11 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 
+// `relative` so absolutely positioned bits inside (sr-only header labels)
+// are clipped by this scroll box — otherwise they sit past a phone's edge
+// and widen the whole page.
 const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(({ className, ...props }, ref) => (
-  <div className="w-full overflow-auto rounded-lg2 border border-line">
+  <div className="relative w-full overflow-auto rounded-lg2 border border-line">
     <table ref={ref} className={cn('w-full caption-bottom text-[12.5px]', className)} {...props} />
   </div>
 ));

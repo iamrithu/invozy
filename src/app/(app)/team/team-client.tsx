@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { roleLabel, useCurrentUser, userLabel } from '@/components/current-user';
-import { LoginFormDialog, ResetPasswordDialog } from './login-dialogs';
+import { LoginFormSheet, ResetPasswordDialog } from './login-dialogs';
 
 const ADDED_FMT = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -141,8 +141,8 @@ export function TeamClient({ initialUsers }: { initialUsers: TeamMember[] }) {
         </aside>
       </div>
 
-      <LoginFormDialog open={addOpen} onOpenChange={setAddOpen} onSaved={refresh} />
-      <LoginFormDialog open={editOpen} onOpenChange={setEditOpen} member={editTarget} onSaved={refresh} />
+      <LoginFormSheet open={addOpen} onOpenChange={setAddOpen} onSaved={refresh} />
+      <LoginFormSheet open={editOpen} onOpenChange={setEditOpen} member={editTarget} onSaved={refresh} />
       <ResetPasswordDialog open={resetOpen} onOpenChange={setResetOpen} member={resetTarget} onSaved={refresh} />
       <ConfirmDialog
         open={changeOpen}

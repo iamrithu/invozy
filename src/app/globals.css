@@ -320,3 +320,21 @@ main:has(> .invoice-builder-root) {
 [data-measure-probe] * {
   visibility: hidden !important;
 }
+
+/* Form sheets (src/components/ui/form-sheet.tsx) on a phone: 44px tap
+   targets, and 16px text so iOS Safari doesn't zoom in on a focused field.
+   Desktop keeps the compact 36px controls. */
+@media (max-width: 639px) {
+  .form-kit :is(input:not([type='checkbox'], [type='radio'], [type='file']), select, textarea) {
+    font-size: 16px;
+  }
+  .form-kit :is(input:not([type='checkbox'], [type='radio'], [type='file']), select) {
+    height: 44px;
+  }
+  .form-kit .form-affix {
+    height: 44px;
+  }
+  .form-kit .form-affix input {
+    height: 42px;
+  }
+}

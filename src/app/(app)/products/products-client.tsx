@@ -205,11 +205,11 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
             <TableHeader>
               <TableRow>
                 <TableHead>Product</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Units</TableHead>
+                <TableHead className="hidden md:table-cell">Category</TableHead>
+                <TableHead className="hidden sm:table-cell">Units</TableHead>
                 <TableHead>Price</TableHead>
                 <TableHead>Stock</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead className="hidden sm:table-cell">Status</TableHead>
                 <TableHead className="w-12 text-right">
                   <span className="sr-only">Actions</span>
                 </TableHead>
@@ -238,16 +238,16 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
                       <span className="truncate text-[13px] font-bold text-ink">{p.name}</span>
                     </div>
                   </TableCell>
-                  <TableCell className="text-ink-soft">{p.category}</TableCell>
+                  <TableCell className="hidden text-ink-soft md:table-cell">{p.category}</TableCell>
                   {/* Every pricing option, not just the primary tier — a
                       product sold as both Box and Piece showed only "Piece"
                       here before, hiding that a bulk option even existed. */}
-                  <TableCell className="text-ink-soft">{tiers.map((t) => formatUnit(t.unit)).join(' · ')}</TableCell>
+                  <TableCell className="hidden text-ink-soft sm:table-cell">{tiers.map((t) => formatUnit(t.unit)).join(' · ')}</TableCell>
                   <TableCell className="font-mono font-bold text-ink-soft">{tiers.map((t) => fmtInr(Number(t.price))).join(' · ')}</TableCell>
                   <TableCell>
                     <StockBadge product={p} />
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="hidden sm:table-cell">
                     <Badge variant={p.active ? 'green' : 'outline'}>{p.active ? 'Live' : 'Hidden'}</Badge>
                   </TableCell>
                   {/* Stops row clicks — the menu's portal still bubbles through here in React's tree. */}

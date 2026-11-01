@@ -50,3 +50,15 @@ const GST_STATE_CODES: Record<string, string> = {
 export function gstStateCode(stateName: string): string {
   return GST_STATE_CODES[stateName.trim().toLowerCase()] ?? '99';
 }
+
+/** GSTIN shape: 2-digit state code, 10-character PAN, entity number, Z,
+ * check character. Format only — the check digit isn't verified. */
+export const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+/** The state a GSTIN was issued in, as its lowercase name — or null when
+ * the first two digits aren't a state code. */
+export function gstinStateKey(gstin: string): string | null {
+  const code = gstin.trim().slice(0, 2);
+  for (const [name, c] of Object.entries(GST_STATE_CODES)) if (c === code) return name;
+  return null;
+}

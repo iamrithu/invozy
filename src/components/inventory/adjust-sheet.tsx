@@ -1,18 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Check, SlidersHorizontal } from 'lucide-react';
+import { ArrowRight, SlidersHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
-import { Field } from '@/components/ui/field';
-import { Label } from '@/components/ui/label';
-import { Sheet, SheetBody, SheetContent, SheetFooter, SheetHeader, SheetIcon, SheetTitle } from '@/components/ui/sheet';
+import { Input } from '@/components/ui/input';
+import { FormField, FormGrid, FormSection, FormSheet, Segmented, Tag, invalidClass } from '@/components/ui/form-sheet';
 import { cn } from '@/lib/utils';
 import { formatUnit } from '@/lib/gst';
 import { formatStock, round6, unitFactor } from '@/lib/stock-units';
 import { useAddStockMovement, useSetStockCount } from '@/hooks/use-inventory';
 import type { StockProduct } from '@/actions/inventory';
-import { ConvertNote, QtyUnitInput } from './qty-unit-input';
+import { QtyUnitInput } from './qty-unit-input';
 import { formatCountInput, formatDelta, parseCount, smallUnit } from './stock-meta';
 
 type Reason = 'damage' | 'count' | 'return';
@@ -57,12 +55,13 @@ export function AdjustSheet({ open, onOpenChange, product }: { open: boolean; on
   const pending = add.isPending || setCount.isPending;
   const pieces = smallUnit(product);
 
-  const canSubmit =
-    reason === 'count' ? countValue != null && Math.abs(countValue - stock) > 1e-6 : qtyValid && !tooMuch;
+  const canSubmit = reason === 'count' ? countValue != null && Math.abs(countValue - stock) > 1e-6 : qtyValid && !tooMuch;
 
   const amountText = qtyValid ? `${formatStock(mainQty, product)}${!isMainUnit ? ` (${n} ${formatUnit(unit)})` : ''}` : '';
   const submitLabel =
     reason === 'count' ? 'Save count' : !qtyValid ? (reason === 'damage' ? 'Write off' : 'Add back') : reason === 'damage' ? `Write off ${formatStock(mainQty, product)}` : `Add back ${formatStock(mainQty, product)}`;
+  const after = reason === 'count' ? countValue : !qtyValid || tooMuch ? null : reason === 'damage' ? stock - mainQty : stock + mainQty;
+  const qtyIssue = reason === 'count' ? (counted.trim() && countValue == null ? 'Counted stock' : null) : tooMuch ? 'Quantity' : null;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -84,108 +83,106 @@ export function AdjustSheet({ open, onOpenChange, product }: { open: boolean; on
     }
   }
 
+  const sections = [
+    { id: 'reason', label: 'Reason', done: true },
+    { id: 'qty', label: reason === 'count' ? 'Count' : 'Quantity', done: canSubmit, issues: qtyIssue ? 1 : 0 },
+    { id: 'note', label: 'Note', done: !!note.trim() },
+  ];
+
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent>
-        <form onSubmit={submit} className="contents">
-          <SheetHeader>
-            <SheetIcon>
-              <SlidersHorizontal size={16} />
-            </SheetIcon>
-            <div className="min-w-0 flex-1">
-              <SheetTitle>Adjust or write off</SheetTitle>
-              <p className="truncate text-[11.5px] text-ink-faint">
-                {product.name} · {formatStock(stock, product)} in stock
-              </p>
+    <FormSheet
+      open={open}
+      onOpenChange={onOpenChange}
+      icon={<SlidersHorizontal size={18} />}
+      title="Adjust stock"
+      subtitle={`Inventory · ${product.name}`}
+      onSubmit={submit}
+      sections={sections}
+      progress={`${formatStock(stock, product)} in stock`}
+      preview={{
+        caption: 'what this changes',
+        content: (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <div className="min-w-0 flex-1 basis-40">
+              <div className="truncate text-[14px] font-bold text-ink">{product.name}</div>
+              <div className="mt-0.5 text-[12px] text-ink-soft">{REASONS.find((r) => r.value === reason)?.label}</div>
             </div>
-          </SheetHeader>
-
-          <SheetBody className="space-y-3.5">
-            <div>
-              <Label>Reason</Label>
-              <div role="group" aria-label="Reason" className="grid grid-cols-3 gap-1 rounded-sm2 bg-surface-alt p-1">
-                {REASONS.map((r) => (
-                  <button
-                    key={r.value}
-                    type="button"
-                    aria-pressed={reason === r.value}
-                    onClick={() => setReason(r.value)}
-                    className={cn(
-                      'rounded-sm2 px-2 py-1.5 text-[12px] font-bold transition-colors',
-                      reason === r.value ? 'bg-surface text-ink shadow-card' : 'text-ink-soft hover:text-ink'
-                    )}
-                  >
-                    {r.label}
-                  </button>
-                ))}
-              </div>
+            <div className="flex items-center gap-2 font-mono text-[13px]">
+              <span className="text-ink-soft">{formatStock(stock, product)}</span>
+              <ArrowRight size={14} className="text-ink-faint" />
+              <span className={cn('font-bold', after == null ? 'text-ink-faint' : 'text-ink')}>{after == null ? '—' : formatStock(after, product)}</span>
             </div>
-
-            {reason === 'count' ? (
-              <div>
-                <Label htmlFor="adjust-count">Counted stock ({product.unit})</Label>
-                <input
-                  id="adjust-count"
-                  value={counted}
-                  inputMode="decimal"
-                  onChange={(e) => setCounted(e.target.value)}
-                  className={cn(
-                    'h-9 w-full rounded-sm2 border border-border bg-surface px-3 font-mono text-[13px] text-ink outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20',
-                    counted.trim() && countValue == null && 'border-destructive'
-                  )}
-                />
-                {pieces && <p className="mt-1 text-[11px] text-ink-faint">Loose pieces after a plus: 4+6 is 4 {product.unit} and 6 {pieces}.</p>}
-                {countValue != null && (
-                  <ConvertNote>
-                    {Math.abs(countValue - stock) < 1e-6
-                      ? `Same as the books: ${formatStock(stock, product)}.`
-                      : `Sets stock to ${formatStock(countValue, product)} (${formatDelta(countValue - stock, product)} on the books).`}
-                  </ConvertNote>
-                )}
-              </div>
-            ) : (
-              <div>
-                <Label htmlFor="adjust-qty">Quantity</Label>
-                <QtyUnitInput id="adjust-qty" product={product} qty={qty} unit={unit} onQtyChange={setQty} onUnitChange={setUnit} invalid={tooMuch} />
-                {qtyValid &&
-                  (tooMuch ? (
-                    <ConvertNote tone="error">
-                      <span className="flex items-start gap-1.5">
-                        <AlertTriangle size={13} className="mt-0.5 flex-shrink-0" />
-                        That’s more than you have ({formatStock(stock, product)}). Use “Count correction” to set the real count instead.
-                      </span>
-                    </ConvertNote>
-                  ) : (
-                    <ConvertNote>
-                      {reason === 'damage' ? 'Removes' : 'Adds back'} {amountText}. New stock:{' '}
-                      {formatStock(reason === 'damage' ? stock - mainQty : stock + mainQty, product)}.
-                    </ConvertNote>
-                  ))}
-                {reason === 'return' && (
-                  <p className="mt-1.5 text-[11px] text-ink-faint">Raising a credit note for this return? It adds the stock back by itself — don’t add it here too.</p>
-                )}
+            {after != null && Math.abs(after - stock) > 1e-6 && (
+              <div className="flex basis-full">
+                <Tag tone={after < stock ? 'red' : 'green'}>{formatDelta(after - stock, product)}</Tag>
               </div>
             )}
+          </div>
+        ),
+      }}
+      submitLabel={submitLabel}
+      pending={pending}
+      submitDisabled={!canSubmit}
+      issues={qtyIssue ? [qtyIssue] : []}
+    >
+      <FormSection id="reason" n={1} title="Reason" aside="Each is recorded differently" done>
+        <Segmented label="Reason" value={reason} onChange={setReason} options={REASONS} className="max-sm:!grid-cols-1" />
+      </FormSection>
 
-            <Field
-              label={reason === 'damage' ? 'Note' : 'Note (optional)'}
-              name="adjust-note"
+      <FormSection id="qty" n={2} title={reason === 'count' ? 'Count' : 'Quantity'} aside={reason === 'count' ? 'What’s really there now' : `Any unit — converted to ${formatUnit(product.unit)}`} done={canSubmit}>
+        <FormGrid>
+          {reason === 'count' ? (
+            <FormField
+              label={`Counted stock (${product.unit})`}
+              required
+              htmlFor="adjust-count"
+              span={4}
+              error={counted.trim() && countValue == null ? `Enter a number${pieces ? `, or ${product.unit} + ${pieces} like 4+6` : ''}.` : undefined}
+              help={
+                countValue != null
+                  ? Math.abs(countValue - stock) < 1e-6
+                    ? `Same as the books: ${formatStock(stock, product)}.`
+                    : `Sets stock to ${formatStock(countValue, product)} (${formatDelta(countValue - stock, product)} on the books).`
+                  : pieces
+                    ? `Loose pieces after a plus: 4+6 is 4 ${product.unit} and 6 ${pieces}.`
+                    : undefined
+              }
+            >
+              <Input id="adjust-count" value={counted} inputMode="decimal" onChange={(e) => setCounted(e.target.value)} className={cn('font-mono', counted.trim() && countValue == null && invalidClass)} />
+            </FormField>
+          ) : (
+            <FormField
+              label="Quantity"
+              required
+              htmlFor="adjust-qty"
+              span={4}
+              error={tooMuch ? `That’s more than you have (${formatStock(stock, product)}). Use “Count correction” to set the real count instead.` : undefined}
+              help={
+                qtyValid
+                  ? `${reason === 'damage' ? 'Removes' : 'Adds back'} ${amountText}.`
+                  : reason === 'return'
+                    ? 'Raising a credit note for this return? It adds the stock back by itself — don’t add it here too.'
+                    : undefined
+              }
+            >
+              <QtyUnitInput id="adjust-qty" product={product} qty={qty} unit={unit} onQtyChange={setQty} onUnitChange={setUnit} invalid={tooMuch} />
+            </FormField>
+          )}
+        </FormGrid>
+      </FormSection>
+
+      <FormSection id="note" n={3} title="Note" aside="Shows in the stock history" done={!!note.trim()}>
+        <FormGrid>
+          <FormField label="Note" optional={reason !== 'damage'} htmlFor="adjust-note" span={6}>
+            <Input
+              id="adjust-note"
               value={note}
               onChange={(e) => setNote(e.target.value)}
               placeholder={reason === 'damage' ? 'e.g. Freezer door left open overnight' : reason === 'count' ? 'e.g. Month-end count' : 'e.g. Returned by the shop, unopened'}
             />
-          </SheetBody>
-
-          <SheetFooter className="justify-end">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!canSubmit || pending}>
-              <Check size={13} /> {pending ? 'Saving…' : submitLabel}
-            </Button>
-          </SheetFooter>
-        </form>
-      </SheetContent>
-    </Sheet>
+          </FormField>
+        </FormGrid>
+      </FormSection>
+    </FormSheet>
   );
 }

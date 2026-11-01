@@ -15,11 +15,18 @@ export function CategoryCombobox({
   value,
   onChange,
   label = 'Category',
+  id,
+  hideLabel,
+  invalid,
 }: {
   name: string;
   value: string;
   onChange: (value: string) => void;
   label?: string;
+  id?: string;
+  /** When a surrounding FormField already labels it. */
+  hideLabel?: boolean;
+  invalid?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const { data: categories = [] } = useProductCategories();
@@ -27,10 +34,13 @@ export function CategoryCombobox({
 
   return (
     <div className="relative">
-      <label className="mb-1 flex items-center gap-1.5 text-[11px] font-bold text-ink-faint">
-        <Tag size={12} className="flex-shrink-0" /> {label}
-      </label>
+      {!hideLabel && (
+        <label htmlFor={id} className="mb-1 flex items-center gap-1.5 text-[11px] font-bold text-ink-faint">
+          <Tag size={12} className="flex-shrink-0" /> {label}
+        </label>
+      )}
       <input
+        id={id}
         name={name}
         value={value}
         onChange={(e) => {
@@ -41,7 +51,7 @@ export function CategoryCombobox({
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         placeholder="e.g. Milk, Dairy, Snacks…"
         autoComplete="off"
-        className="w-full rounded-sm2 border border-line bg-surface px-3 py-2 text-[13px] outline-none focus:border-brand focus:ring-2 focus:ring-brand-light"
+        className={`h-9 w-full rounded-sm2 border bg-surface px-3 text-[13px] outline-none focus:border-brand focus:ring-2 focus:ring-brand-light ${invalid ? 'border-destructive' : 'border-line'}`}
       />
       {open && filtered.length > 0 && (
         <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-10 max-h-40 overflow-y-auto rounded-md2 border border-line bg-popover shadow-elevated">
