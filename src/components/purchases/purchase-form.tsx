@@ -13,14 +13,13 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useCurrentUser } from '@/components/current-user';
 import { ProductPicker } from '@/components/inventory/product-picker';
-import { unitOptions } from '@/components/inventory/stock-meta';
 import { SupplierFormDialog } from './supplier-form-dialog';
 import { AttachmentsField, type PendingAttachments } from './attachments-field';
 import { uploadAttachment } from './upload-attachment';
 import { computePurchaseTotals, lineAmount, PURCHASE_ATTACHMENT_MAX_BYTES } from './purchase-math';
 import { decidesIgst, fmtInr, formatUnit } from '@/lib/gst';
 import { todayIst } from '@/lib/dates';
-import { formatStock, round6, unitFactor } from '@/lib/stock-units';
+import { formatStock, round6, stockUnits, unitFactor } from '@/lib/stock-units';
 import { cn } from '@/lib/utils';
 import { useDeletePurchase, useSavePurchase } from '@/hooks/use-purchases';
 import type { StockProduct } from '@/actions/inventory';
@@ -299,7 +298,7 @@ export function PurchaseForm({
         <div className="divide-y divide-line">
           {lines.map((l) => {
             const p = l.productId ? productById.get(l.productId) : undefined;
-            const units = p ? unitOptions(p) : [l.unit];
+            const units = p ? stockUnits(p) : [l.unit];
             const qty = Number(l.qty);
             const main = p && qty > 0 ? round6(qty * unitFactor(p, l.unit)) : 0;
             const showMain = p && qty > 0 && l.unit.trim().toLowerCase() !== p.unit.trim().toLowerCase();

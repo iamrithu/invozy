@@ -5,7 +5,10 @@
 // Stock is always counted in a product's main `unit` (its first price tier).
 // Other tiers convert through `approxQty` ("1 Box ≈ 12 Piece"): a tier's
 // approxQty is how many base pieces it holds, and a tier without one is a
-// single piece. So with Box (12) + Piece (—), 1 Piece = 1/12 Box.
+// single piece. So with Box (12) + Piece (—), 1 Piece = 1/12 Box, and with
+// Box (25) + Bag (40), 1 Bag = 1.6 Box. Pieces are the common measure, so
+// stock can also be entered as loose pieces (PIECE) even when the product
+// doesn't sell a piece unit of its own.
 
 type TierLike = { unit: string; approxQty?: unknown };
 export type UnitProduct = { unit: string; packQty?: unknown; priceTiers?: TierLike[] };
@@ -28,13 +31,45 @@ export function mainPieces(p: UnitProduct): number {
   return Number(main?.approxQty ?? p.packQty ?? 0) || 1;
 }
 
+/** The loose-piece unit stock can be entered in. */
+export const PIECE = 'Piece';
+
+const PIECE_WORDS = new Set(['piece', 'pieces', 'pc', 'pcs', 'nos']);
+
+/** "Piece", "pcs", "Nos"… — the words people use for a single loose piece. */
+export function isPieceUnit(unit: string | null | undefined): boolean {
+  return !!unit && PIECE_WORDS.has(unit.trim().toLowerCase());
+}
+
 /** How many main units one `unit` of this product is. 1 for the main unit or
- * any unit the product doesn't list (ad-hoc units are counted 1:1). */
+ * any unit the product doesn't list (ad-hoc units are counted 1:1) — except
+ * a piece word, which is one base piece whenever the product's units say
+ * how many pieces they hold. */
 export function unitFactor(p: UnitProduct, unit: string | null | undefined): number {
   if (!unit || same(unit, p.unit)) return 1;
   const tier = p.priceTiers?.find((t) => same(t.unit, unit));
-  if (!tier) return 1;
+  if (!tier) return isPieceUnit(unit) && mainPieces(p) > 1 ? 1 / mainPieces(p) : 1;
   return (Number(tier.approxQty ?? 0) || 1) / mainPieces(p);
+}
+
+/** Every unit stock can be entered in: the product's own units (main one
+ * first), plus loose pieces when its units say how many pieces they hold
+ * and it doesn't already sell a piece unit. */
+export function stockUnits(p: UnitProduct): string[] {
+  const out: string[] = [];
+  for (const u of [p.unit, ...(p.priceTiers ?? []).map((t) => t.unit)]) {
+    if (u.trim() && !out.some((x) => same(x, u))) out.push(u);
+  }
+  if (mainPieces(p) > 1 && !out.some((u) => isPieceUnit(u) || Math.abs(unitFactor(p, u) - 1 / mainPieces(p)) < EPS)) out.push(PIECE);
+  return out;
+}
+
+/** A main-unit quantity as loose pieces — "600 pcs" — or null when the
+ * product's units don't say how many pieces they hold. */
+export function piecesText(qty: number, p: UnitProduct): string | null {
+  const n = mainPieces(p);
+  if (n <= 1) return null;
+  return `${Math.round(qty * n).toLocaleString('en-IN')} pcs`;
 }
 
 /** True when a product sells in a smaller unit than its main one but has no

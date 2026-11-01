@@ -14,7 +14,8 @@ import { useCreateProduct, useUpdateProduct, useDeleteProduct, useToggleProductA
 import { CategoryCombobox } from '@/components/products/category-combobox';
 import { ProductImagesField, type PendingImages } from '@/components/products/product-images-field';
 import { UNITS } from '@/lib/units';
-import { formatStock, needsPackSize, unitFactor, type UnitProduct } from '@/lib/stock-units';
+import { formatStock, isPieceUnit, mainPieces, needsPackSize, piecesText, unitFactor, type UnitProduct } from '@/lib/stock-units';
+import { MixedQtyInput, mixedTotal, type MixedQty } from '@/components/inventory/mixed-qty-input';
 import { StockBadge } from '@/components/products/stock-badge';
 
 type PriceTier = { id?: string; unit: string; price: string | number; approxQty: string | number | null };
@@ -62,14 +63,23 @@ function unitShape(tiers: TierRow[]): UnitProduct {
   };
 }
 
-/** One line under the stock fields explaining how other units convert into
- * the main one, e.g. Counted in Box. Selling 1 Piece takes away 1/12 Box,
- * shown as "19 Box + 11 Pc". */
+/** One line under the stock fields explaining how the units convert, e.g.
+ * "Counted in Box (25 pcs each). 1 Bag = 40 pcs, taken out as 1 Box + 15 Pc."
+ * — pieces being the common measure whenever the units say how many they
+ * hold. */
 function conversionHint(shape: UnitProduct, opening: number): string {
   const main = formatUnit(shape.unit);
   if (!main) return '';
   if (needsPackSize(shape)) return `Counted in ${main}. Set the pieces in 1 ${main} above so smaller sales can be taken out of stock.`;
   const others = (shape.priceTiers ?? []).filter((t) => t.unit.trim().toLowerCase() !== shape.unit.trim().toLowerCase());
+  const n = mainPieces(shape);
+  if (n > 1) {
+    const parts = others
+      .filter((t) => t.unit.trim() && !isPieceUnit(t.unit))
+      .map((t) => `1 ${formatUnit(t.unit)} = ${Math.round(unitFactor(shape, t.unit) * n * 100) / 100} pcs, taken out as ${formatStock(unitFactor(shape, t.unit), shape)}`);
+    const total = opening > 0 ? ` Opening: ${formatStock(opening, shape)} = ${piecesText(opening, shape)}.` : '';
+    return `Counted in ${main} (${n} pcs each).${parts.length ? ` ${parts.join('. ')}.` : ''} Stock can be entered in any unit, or as loose pieces.${total}`;
+  }
   const smaller = others.find((t) => unitFactor(shape, t.unit) < 1);
   if (smaller) {
     const f = unitFactor(shape, smaller.unit);
@@ -142,7 +152,7 @@ export function ProductFormDialog({
   // exists, tracking and counts are managed from Inventory (every change
   // recorded there), and only the low-stock alert is editable here.
   const [trackStock, setTrackStock] = useState(false);
-  const [openingStock, setOpeningStock] = useState('');
+  const [openingStock, setOpeningStock] = useState<MixedQty>({});
   const [lowStockAt, setLowStockAt] = useState(product?.lowStockAt != null ? String(Number(product.lowStockAt)) : '');
 
   const createProduct = useCreateProduct();
@@ -156,7 +166,7 @@ export function ProductFormDialog({
     setTiers([{ unit: 'box', price: '', approxQty: '' }]);
     setImages({ existing: [], files: [] });
     setTrackStock(false);
-    setOpeningStock('');
+    setOpeningStock({});
     setLowStockAt('');
   }
 
@@ -195,7 +205,8 @@ export function ProductFormDialog({
     if (mode === 'create') {
       formData.set('trackStock', String(trackStock));
       if (trackStock) {
-        formData.set('openingStock', openingStock.trim());
+        const opening = mixedTotal(shape, openingStock);
+        formData.set('openingStock', opening > 0 ? String(opening) : '');
         formData.set('lowStockAt', lowStockAt.trim());
       }
     } else if (product?.trackStock) {
@@ -378,7 +389,8 @@ export function ProductFormDialog({
                 lowStockAt={lowStockAt}
                 onLowStockAtChange={setLowStockAt}
                 mainUnit={mainUnit}
-                hint={conversionHint(shape, parseFloat(openingStock) || 0)}
+                shape={shape}
+                hint={conversionHint(shape, mixedTotal(shape, openingStock))}
                 fieldErrors={fieldErrors}
               />
 
@@ -450,6 +462,7 @@ function StockSection({
   lowStockAt,
   onLowStockAtChange,
   mainUnit,
+  shape,
   hint,
   fieldErrors,
 }: {
@@ -457,11 +470,12 @@ function StockSection({
   product?: Product;
   trackStock: boolean;
   onTrackStockChange: (v: boolean) => void;
-  openingStock: string;
-  onOpeningStockChange: (v: string) => void;
+  openingStock: MixedQty;
+  onOpeningStockChange: (v: MixedQty) => void;
   lowStockAt: string;
   onLowStockAtChange: (v: string) => void;
   mainUnit: string;
+  shape: UnitProduct;
   hint: string;
   fieldErrors: Record<string, string>;
 }) {
@@ -507,31 +521,16 @@ function StockSection({
       <label className="mt-3 flex cursor-pointer items-center gap-3 rounded-md2 border border-line bg-surface px-3 py-2.5">
         <span className="min-w-0 flex-1">
           <span className="block text-[13px] font-bold text-ink">Track stock for this product</span>
-          <span className="block text-[11.5px] text-ink-soft">Invoices that are sent or paid take it out of stock.</span>
+          <span className="block text-[11.5px] text-ink-soft">Every saved invoice, drafts included, takes it out of stock.</span>
         </span>
         <Switch checked={trackStock} onChange={(e) => onTrackStockChange(e.target.checked)} aria-label="Track stock" />
       </label>
       {trackStock ? (
         <>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <label htmlFor="openingStock" className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-ink-faint">
-                Opening stock
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  id="openingStock"
-                  type="number"
-                  min="0"
-                  step="any"
-                  inputMode="decimal"
-                  value={openingStock}
-                  onChange={(e) => onOpeningStockChange(e.target.value)}
-                  placeholder="0"
-                  className={stockInputClass}
-                />
-                <span className="flex-shrink-0 text-[12px] font-bold text-ink-soft">{mainUnit}</span>
-              </div>
+            <div className="sm:col-span-2">
+              <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-ink-faint">Opening stock — what you have now, in any units</span>
+              <MixedQtyInput product={shape} values={openingStock} onChange={onOpeningStockChange} idPrefix="openingStock" invalid={!!fieldErrors.openingStock} />
               {fieldErrors.openingStock ? (
                 <p className="mt-1 text-[11px] font-semibold text-destructive">{fieldErrors.openingStock}</p>
               ) : (

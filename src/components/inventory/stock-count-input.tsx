@@ -5,7 +5,7 @@ import { Loader2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { formatStock, needsPackSize, type UnitProduct } from '@/lib/stock-units';
+import { formatStock, needsPackSize, piecesText, type UnitProduct } from '@/lib/stock-units';
 import { useSetStockCount, useUndoStockCount } from '@/hooks/use-inventory';
 import { formatCountInput, formatDelta, parseCount, smallUnit } from './stock-meta';
 
@@ -42,7 +42,9 @@ export function StockCountInput({ product, className }: { product: CountableProd
 
   const parsed = parseCount(text, product);
   const pieces = smallUnit(product);
-  const hint = pieces ? formatStock(parsed ?? product.stockQty, product) : product.unit;
+  const shown = parsed ?? product.stockQty;
+  // "24 Box · 600 pcs" — the count in pieces too, the measure every unit shares.
+  const hint = pieces ? [formatStock(shown, product), piecesText(shown, product)].filter(Boolean).join(' · ') : product.unit;
 
   function reset() {
     setText(product.trackStock ? formatCountInput(product.stockQty, product) : '');

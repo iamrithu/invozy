@@ -10,7 +10,7 @@ import { toActionError, type ActionResult } from '@/lib/action-result';
 import { logActivity } from '@/lib/activity';
 import { applyMovement } from '@/lib/stock';
 import { istDayRangeUtc, todayIst } from '@/lib/dates';
-import { formatStock, needsPackSize, round6, stockStatus, unitFactor, type StockStatus } from '@/lib/stock-units';
+import { formatStock, needsPackSize, round6, stockStatus, stockUnits, unitFactor, type StockStatus } from '@/lib/stock-units';
 
 // The Inventory screens' data layer: the stock list with its status chips,
 // one product's ledger, counts/stock-ins/write-offs, batches on hand, and the
@@ -576,7 +576,7 @@ export async function addStockMovement(productId: string, input: StockMovementIn
       if (!row) throw new Error('This product no longer exists.');
       const p = toStockProduct(row);
       if (!p.trackStock) throw new Error(`Start tracking ${p.name} first — enter its current count on the Inventory screen.`);
-      const knownUnit = [p.unit, ...p.priceTiers.map((t) => t.unit)].some((u) => u.trim().toLowerCase() === data.unit.trim().toLowerCase());
+      const knownUnit = stockUnits(p).some((u) => u.trim().toLowerCase() === data.unit.trim().toLowerCase());
       if (!knownUnit) throw new Error(`${p.name} isn’t sold in “${data.unit}”. Pick one of its units.`);
 
       const factor = unitFactor(p, data.unit);

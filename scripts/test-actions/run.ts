@@ -177,6 +177,22 @@ async function main() {
   check('overdue unpaid invoices are listed for reminders', overdue.some((r) => r.id === newDraft.invoiceId && r.balance > 0), overdue);
   check('reorder suggestions load', Array.isArray((await inventory.getReorderSuggestions()).items));
 
+  // ---- stock in any unit: Box of 25, Bag of 40, loose pieces
+  await prisma.product.create({
+    data: {
+      id: 'p5', name: 'Kulfi Bag', category: 'Ice', unit: 'Box', price: 200, packQty: 25, trackStock: true, stockQty: 0,
+      priceTiers: { create: [{ unit: 'Box', price: 200, approxQty: 25, sortOrder: 0 }, { unit: 'Bag', price: 400, approxQty: 40, sortOrder: 1 }] },
+    },
+  });
+  const units = await import('@/lib/stock-units');
+  const p5 = await prisma.product.findUniqueOrThrow({ where: { id: 'p5' }, include: { priceTiers: true } });
+  check('loose pieces are offered as a stock unit', units.stockUnits(p5).join(',') === 'Box,Bag,Piece', units.stockUnits(p5));
+  const inBag = await inventory.addStockMovement('p5', { type: 'PURCHASE', qty: 1, unit: 'Bag', date: '2026-11-01' });
+  const inPcs = await inventory.addStockMovement('p5', { type: 'PURCHASE', qty: 10, unit: 'Piece', date: '2026-11-01' });
+  check('1 Bag (40 pcs) + 10 pieces = 2 Box (50 pcs)', !inBag.error && !inPcs.error && (await stock('p5')) === 2, { inBag, inPcs, s: await stock('p5') });
+  check('shown as 2 Box · 50 pcs', units.formatStock(2, p5) === '2 Box' && units.piecesText(2, p5) === '50 pcs', [units.formatStock(2, p5), units.piecesText(2, p5)]);
+  check('an unknown unit is still refused', !!(await inventory.addStockMovement('p5', { type: 'PURCHASE', qty: 1, unit: 'Crate', date: '2026-11-01' })).error);
+
   // ---- returns: good and damaged parts, part credit, deduction, refund / adjust
   const p4 = () => stock('p4');
   const sale = await invoices.createInvoice({

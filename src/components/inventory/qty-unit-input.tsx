@@ -2,11 +2,11 @@
 
 import { formatUnit } from '@/lib/gst';
 import { cn } from '@/lib/utils';
-import type { UnitProduct } from '@/lib/stock-units';
-import { unitOptions } from './stock-meta';
+import { stockUnits, type UnitProduct } from '@/lib/stock-units';
 
-/** Quantity box + unit dropdown from the product's own pricing units
- * (Box, Piece…) — the drawers convert whatever is picked to main units. */
+/** Quantity box + unit dropdown from the product's own pricing units (Box,
+ * Bag…) plus loose pieces when its units say how many they hold — the
+ * drawers convert whatever is picked to main units. */
 export function QtyUnitInput({
   product,
   qty,
@@ -24,7 +24,7 @@ export function QtyUnitInput({
   id?: string;
   invalid?: boolean;
 }) {
-  const units = unitOptions(product);
+  const units = stockUnits(product);
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-2">
       <input
