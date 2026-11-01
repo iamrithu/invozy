@@ -62,7 +62,7 @@ export function RemindersDialog({ open, onOpenChange }: { open: boolean; onOpenC
             <Skeleton className="h-10 w-full" />
           </div>
         ) : data.length === 0 ? (
-          <p className="text-[13px] text-ink-soft">Nothing is overdue — every sent invoice is within its due date.</p>
+          <p className="text-[13px] text-ink-soft">No sent invoice is overdue. Overdue drafts aren't reminded — send them first.</p>
         ) : (
           <>
             <p className="text-[12.5px] text-ink-soft">
