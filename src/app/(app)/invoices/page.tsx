@@ -9,8 +9,8 @@ export const dynamic = 'force-dynamic';
 // first load and silently switches to its own on the next fetch.
 const PAGE_SIZE = 10;
 
-export default async function InvoicesPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
-  const { status } = await searchParams;
+export default async function InvoicesPage({ searchParams }: { searchParams: Promise<{ status?: string; remind?: string }> }) {
+  const { status, remind } = await searchParams;
   const initialStatus = status ?? 'all';
   // Defaults to all-time — matches invoices-client.tsx's own default
   // date-filter state, so the SSR-seeded page and the client's first fetch
@@ -19,5 +19,5 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
   // custom-range date inputs.
   const today = todayIst();
   const initial = await listInvoicesPage({ status: initialStatus, page: 1, pageSize: PAGE_SIZE, sort: 'newest' });
-  return <InvoicesClient initialData={initial} initialStatus={initialStatus} initialDate={today} />
+  return <InvoicesClient initialData={initial} initialStatus={initialStatus} initialDate={today} openReminders={remind === '1'} />
 }

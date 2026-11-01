@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { AlertTriangle, TrendingUp, Wallet, CheckCircle2, Package, Users, ArrowRight, Clock, Plus, BarChart3, Receipt, Building2, Tag, Boxes, CalendarClock, Truck } from 'lucide-react';
 import { getDashboardStats, getBillingTrend, getCollectedTrend, getMonthOverMonth, getTopCustomers } from '@/actions/reports';
 import { getFrequentCustomItems } from '@/actions/products';
-import { getInventorySummary, type InventorySummary } from '@/actions/inventory';
+import { getDraftsHoldingStock, getInventorySummary, type InventorySummary } from '@/actions/inventory';
+import { DraftsCard } from '@/components/dashboard/drafts-card';
 import { getCompany } from '@/lib/get-company';
 import { fmtInr } from '@/lib/gst';
 import { todayIst } from '@/lib/dates';
@@ -17,7 +18,7 @@ import { customerDisplayName } from '@/lib/customer';
 export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
-  const [company, stats, invoicedTrend, collectedTrend, mom, topCustomers, frequentCustomItems, stock] = await Promise.all([
+  const [company, stats, invoicedTrend, collectedTrend, mom, topCustomers, frequentCustomItems, stock, drafts] = await Promise.all([
     getCompany(),
     getDashboardStats(),
     getBillingTrend(),
@@ -29,6 +30,10 @@ export default async function DashboardPage() {
     // still renders without them.
     getInventorySummary().catch((err) => {
       console.error('inventory summary failed', err);
+      return null;
+    }),
+    getDraftsHoldingStock().catch((err) => {
+      console.error('drafts holding stock failed', err);
       return null;
     }),
   ]);
@@ -90,9 +95,11 @@ export default async function DashboardPage() {
         </Link>
       )}
 
+      {drafts && drafts.count > 0 && <DraftsCard data={drafts} currency={company.currency} />}
+
       {stats.overdueCount > 0 && (
         <Link
-          href="/invoices?status=all"
+          href="/invoices?remind=1"
           className="flex items-center gap-3 rounded-lg2 border border-red bg-red-soft p-3 transition-colors hover:border-red/60"
         >
           <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-sm2 bg-red text-white">
@@ -102,7 +109,7 @@ export default async function DashboardPage() {
             <div className="text-[13.5px] font-extrabold text-ink">
               {stats.overdueCount} invoice{stats.overdueCount !== 1 ? 's' : ''} overdue
             </div>
-            <div className="mt-0.5 text-[12px] text-ink-soft">{fmtInr(stats.overdueTotal, company.currency)} outstanding past the due date — take a look</div>
+            <div className="mt-0.5 text-[12px] text-ink-soft">{fmtInr(stats.overdueTotal, company.currency)} outstanding past the due date — send WhatsApp reminders</div>
           </div>
           <ArrowRight size={15} className="flex-shrink-0 text-red" />
         </Link>

@@ -1,4 +1,5 @@
-import { getDraftsHoldingStock, listInventoryPage, type InventoryStatusFilter } from '@/actions/inventory';
+import { getDraftsHoldingStock, getReorderSuggestions, listInventoryPage, type InventoryStatusFilter } from '@/actions/inventory';
+import { getCompany } from '@/lib/get-company';
 import { InventoryClient } from './inventory-client';
 
 export const dynamic = 'force-dynamic';
@@ -14,8 +15,13 @@ const STATUSES: InventoryStatusFilter[] = ['all', 'in', 'low', 'out', 'untracked
 export default async function InventoryPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const { status: raw } = await searchParams;
   const status = STATUSES.find((s) => s === raw) ?? 'all';
-  const [initial, drafts] = await Promise.all([listInventoryPage({ status, page: 1, pageSize: PAGE_SIZE }), getDraftsHoldingStock()]);
+  const [initial, drafts, reorder, company] = await Promise.all([
+    listInventoryPage({ status, page: 1, pageSize: PAGE_SIZE }),
+    getDraftsHoldingStock(),
+    getReorderSuggestions(),
+    getCompany(),
+  ]);
   // Keyed so arriving with a different ?status while already here starts
   // the list over on that chip instead of keeping the old filters.
-  return <InventoryClient key={status} initialData={initial} initialStatus={status} drafts={drafts} />;
+  return <InventoryClient key={status} initialData={initial} initialStatus={status} drafts={drafts} reorder={reorder} companyName={company.name} />;
 }

@@ -1,7 +1,8 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { PackageCheck, Trash2 } from 'lucide-react';
+import { PackageCheck, RotateCcw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -14,24 +15,26 @@ import { unwrap } from '@/lib/action-result';
  * invoice editor. A draft lists the stock it's holding and offers both
  * ways out — put it back (the goods are still here) or not (they went out
  * anyway). A sent or paid invoice never restocks: its goods left with the
- * customer, and a credit note is how returned goods come back. */
+ * customer, so the dialog leads with returning them on a credit note —
+ * which keeps the invoice on record for GST — and offers the delete after. */
 export function DeleteInvoiceDialog({
   invoice,
   open,
   onOpenChange,
   onDeleted,
 }: {
-  invoice: { id: string; number: string; status: string; irn?: string | null } | null;
+  invoice: { id: string; number: string; status: string; irn?: string | null; customer?: string | null } | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onDeleted?: () => void;
 }) {
+  const router = useRouter();
   const del = useDeleteInvoice();
   const isDraft = invoice?.status === 'DRAFT';
   const held = useQuery({
     queryKey: ['invoices', 'held-stock', invoice?.id],
     queryFn: async () => unwrap(await getHeldStock(invoice!.id)).lines ?? [],
-    enabled: open && !!invoice && isDraft,
+    enabled: open && !!invoice,
     staleTime: 0,
   });
   const lines = held.data ?? [];
@@ -69,10 +72,38 @@ export function DeleteInvoiceDialog({
 
         <div className="space-y-3 text-[13px] leading-relaxed text-ink-body">
           {!isDraft ? (
-            <p>
-              This removes the invoice with its items and payments. Its stock is not put back: if the goods never went out, move it back to draft first and then
-              delete it; if they came back, raise a credit note instead of deleting.
-            </p>
+            <>
+              <p>
+                It was sent{invoice?.customer ? ` to ${invoice.customer}` : ''}, so deleting it removes it with its payments and puts <b className="text-ink">no</b> stock
+                back.
+              </p>
+              {lines.length > 0 && (
+                <div className="space-y-2 rounded-lg2 border border-line bg-green-soft p-3">
+                  <div className="text-[13px] font-extrabold text-ink">Goods came back? Return them instead</div>
+                  <ul className="max-h-[min(30vh,180px)] divide-y divide-line overflow-y-auto rounded-sm2 border border-line bg-surface">
+                    {lines.map((l) => (
+                      <li key={l.productId} className="flex items-center justify-between gap-3 px-2.5 py-1.5 text-[12.5px]">
+                        <span className="min-w-0 truncate">{l.name}</span>
+                        <b className="flex-shrink-0 font-mono text-green">+{l.qty}</b>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-[12px] text-ink-soft">
+                    A credit note puts all or part of it back in stock and credits the amount. The invoice stays on record for GST.
+                  </p>
+                  <Button
+                    type="button"
+                    className="w-full bg-green text-white hover:opacity-90"
+                    onClick={() => {
+                      onOpenChange(false);
+                      router.push(`/credit-notes/new?invoice=${invoice!.id}`);
+                    }}
+                  >
+                    <RotateCcw size={13} /> Return goods with a credit note
+                  </Button>
+                </div>
+              )}
+            </>
           ) : held.isLoading ? (
             <div className="space-y-2">
               <Skeleton className="h-3.5 w-3/4" />
@@ -120,8 +151,12 @@ export function DeleteInvoiceDialog({
                 {del.isPending ? 'Please wait…' : 'Restock & delete'}
               </Button>
             </>
+          ) : !isDraft && lines.length > 0 ? (
+            <Button type="button" variant="outline" className="border-red-soft text-red hover:bg-red-soft hover:text-red" onClick={() => remove(false)} disabled={del.isPending}>
+              {del.isPending ? 'Please wait…' : 'Delete anyway — stock stays out'}
+            </Button>
           ) : (
-            <Button type="button" variant="destructive" onClick={() => remove(true)} disabled={del.isPending || (isDraft && held.isLoading)}>
+            <Button type="button" variant="destructive" onClick={() => remove(true)} disabled={del.isPending || held.isLoading}>
               {del.isPending ? 'Please wait…' : 'Delete invoice'}
             </Button>
           )}

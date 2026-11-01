@@ -8,6 +8,7 @@ import {
   listInvoicesPage,
   markReminded,
   recordPayment,
+  sendDraft,
   type InvoiceListFilters,
 } from '@/actions/invoices';
 import { unwrap } from '@/lib/action-result';
@@ -48,6 +49,15 @@ export function useDeleteInvoice() {
   return useMutation({
     // `restock` only matters for a draft — see deleteInvoice.
     mutationFn: async ({ invoiceId, restock }: { invoiceId: string; restock?: boolean }) => unwrap(await deleteInvoice(invoiceId, { restock })),
+    onSuccess: () => invalidateBusinessData(queryClient),
+  });
+}
+
+/** Marks a draft sent in one tap (the Dashboard's drafts card). */
+export function useSendDraft() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (invoiceId: string) => unwrap(await sendDraft(invoiceId)),
     onSuccess: () => invalidateBusinessData(queryClient),
   });
 }

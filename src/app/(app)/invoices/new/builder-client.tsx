@@ -53,11 +53,15 @@ import { listCustomersForBilling, getCustomerBalance } from '@/actions/billing';
 import { updateCompanyGstDefaults } from '@/actions/company';
 import { frequentProductIdsForCustomer } from '@/actions/products';
 import { getCustomerPriceMap, listActiveSchemes } from '@/actions/pricing';
-import { getOldestBatches } from '@/actions/inventory';
+import { getCostsForBilling, getOldestBatches } from '@/actions/inventory';
 import { useCreateCustomer } from '@/hooks/use-customers';
 import { useCreateProduct } from '@/hooks/use-products';
 import { useDeletePayment, useDuplicateInvoice, useWhatsAppShare } from '@/hooks/use-invoices';
 import { DeleteInvoiceDialog } from '@/components/invoices/delete-invoice-dialog';
+import { BelowCostPanel, LastOrderCard, ShortagePanel, type BelowCostLine, type ShortageFix } from '@/components/invoices/builder-assist';
+import { StockInSheet } from '@/components/inventory/stock-in-sheet';
+import { useStockProducts } from '@/hooks/use-inventory';
+import type { LastOrder } from '@/actions/invoices';
 import { invalidateBusinessData } from '@/hooks/use-invalidate';
 import { computeTotals, fmtInr, formatUnit, type LineInput } from '@/lib/gst';
 import { upiQrDataUrl } from '@/lib/qr';
@@ -523,16 +527,61 @@ export function BuilderClient({
     return round6(Number(p.stockQty ?? 0) + (alreadyTaken.get(p.id) ?? 0) - (needed.get(p.id) ?? 0));
   }
   const shortages = useMemo(() => {
-    const out: { name: string; have: string; need: string }[] = [];
+    const out: ShortageFix[] = [];
     for (const [id, need] of needed) {
       const p = productById.get(id);
       if (!p?.trackStock) continue;
       const have = Number(p.stockQty ?? 0) + (alreadyTaken.get(id) ?? 0);
-      if (need > have + 1e-6) out.push({ name: p.name, have: formatStock(have, p), need: formatStock(need, p) });
+      if (need <= have + 1e-6) continue;
+      // A one-tap fix only when the product is on a single line — with two
+      // (Box and Piece, say) there's no one right way to split what's left.
+      const onLines = lines.filter((l) => l.productId === id);
+      const only = onLines.length === 1 ? onLines[0] : null;
+      const fitQty = only ? Math.floor(have / unitFactor(p, only.unit) + 1e-6) : 0;
+      out.push({
+        productId: id,
+        name: p.name,
+        have: formatStock(have, p),
+        need: formatStock(need, p),
+        fit: only && fitQty >= 1 ? { lineId: only.lineId, qty: fitQty, unit: only.unit } : null,
+        removeLineId: only && fitQty < 1 ? only.lineId : null,
+      });
     }
     return out;
-  }, [needed, alreadyTaken, productById]);
+  }, [needed, alreadyTaken, productById, lines]);
   const blocked = shortages.length > 0;
+
+  // Add stock straight from a shortage, without leaving the invoice. The
+  // page's products are server data, so closing the sheet refreshes them.
+  const [stockInFor, setStockInFor] = useState<string | null>(null);
+  const { data: stockProducts = [] } = useStockProducts(!!stockInFor);
+
+  // ---- Below cost (owner only) -------------------------------------------
+  const costIds = useMemo(() => [...new Set(lines.filter((l) => l.productId && !l.free && l.rate > 0).map((l) => l.productId!))].sort(), [lines]);
+  const costsQuery = useQuery({
+    queryKey: ['pricing', 'costs', costIds],
+    queryFn: () => getCostsForBilling(costIds),
+    enabled: isOwner && costIds.length > 0,
+    staleTime: 5 * 60_000,
+    placeholderData: (prev) => prev,
+  });
+  const belowCost = useMemo(() => {
+    const costs = costsQuery.data ?? {};
+    const out: BelowCostLine[] = [];
+    for (const l of lines) {
+      if (!l.productId || l.free || !(l.rate > 0)) continue;
+      const p = productById.get(l.productId);
+      const cost = costs[l.productId];
+      if (!p || cost == null) continue;
+      const unitCost = cost * unitFactor(p, l.unit);
+      const net = l.rate * (1 - (l.discount || 0) / 100);
+      if (net + 0.005 < unitCost) out.push({ lineId: l.lineId, name: l.name, unit: l.unit, net, cost: unitCost });
+    }
+    return out;
+  }, [lines, costsQuery.data, productById]);
+
+  // ---- Same as last time -------------------------------------------------
+  const [lastOrderDismissedFor, setLastOrderDismissedFor] = useState<string | null>(null);
 
   // ---- Offers -------------------------------------------------------------
   const offers = useMemo(() => {
@@ -612,6 +661,42 @@ export function BuilderClient({
         },
       ];
     });
+  }
+  /** Bills a customer's previous order again — same products, units,
+   * quantities and line discounts, at today's (or their special) prices.
+   * Products since removed from the catalog are skipped and counted. */
+  function repeatOrder(order: LastOrder) {
+    const added: Line[] = [];
+    let skipped = 0;
+    for (const it of order.items) {
+      const p = productById.get(it.productId);
+      const tier = p ? tiersFor(p).find((t) => sameUnit(t.unit, it.unit)) : undefined;
+      if (!p || !tier) {
+        skipped++;
+        continue;
+      }
+      const isPrimary = sameUnit(tier.unit, p.unit);
+      added.push({
+        lineId: crypto.randomUUID(),
+        productId: p.id,
+        name: p.name,
+        unit: tier.unit,
+        qty: it.qty,
+        rate: specialPrices.get(`${p.id}|${tier.unit.trim().toLowerCase()}`) ?? Number(tier.price),
+        discount: it.discount,
+        packQty: isPrimary ? p.packQty : null,
+        hsn: p.hsn || company.defaultHsn,
+        batch: batchesQuery.data?.[p.id]?.batchNo ?? null,
+        altUnit: isPrimary ? p.altUnit : null,
+        altQtyPerUnit: isPrimary && p.altQtyPerUnit ? Number(p.altQtyPerUnit) : null,
+      });
+    }
+    if (!added.length) {
+      toast.error('None of those products are in the catalog any more.');
+      return;
+    }
+    setLines((prev) => [...prev, ...added]);
+    toast.success(`Added ${added.length} item${added.length === 1 ? '' : 's'} from ${order.number}${skipped ? ` — ${skipped} no longer in the catalog` : ''}`);
   }
   function decrementProductTier(productId: string, unit: string) {
     setLines((prev) => {
@@ -982,6 +1067,15 @@ export function BuilderClient({
   function dialogs() {
     return (
       <>
+        <StockInSheet
+          open={!!stockInFor}
+          onOpenChange={(open) => {
+            if (open) return;
+            setStockInFor(null);
+            router.refresh();
+          }}
+          product={stockProducts.find((p) => p.id === stockInFor) ?? null}
+        />
         <ConfirmDialog
           open={forceSaveMode !== null}
           onOpenChange={(open) => !open && setForceSaveMode(null)}
@@ -1006,10 +1100,11 @@ export function BuilderClient({
               invoiceId={savedId}
               invoiceNumber={editInvoice.number}
               balanceDue={balanceDue}
+              customer={customer ? { name: customerDisplayName(customer), phone: customer.phone ?? null } : null}
               onRecorded={() => router.refresh()}
             />
             <DeleteInvoiceDialog
-              invoice={{ id: savedId, number: editInvoice.number, status, irn: editInvoice.irn }}
+              invoice={{ id: savedId, number: editInvoice.number, status, irn: editInvoice.irn, customer: customer ? customerDisplayName(customer) : null }}
               open={deleteOpen}
               onOpenChange={setDeleteOpen}
               onDeleted={() => router.push('/invoices')}
@@ -1357,22 +1452,28 @@ export function BuilderClient({
               />
             )}
 
-            {blocked && (
-              <div className="flex items-start gap-2 rounded-lg2 bg-red-soft px-3 py-2.5 text-[11.5px] text-ink-body">
-                <AlertTriangle size={13} className="mt-0.5 flex-shrink-0 text-red" />
-                <div>
-                  <b className="text-ink">Not enough stock for {shortages.length === 1 ? '1 item' : `${shortages.length} items`}.</b>{' '}
-                  {shortages.map((s) => `${s.name}: need ${s.need}, have ${s.have}`).join('; ')}. Reduce the quantity or add stock in Inventory.
-                  {isOwner ? (
-                    <Button type="button" variant="outline" size="sm" className="mt-2 h-7 bg-surface px-2.5 text-[11.5px]" onClick={() => setForceSaveMode(primarySave.mode)} disabled={busy}>
-                      Save anyway
-                    </Button>
-                  ) : (
-                    <span> If the stock count is wrong, ask the owner to save it.</span>
-                  )}
-                </div>
-              </div>
+            {customer && lines.length === 0 && lastOrderDismissedFor !== customer.id && (
+              <LastOrderCard
+                key={customer.id}
+                customerId={customer.id}
+                excludeInvoiceId={savedId ?? undefined}
+                onRepeat={repeatOrder}
+                onDismiss={() => setLastOrderDismissedFor(customer.id)}
+              />
             )}
+
+            {blocked && (
+              <ShortagePanel
+                shortages={shortages}
+                isOwner={isOwner}
+                busy={busy}
+                onSetQty={(lineId, qty) => updateLine(lineId, { qty })}
+                onRemoveLine={removeLine}
+                onAddStock={setStockInFor}
+                onSaveAnyway={() => setForceSaveMode(primarySave.mode)}
+              />
+            )}
+            {belowCost.length > 0 && <BelowCostPanel lines={belowCost} />}
 
             <DiscountCard
               hasItems={hasItems}

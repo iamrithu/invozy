@@ -22,6 +22,7 @@ import { resolveDateRange, type DateFilterMode } from '@/lib/dates';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useInvoicesPage, useInvoiceStatusCounts, useDuplicateInvoice, useWhatsAppShare } from '@/hooks/use-invoices';
 import { DeleteInvoiceDialog } from '@/components/invoices/delete-invoice-dialog';
+import { RemindersDialog } from '@/components/invoices/reminders-dialog';
 import { useCustomersForFilter } from '@/hooks/use-customers';
 import type { InvoiceSort } from '@/actions/invoices';
 
@@ -60,7 +61,18 @@ function groupKey(inv: Invoice) {
   return inv.isOverdue ? 'Overdue' : inv.status;
 }
 
-export function InvoicesClient({ initialData, initialStatus, initialDate }: { initialData: { items: Invoice[]; total: number }; initialStatus: string; initialDate: string }) {
+export function InvoicesClient({
+  initialData,
+  initialStatus,
+  initialDate,
+  openReminders = false,
+}: {
+  initialData: { items: Invoice[]; total: number };
+  initialStatus: string;
+  initialDate: string;
+  /** `?remind=1` — the Dashboard's overdue banner opens the reminders list. */
+  openReminders?: boolean;
+}) {
   const [filter, setFilter] = useState(initialStatus);
   const [searchInput, setSearchInput] = useState('');
   const search = useDebouncedValue(searchInput, 300);
@@ -70,6 +82,7 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
   const { isOwner } = useCurrentUser();
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [paymentTarget, setPaymentTarget] = useState<Invoice | null>(null);
+  const [remindersOpen, setRemindersOpen] = useState(openReminders);
   const duplicateInvoice = useDuplicateInvoice();
   const whatsApp = useWhatsAppShare();
   const { data: customerOptions } = useCustomersForFilter();
@@ -162,6 +175,11 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
           <p className="mt-1 text-[12px] text-ink-faint">Click an invoice to open it. Paid invoices open as a preview first.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {(statusCounts?.Overdue ?? 0) > 0 && (
+            <Button variant="outline" onClick={() => setRemindersOpen(true)}>
+              <MessageCircle size={13} /> Payment reminders
+            </Button>
+          )}
           <Button asChild variant="outline">
             <Link href="/credit-notes">
               <FileMinus size={13} /> Credit notes
@@ -399,11 +417,14 @@ export function InvoicesClient({ initialData, initialStatus, initialDate }: { in
           invoiceId={paymentTarget.id}
           invoiceNumber={paymentTarget.number}
           balanceDue={paymentTarget.balanceDue}
+          customer={{ name: customerDisplayName(paymentTarget.customer), phone: paymentTarget.customer.phone ?? null }}
         />
       )}
 
+      <RemindersDialog open={remindersOpen} onOpenChange={setRemindersOpen} />
+
       <DeleteInvoiceDialog
-        invoice={deleteTarget}
+        invoice={deleteTarget && { ...deleteTarget, customer: customerDisplayName(deleteTarget.customer) }}
         open={deleteTargetId !== null && deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTargetId(null)}
       />

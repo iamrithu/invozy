@@ -54,6 +54,7 @@ const fieldClass =
  * in the same transaction as the bill. */
 export function PurchaseForm({
   purchase,
+  prefill,
   products,
   suppliers: initialSuppliers,
   lastRates,
@@ -61,6 +62,8 @@ export function PurchaseForm({
   directUploads,
 }: {
   purchase: PurchaseDetail | null;
+  /** A new bill's starting supplier and lines (from the reorder card). */
+  prefill?: { supplierId: string | null; lines: { productId: string; qty: number }[] };
   products: StockProduct[];
   suppliers: SupplierOption[];
   lastRates: LastRates;
@@ -73,12 +76,31 @@ export function PurchaseForm({
   const save = useSavePurchase();
   const del = useDeletePurchase();
   const [suppliers, setSuppliers] = useState(initialSuppliers);
-  const [supplierId, setSupplierId] = useState(purchase?.supplierId ?? '');
+  const [supplierId, setSupplierId] = useState(purchase?.supplierId ?? prefill?.supplierId ?? '');
   const [billNo, setBillNo] = useState(purchase?.billNo ?? '');
   const [date, setDate] = useState(purchase?.date ?? todayIst());
   const [notes, setNotes] = useState(purchase?.notes ?? '');
   const [lines, setLines] = useState<Line[]>(() =>
-    (purchase?.items ?? []).map((it) => ({
+    !purchase && prefill?.lines.length
+      ? prefill.lines.flatMap((l) => {
+          const p = products.find((x) => x.id === l.productId);
+          if (!p) return [];
+          const last = lastRates[p.id]?.[p.unit.trim().toLowerCase()];
+          return [
+            {
+              key: nextKey(),
+              productId: p.id,
+              name: p.name,
+              unit: p.unit,
+              qty: String(l.qty),
+              rate: last ? String(last.rate) : '',
+              gstRate: String(last?.gstRate ?? company.defaultGstRate),
+              batchNo: '',
+              expiryDate: '',
+            },
+          ];
+        })
+      : (purchase?.items ?? []).map((it) => ({
       key: nextKey(),
       productId: it.productId,
       name: it.name,

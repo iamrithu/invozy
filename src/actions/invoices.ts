@@ -9,7 +9,7 @@ import { getCompany } from '@/lib/get-company';
 import { requireOwner, requireUser } from '@/lib/session';
 import { computeTotals, formatInvoiceNumber, isOverCreditLimit, deriveStatus, DEFAULT_HSN, fmtInr } from '@/lib/gst';
 import { totalsColumns, customerOutstanding } from '@/lib/invoice-totals';
-import { istDayRangeUtc } from '@/lib/dates';
+import { istDayRangeUtc, todayIst } from '@/lib/dates';
 import { toActionError } from '@/lib/action-result';
 import { logActivity } from '@/lib/activity';
 import { invoiceHeld, lineStockQuantities, postStockChanges, sumByProduct } from '@/lib/stock';
@@ -654,10 +654,10 @@ export async function deletePayment(paymentId: string): Promise<{ error?: string
 
 export type HeldStockLine = { productId: string; name: string; qty: string; inStock: string };
 
-/** What a draft is holding out of stock, per tracked product — the delete
- * dialog lists it so the owner can choose to put it back or not. Empty for
- * a sent or paid invoice (deleting those never restocks) and for a draft
- * that holds nothing. */
+/** What an invoice is holding out of stock, per tracked product. The
+ * delete dialog lists it: for a draft, so the owner can choose to put it
+ * back or not; for a sent or paid one (deleting never restocks those), as
+ * what a credit note could return. Empty for a draft that holds nothing. */
 export async function getHeldStock(invoiceId: string): Promise<{ error?: string; lines?: HeldStockLine[] }> {
   try {
     await requireUser();
@@ -667,7 +667,6 @@ export async function getHeldStock(invoiceId: string): Promise<{ error?: string;
         select: { status: true, stockTaken: true, items: { select: { productId: true, qty: true, unit: true, stockQty: true } } },
       });
       if (!inv) return { error: 'Invoice not found' };
-      if (inv.status !== 'DRAFT') return { lines: [] };
       const held = invoiceHeld(inv.stockTaken, await withStockQty(tx, inv.items));
       if (!held.size) return { lines: [] };
       const products = await tx.product.findMany({
@@ -826,6 +825,103 @@ export async function duplicateInvoice(id: string): Promise<{ error?: string; in
   } catch (e) {
     return toActionError(e);
   }
+}
+
+/** One-tap "Send" for a draft (the Dashboard's drafts card): marks it
+ * sent, taking its stock if it was saved before drafts took stock. Same
+ * stock rules as updateInvoice, without re-sending the whole invoice. */
+export async function sendDraft(invoiceId: string): Promise<{ error?: string; number?: string }> {
+  try {
+    const user = await requireUser();
+    const inv = await prisma.$transaction(async (tx) => {
+      const invoice = await tx.invoice.findUnique({
+        where: { id: invoiceId },
+        select: { number: true, status: true, total: true, amountPaid: true, stockTaken: true, items: { select: { productId: true, qty: true, unit: true, stockQty: true } } },
+      });
+      if (!invoice) throw new Error('Invoice not found');
+      if (invoice.status !== 'DRAFT') throw new Error(`${invoice.number} isn't a draft any more.`);
+      const lines = await withStockQty(tx, invoice.items);
+      await postStockChanges(tx, {
+        direction: 'out',
+        before: invoiceHeld(invoice.stockTaken, lines),
+        after: sumByProduct(lines),
+        increaseType: 'SALE',
+        decreaseType: 'SALE_RETURN',
+        meta: { invoiceId, invoiceNumber: invoice.number, userId: user.id, note: 'Invoice sent' },
+      });
+      await tx.invoice.update({
+        where: { id: invoiceId },
+        data: { status: deriveStatus(Number(invoice.total), Number(invoice.amountPaid), true), stockTaken: true },
+      });
+      return invoice;
+    }, TX_OPTIONS);
+    await logActivity({ userId: user.id, action: 'invoice.update', entityType: 'invoice', entityId: invoiceId, summary: `Sent ${inv.number}` });
+    schedulePdfBuild(invoiceId);
+    revalidatePath('/invoices');
+    revalidatePath('/dashboard');
+    return { number: inv.number };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+export type LastOrder = {
+  number: string;
+  date: string;
+  total: number;
+  /** Average days between this customer's recent invoices, or null with
+   * fewer than three to go on. */
+  everyDays: number | null;
+  items: { productId: string; name: string; unit: string; qty: number; discount: number }[];
+};
+
+/** A customer's most recent invoice (other than the one being edited), for
+ * the builder's "Same as last time?" — catalog lines only, since an ad-hoc
+ * line has no product to re-add. */
+export async function getLastOrder(customerId: string, excludeInvoiceId?: string): Promise<LastOrder | null> {
+  await requireUser();
+  const recent = await prisma.invoice.findMany({
+    where: { customerId, ...(excludeInvoiceId ? { id: { not: excludeInvoiceId } } : {}) },
+    orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+    take: 5,
+    select: { number: true, date: true, total: true, items: { where: { productId: { not: null } }, select: { productId: true, name: true, unit: true, qty: true, rate: true, discount: true } } },
+  });
+  const last = recent.find((r) => r.items.length);
+  if (!last) return null;
+  const gaps = recent.slice(0, -1).map((r, i) => (r.date.getTime() - recent[i + 1].date.getTime()) / 86_400_000);
+  return {
+    number: last.number,
+    date: last.date.toISOString().slice(0, 10),
+    total: Number(last.total),
+    everyDays: gaps.length >= 2 ? Math.max(1, Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length)) : null,
+    items: last.items
+      // Free lines from an offer come back on their own when the offer applies.
+      .filter((it) => Number(it.rate) > 0)
+      .map((it) => ({ productId: it.productId!, name: it.name, unit: it.unit, qty: Number(it.qty), discount: Number(it.discount) })),
+  };
+}
+
+export type OverdueReminder = { id: string; number: string; customer: string; phone: string | null; due: string; balance: number; lastRemindedAt: string | null };
+
+/** Unpaid invoices past their due date, oldest first — the Invoices
+ * screen's "Send reminders" list. */
+export async function listOverdueForReminders(): Promise<OverdueReminder[]> {
+  await requireUser();
+  const rows = await prisma.invoice.findMany({
+    where: { status: { in: ['SENT', 'PARTIALLY_PAID'] }, due: { lt: istDayRangeUtc(todayIst()).gte } },
+    orderBy: [{ due: 'asc' }, { number: 'asc' }],
+    take: 50,
+    select: { id: true, number: true, due: true, total: true, amountPaid: true, lastRemindedAt: true, customer: { select: { name: true, shopName: true, phone: true } } },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    number: r.number,
+    customer: r.customer.shopName || r.customer.name,
+    phone: r.customer.phone,
+    due: r.due.toISOString().slice(0, 10),
+    balance: Math.max(0, Number(r.total) - Number(r.amountPaid)),
+    lastRemindedAt: r.lastRemindedAt ? r.lastRemindedAt.toISOString() : null,
+  }));
 }
 
 async function requestOrigin() {

@@ -21,7 +21,8 @@ import { cn } from '@/lib/utils';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useProductCategories } from '@/hooks/use-products';
 import { useInventoryPage } from '@/hooks/use-inventory';
-import type { DraftsHoldingStock, InventoryPage, InventoryRow, InventoryStatusFilter } from '@/actions/inventory';
+import type { DraftsHoldingStock, InventoryPage, InventoryRow, InventoryStatusFilter, ReorderSuggestions } from '@/actions/inventory';
+import { ReorderCard } from '@/components/inventory/reorder-card';
 
 const PAGE_SIZE = 20;
 
@@ -39,10 +40,14 @@ export function InventoryClient({
   initialData,
   initialStatus,
   drafts,
+  reorder,
+  companyName,
 }: {
   initialData: InventoryPage;
   initialStatus: InventoryStatusFilter;
   drafts: DraftsHoldingStock;
+  reorder: ReorderSuggestions;
+  companyName: string;
 }) {
   const [searchInput, setSearchInput] = useState('');
   const search = useDebouncedValue(searchInput, 300);
@@ -94,6 +99,8 @@ export function InventoryClient({
           </Button>
         </div>
       </div>
+
+      {reorder.items.length > 0 && <ReorderCard data={reorder} companyName={companyName} />}
 
       {drafts.count > 0 && (
         <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl2 border border-line bg-gold-soft px-3.5 py-2.5 text-[12px] text-ink-body">

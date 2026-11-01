@@ -134,7 +134,8 @@ async function main() {
   await invoices.deleteInvoice(putBack.invoiceId!, { restock: true });
   check('restock & delete puts it back: 16', (await stock('p3')) === 16, await stock('p3'));
   const paidHeld = await invoices.createInvoice(bill(1, { markPaid: true, paymentMode: 'Cash' }, 'p3'));
-  check('a paid invoice lists nothing to restock', ((await invoices.getHeldStock(paidHeld.invoiceId!)).lines ?? []).length === 0);
+  const paidLines = (await invoices.getHeldStock(paidHeld.invoiceId!)).lines ?? [];
+  check('a paid invoice lists what a credit note could return', paidLines.length === 1 && /^1\b/.test(paidLines[0].qty), paidLines);
   check('an old draft holding nothing lists nothing', ((await invoices.getHeldStock((await legacyDraft('OLD-9', 1)).id)).lines ?? []).length === 0);
 
   // ---- drafts holding stock
@@ -156,6 +157,23 @@ async function main() {
   const returnsOnly = await inventory.getStockLedger('p2', { type: 'return' });
   check('ledger: Returns filter lists only the real return', returnsOnly?.movements.length === 1 && !returnsOnly.movements[0].invoiceNumber, returnsOnly?.movements);
 
+  // ---- one-tap send, last order, reminders
+  const oldDraft = await legacyDraft('OLD-10', 2);
+  const sentOld = await invoices.sendDraft(oldDraft.id);
+  check('sending an old draft takes its stock: 81 → 79', !sentOld.error && (await stock()) === 79, { sentOld, s: await stock() });
+  check('…and it is now sent', (await prisma.invoice.findUniqueOrThrow({ where: { id: oldDraft.id } })).status === 'SENT');
+  const newDraft = await invoices.createInvoice(bill(1));
+  const sentNew = await invoices.sendDraft(newDraft.invoiceId!);
+  check('sending a normal draft moves nothing more: 78', !sentNew.error && (await stock()) === 78, { sentNew, s: await stock() });
+  check('a sent invoice can’t be sent again', !!(await invoices.sendDraft(newDraft.invoiceId!)).error);
+  const last = await invoices.getLastOrder('c1');
+  check('last order is the newest invoice with catalog lines', !!last && last.items.length === 1 && last.items[0].productId === 'p1', last);
+  check('last order skips the invoice being edited', (await invoices.getLastOrder('c1', newDraft.invoiceId!))?.number !== last?.number);
+  await prisma.invoice.update({ where: { id: newDraft.invoiceId! }, data: { due: new Date('2026-01-01') } });
+  const overdue = await invoices.listOverdueForReminders();
+  check('overdue unpaid invoices are listed for reminders', overdue.some((r) => r.id === newDraft.invoiceId && r.balance > 0), overdue);
+  check('reorder suggestions load', Array.isArray((await inventory.getReorderSuggestions()).items));
+
   // ---- purchases with attachments
   const file = (name: string, type: string, body = 'x') => {
     const fd = new FormData();
@@ -176,7 +194,11 @@ async function main() {
   check('path-traversal attachment URL refused', !!sneaky.error, sneaky);
 
   const p1 = await purchases.savePurchase(null, { supplierId: 's1', billNo: 'B-1', date: '2026-11-01', items: [line], attachments: [u1.attachment!, u2.attachment!] });
-  check('bill saved with 2 files, stock added: 81 → 91', !p1.error && (await stock()) === 91, p1);
+  check('bill saved with 2 files, stock added: 78 → 88', !p1.error && (await stock()) === 88, p1);
+  check('owner sees the cost price', (await inventory.getCostsForBilling(['p1'])).p1 === 50);
+  asStaff();
+  check('staff don’t see cost prices', Object.keys(await inventory.getCostsForBilling(['p1'])).length === 0);
+  asOwner();
   const detail = await purchases.getPurchase(p1.purchaseId!);
   check('files come back in order', detail?.attachments.map((x) => x.name).join(',') === 'bill.pdf,photo.jpg', detail?.attachments);
   check('list shows the file count', (await purchases.listPurchasesPage()).items[0]?.attachmentCount === 2);
@@ -194,7 +216,7 @@ async function main() {
   const ownerRemove = await purchases.savePurchase(p1.purchaseId!, { supplierId: 's1', billNo: 'B-1', date: '2026-11-01', items: [line], attachments: [u1.attachment!] });
   check('owner removes a file: deleted from storage', !ownerRemove.error && !onDisk(u2.attachment!.url) && onDisk(u1.attachment!.url), ownerRemove);
   const del = await purchases.deletePurchase(p1.purchaseId!);
-  check('deleting the bill deletes its files and takes the stock back: 81', !del.error && !onDisk(u1.attachment!.url) && (await stock()) === 81, del);
+  check('deleting the bill deletes its files and takes the stock back: 78', !del.error && !onDisk(u1.attachment!.url) && (await stock()) === 78, del);
 
   await prisma.$disconnect();
   fs.rmSync(work, { recursive: true, force: true });

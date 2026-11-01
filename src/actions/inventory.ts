@@ -675,19 +675,83 @@ export async function setLowStockLevel(productId: string, level: number | null):
   }
 }
 
-export type DraftsHoldingStock = { count: number; oldestDate: string | null; numbers: string[] };
+export type DraftHoldingStock = { id: string; number: string; customer: string; date: string; total: number; items: number; ageDays: number };
+export type DraftsHoldingStock = { count: number; oldestDate: string | null; numbers: string[]; drafts: DraftHoldingStock[] };
 
 /** Drafts holding tracked stock. Every saved draft takes its lines out, so
  * one left sitting keeps that stock off the shelf — the Inventory screen
- * lists them so they get sent or deleted. Oldest first. */
+ * and the Dashboard list them so they get sent or deleted. Oldest first. */
 export async function getDraftsHoldingStock(): Promise<DraftsHoldingStock> {
   await requireUser();
   const where: Prisma.InvoiceWhereInput = { status: 'DRAFT', stockTaken: true, items: { some: { product: { is: { trackStock: true } } } } };
   const [count, oldest] = await Promise.all([
     prisma.invoice.count({ where }),
-    prisma.invoice.findMany({ where, orderBy: [{ date: 'asc' }, { createdAt: 'asc' }], take: 3, select: { number: true, date: true } }),
+    prisma.invoice.findMany({
+      where,
+      orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
+      take: 5,
+      select: { id: true, number: true, date: true, total: true, customer: { select: { name: true, shopName: true } }, _count: { select: { items: true } } },
+    }),
   ]);
-  return { count, oldestDate: oldest[0] ? oldest[0].date.toISOString().slice(0, 10) : null, numbers: oldest.map((o) => o.number) };
+  const today = istDayRangeUtc(todayIst()).gte.getTime();
+  const drafts = oldest.map((d) => ({
+    id: d.id,
+    number: d.number,
+    customer: d.customer.shopName || d.customer.name,
+    date: d.date.toISOString().slice(0, 10),
+    total: Number(d.total),
+    items: d._count.items,
+    ageDays: Math.max(0, Math.floor((today - istDayRangeUtc(d.date.toISOString().slice(0, 10)).gte.getTime()) / DAY_MS)),
+  }));
+  return { count, oldestDate: drafts[0]?.date ?? null, numbers: drafts.slice(0, 3).map((d) => d.number), drafts };
+}
+
+export type ReorderSuggestion = { id: string; name: string; unit: string; stockText: string; daysLeft: number; suggested: number };
+
+/** Tracked products due to run out within the reorder lead time, with how
+ * much to order (forecast's two lead times of recent sales, in the main
+ * unit) and the supplier most of them were last bought from — the
+ * Inventory screen's one-tap purchase bill. Most urgent first. */
+export type ReorderSuggestions = { items: ReorderSuggestion[]; supplier: { id: string; name: string; phone: string | null } | null; leadDays: number };
+
+export async function getReorderSuggestions(): Promise<ReorderSuggestions> {
+  await requireUser();
+  const [company, rows] = await Promise.all([getCompany(), prisma.product.findMany({ where: { trackStock: true }, select: productSelect })]);
+  const products = rows.map(toStockProduct);
+  const sales = await averageDailySales(products.map((p) => p.id));
+  const items = products
+    .flatMap((p) => {
+      const f = forecast(p, sales.get(p.id), company.reorderLeadDays);
+      if (f.daysLeft == null || f.daysLeft > company.reorderLeadDays || !f.suggestedReorder) return [];
+      return [{ id: p.id, name: p.name, unit: p.unit, stockText: formatStock(p.stockQty, p), daysLeft: f.daysLeft, suggested: f.suggestedReorder }];
+    })
+    .sort((a, b) => a.daysLeft - b.daysLeft);
+  let supplier: ReorderSuggestions['supplier'] = null;
+  if (items.length) {
+    const last = await prisma.purchaseItem.findMany({
+      where: { productId: { in: items.map((i) => i.id) } },
+      orderBy: { purchase: { date: 'desc' } },
+      distinct: ['productId'],
+      select: { purchase: { select: { supplier: { select: { id: true, name: true, phone: true, active: true } } } } },
+    });
+    const tally = new Map<string, { s: NonNullable<ReorderSuggestions['supplier']>; n: number }>();
+    for (const r of last) {
+      const s = r.purchase.supplier;
+      if (!s.active) continue;
+      tally.set(s.id, { s: { id: s.id, name: s.name, phone: s.phone }, n: (tally.get(s.id)?.n ?? 0) + 1 });
+    }
+    supplier = [...tally.values()].sort((a, b) => b.n - a.n)[0]?.s ?? null;
+  }
+  return { items, supplier, leadDays: company.reorderLeadDays };
+}
+
+/** Average purchase cost per MAIN unit (ex-GST) — the invoice builder warns
+ * the owner when a line sells below it. Staff get nothing: cost prices are
+ * the owner's to see. */
+export async function getCostsForBilling(productIds: string[]): Promise<Record<string, number>> {
+  const user = await requireUser();
+  if (user.role !== 'OWNER' || !productIds.length) return {};
+  return Object.fromEntries(await averageCosts(productIds));
 }
 
 // ---------------------------------------------------------------------------
