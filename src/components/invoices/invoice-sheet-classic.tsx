@@ -1147,6 +1147,7 @@ function CleanHeaderSection(p: SharedProps) {
       due={p.due}
       placeOfSupply={p.customer?.state}
       upiQrDataUrl={p.upiQrDataUrl}
+      gpayNumber={p.gpayNumber}
       irn={p.irn}
       ackNo={p.ackNo}
       ackDate={p.ackDate}
@@ -1155,15 +1156,16 @@ function CleanHeaderSection(p: SharedProps) {
   );
 }
 
-/** Bill to (left) · delivery instructions, transport, e-Way Bill and GPay
- * number (right). The right column only exists when it has something to
- * say, so a plain invoice doesn't carry an empty box. */
+/** Bill to (left) · delivery instructions, transport and e-Way Bill
+ * (right). The right column only exists when it has something to say, so a
+ * plain invoice doesn't carry an empty box. The GPay number prints under
+ * the UPI QR in the letterhead (CleanHeader). */
 function CleanParties(p: SharedProps) {
-  const { customer, editable, deliveryInstructions, eway, gpayNumber } = p;
+  const { customer, editable, deliveryInstructions, eway } = p;
   const showDelivery = editable || !!deliveryInstructions?.trim();
   const showTransport = showTransportBlock(p);
   const showEway = !!eway?.ewbNo;
-  const hasRight = showDelivery || showTransport || showEway || !!gpayNumber;
+  const hasRight = showDelivery || showTransport || showEway;
   const contactLine = customer ? [customer.phone, customer.altPhone].filter(Boolean).join(', ') : '';
 
   return (
@@ -1213,12 +1215,6 @@ function CleanParties(p: SharedProps) {
             <div className="grid gap-px">
               <span className={CLEAN_LABEL}>e-Way Bill</span>
               <span>{[`No. ${eway!.ewbNo}`, eway!.vehicleNo && `Vehicle ${eway!.vehicleNo}`].filter(Boolean).join(' · ')}</span>
-            </div>
-          )}
-          {gpayNumber && (
-            <div className="grid gap-px">
-              <span className={CLEAN_LABEL}>Pay via GPay</span>
-              <span>{gpayNumber}</span>
             </div>
           )}
         </div>

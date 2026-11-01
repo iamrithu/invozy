@@ -94,6 +94,9 @@ export type CleanHeaderProps = {
   meta?: { label: string; value: string }[];
   /** Payment UPI QR, top-right, the same 88px as the logo. */
   upiQrDataUrl?: string | null;
+  /** The company's GPay number — printed right under the UPI QR (or alone
+   * in that slot when there's no QR), so both ways to pay sit together. */
+  gpayNumber?: string | null;
   irn?: string | null;
   ackNo?: string | null;
   ackDate?: string | null;
@@ -116,6 +119,7 @@ export function CleanHeader({
   placeOfSupply,
   meta,
   upiQrDataUrl,
+  gpayNumber,
   irn,
   ackNo,
   ackDate,
@@ -175,11 +179,16 @@ export function CleanHeader({
           </div>
         </div>
 
-        {upiQrDataUrl ? (
+        {upiQrDataUrl || gpayNumber ? (
           <div className="grid justify-items-center gap-[3px]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={upiQrDataUrl} alt="Scan to pay via UPI" className="block h-[88px] w-[88px]" />
-            <span className={`${CLEAN_SOFT} whitespace-nowrap text-[9px] uppercase tracking-[0.06em]`}>Scan to pay · UPI</span>
+            {upiQrDataUrl && (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={upiQrDataUrl} alt="Scan to pay via UPI" className="block h-[88px] w-[88px]" />
+                <span className={`${CLEAN_SOFT} whitespace-nowrap text-[9px] uppercase tracking-[0.06em]`}>Scan to pay · UPI</span>
+              </>
+            )}
+            {gpayNumber && <span className="whitespace-nowrap text-[10.5px]">GPay: {gpayNumber}</span>}
           </div>
         ) : (
           <span aria-hidden="true" className="block h-[88px] w-[88px]" />
