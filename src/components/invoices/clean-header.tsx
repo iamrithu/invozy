@@ -105,7 +105,8 @@ export type CleanHeaderProps = {
 };
 
 /** Title row, centered letterhead (logo · company · UPI QR, logo and QR the
- * same 88px, no frame of their own), the invoice details strip and, once
+ * same 88px, no frame of their own; the company block takes the middle 40%
+ * of the width, its lines centered), the invoice details strip and, once
  * an e-Invoice is filed, its IRN/Ack/QR row. Rendered fresh at the top of
  * every printed page, like CLASSIC's header (see the pagination note in
  * invoice-sheet-classic.tsx). */
@@ -152,15 +153,16 @@ export function CleanHeader({
         {copyLabel && <span className={`${CLEAN_SOFT} absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] tracking-[0.08em]`}>{copyLabel}</span>}
       </div>
 
-      <div className={`grid grid-cols-[88px_minmax(0,1fr)_88px] items-center gap-[18px] border-t ${CLEAN_RULE} px-4 py-3.5`}>
+      {/* Equal side columns keep the 40% company block exactly centered;
+          the logo hugs the left edge, the QR the right. */}
+      <div className={`grid grid-cols-[minmax(0,1fr)_40%_minmax(0,1fr)] items-center gap-[18px] border-t ${CLEAN_RULE} px-4 py-3.5`}>
         {company.logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={company.logoUrl}
             alt=""
-            className="block h-[88px] w-[88px] object-contain"
-            // visibility, not display — the empty 88px column keeps the
-            // company block centered either way.
+            className="block h-[88px] w-[88px] justify-self-start object-contain"
+            // visibility, not display — keeps the row's height either way.
             onError={(e) => {
               e.currentTarget.style.visibility = 'hidden';
             }}
@@ -171,8 +173,7 @@ export function CleanHeader({
 
         <div className="grid min-w-0 gap-0.5 text-center">
           <div className={`${CLEAN_STRONG} mb-[3px] text-[20px] leading-tight tracking-[0.01em]`}>{company.name}</div>
-          {/* Centered as a block, its lines left-aligned. */}
-          <div className="justify-self-center text-left">
+          <div className="break-words">
             {detailLines.map((line, i) => (
               <div key={i}>{line}</div>
             ))}
@@ -180,7 +181,7 @@ export function CleanHeader({
         </div>
 
         {upiQrDataUrl || gpayNumber ? (
-          <div className="grid justify-items-center gap-[3px]">
+          <div className="grid justify-items-center gap-[3px] justify-self-end">
             {upiQrDataUrl && (
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
