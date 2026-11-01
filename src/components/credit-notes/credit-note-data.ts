@@ -18,7 +18,10 @@ export type CreditNoteDoc = {
    * but its number stays printable. */
   invoice: { id: string | null; number: string | null; date: string | null };
   customer: BuyerInfo & { id: string };
-  items: { name: string; unit: string; hsn: string | null; qty: number; rate: number; discount: number }[];
+  items: { name: string; unit: string; hsn: string | null; qty: number; rate: number; discount: number; creditPct: number; restock: boolean }[];
+  /** Taken off before GST, with its reason. */
+  deduction: number;
+  deductionReason: string | null;
   cgstRate: number;
   sgstRate: number;
   igstRate: number;
@@ -30,8 +33,18 @@ export type CreditNoteDoc = {
   total: number;
   /** How much of the total was set off against the invoice's balance. */
   applied: number;
-  /** The rest — owed back to the customer. */
+  /** What was left over when it was issued — the customer's credit. */
   refundDue: number;
+  /** That credit since used to pay their other invoices… */
+  adjusted: number;
+  /** …or paid back to them. */
+  refunded: number;
+  /** Still owed to the customer: total − set off − adjusted − refunded. */
+  open: number;
+  /** Every "Credit note" payment it made — `own` is the set-off against
+   * its own invoice, the rest are adjustments on other invoices. */
+  adjustments: { paymentId: string; invoiceId: string; invoiceNumber: string; amount: number; date: string; own: boolean }[];
+  refunds: { id: string; amount: number; date: string; mode: string | null; reference: string | null }[];
 };
 
 export async function loadCreditNoteDocument(id: string): Promise<CreditNoteDoc | null> {
@@ -42,10 +55,22 @@ export async function loadCreditNoteDocument(id: string): Promise<CreditNoteDoc 
       items: { orderBy: { id: 'asc' } },
       customer: { select: { id: true, ...BUYER_SELECT } },
       invoice: { select: { id: true, number: true, date: true } },
-      payment: { select: { amount: true } },
+      payments: { select: { id: true, amount: true, date: true, invoiceId: true, invoice: { select: { number: true } } }, orderBy: [{ date: 'asc' }, { createdAt: 'asc' }] },
+      refunds: { select: { id: true, amount: true, date: true, mode: true, reference: true }, orderBy: [{ date: 'asc' }, { createdAt: 'asc' }] },
     },
   });
   if (!cn) return null;
+  const adjustments = cn.payments.map((p) => ({
+    paymentId: p.id,
+    invoiceId: p.invoiceId,
+    invoiceNumber: p.invoice.number,
+    amount: Number(p.amount),
+    date: istDateString(p.date),
+    own: p.invoiceId === cn.invoiceId,
+  }));
+  const applied = adjustments.filter((a) => a.own).reduce((s, a) => s + a.amount, 0);
+  const adjusted = adjustments.filter((a) => !a.own).reduce((s, a) => s + a.amount, 0);
+  const refunded = cn.refunds.reduce((s, r) => s + Number(r.amount), 0);
   const { id: customerId, ...buyer } = cn.customer;
   return {
     id: cn.id,
@@ -66,7 +91,11 @@ export async function loadCreditNoteDocument(id: string): Promise<CreditNoteDoc 
       qty: Number(it.qty),
       rate: Number(it.rate),
       discount: Number(it.discount),
+      creditPct: Number(it.creditPct),
+      restock: it.restock,
     })),
+    deduction: Number(cn.deduction),
+    deductionReason: cn.deductionReason,
     cgstRate: Number(cn.cgstRate),
     sgstRate: Number(cn.sgstRate),
     igstRate: Number(cn.igstRate),
@@ -76,7 +105,12 @@ export async function loadCreditNoteDocument(id: string): Promise<CreditNoteDoc 
     sgst: Number(cn.sgst),
     igst: Number(cn.igst),
     total: Number(cn.total),
-    applied: Number(cn.payment?.amount ?? 0),
+    applied,
     refundDue: Number(cn.refundDue),
+    adjusted,
+    refunded,
+    open: Math.max(0, Math.round((Number(cn.total) - applied - adjusted - refunded) * 100) / 100),
+    adjustments,
+    refunds: cn.refunds.map((r) => ({ id: r.id, amount: Number(r.amount), date: istDateString(r.date), mode: r.mode, reference: r.reference })),
   };
 }

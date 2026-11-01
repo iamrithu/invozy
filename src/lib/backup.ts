@@ -91,6 +91,7 @@ export async function buildBackup(): Promise<{ gz: Buffer; counts: Record<string
   tables.PurchaseAttachment = await readAll((c) => prisma.purchaseAttachment.findMany(after(c)));
   tables.CreditNote = await readAll((c) => prisma.creditNote.findMany(after(c)));
   tables.CreditNoteItem = await readAll((c) => prisma.creditNoteItem.findMany(after(c)));
+  tables.Refund = await readAll((c) => prisma.refund.findMany(after(c)));
   tables.StockMovement = await readAll((c) => prisma.stockMovement.findMany(after(c)));
   tables.ActivityLog = await readAll((c) => prisma.activityLog.findMany(after(c)));
 

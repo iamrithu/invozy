@@ -634,7 +634,7 @@ export async function deletePayment(paymentId: string): Promise<{ error?: string
     const user = await requireOwner();
     const payment = await prisma.payment.findUnique({ where: { id: paymentId }, include: { invoice: { select: { id: true, number: true, total: true, status: true } } } });
     if (!payment) return { error: 'Payment not found' };
-    if (payment.creditNoteId) return { error: 'This was applied by a credit note. Delete the credit note instead.' };
+    if (payment.creditNoteId) return { error: 'This was paid from a credit note. Remove it on the credit note (or delete the credit note, for its own set-off).' };
     await prisma.$transaction(async (tx) => {
       await tx.payment.delete({ where: { id: paymentId } });
       const agg = await tx.payment.aggregate({ where: { invoiceId: payment.invoiceId }, _sum: { amount: true } });

@@ -132,7 +132,7 @@ export function CreditNotesClient({ initialData, initialDate }: { initialData: {
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-right font-mono font-bold text-ink-soft">
                     {fmtInr(cn.total)}
-                    {cn.refundDue > 0.004 && <div className="text-[10.5px] font-semibold text-gold">Refund due {fmtInr(cn.refundDue)}</div>}
+                    {cn.open > 0.004 && <div className="text-[10.5px] font-semibold text-gold">{fmtInr(cn.open)} still owed</div>}
                   </TableCell>
                   <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-0.5">

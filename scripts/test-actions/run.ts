@@ -42,6 +42,8 @@ async function main() {
   const invoices = await import('@/actions/invoices');
   const purchases = await import('@/actions/purchases');
   const inventory = await import('@/actions/inventory');
+  const creditNotes = await import('@/actions/credit-notes');
+  const statements = await import('@/actions/statements');
   const g = globalThis as { __TEST_USER?: { id: string; role: 'OWNER' | 'STAFF' } };
 
   const stock = async (id = 'p1') => Number((await prisma.product.findUniqueOrThrow({ where: { id } })).stockQty);
@@ -57,6 +59,7 @@ async function main() {
   await prisma.product.create({ data: { id: 'p1', name: 'Cassata', category: 'Ice', unit: 'Box', price: 100, trackStock: true, stockQty: 100 } });
   await prisma.product.create({ data: { id: 'p2', name: 'Kulfi', category: 'Ice', unit: 'Box', price: 50, trackStock: true, stockQty: 50 } });
   await prisma.product.create({ data: { id: 'p3', name: 'Cone', category: 'Ice', unit: 'Box', price: 80, trackStock: true, stockQty: 20 } });
+  await prisma.product.create({ data: { id: 'p4', name: 'Cassata', category: 'Ice', unit: 'Box', price: 500, trackStock: true, stockQty: 20 } });
   await prisma.supplier.create({ data: { id: 's1', name: 'Supplier', state: 'Tamil Nadu' } });
 
   const bill = (qty: number, extra: Record<string, unknown> = {}, productId = 'p1') => ({
@@ -173,6 +176,76 @@ async function main() {
   const overdue = await invoices.listOverdueForReminders();
   check('overdue unpaid invoices are listed for reminders', overdue.some((r) => r.id === newDraft.invoiceId && r.balance > 0), overdue);
   check('reorder suggestions load', Array.isArray((await inventory.getReorderSuggestions()).items));
+
+  // ---- returns: good and damaged parts, part credit, deduction, refund / adjust
+  const p4 = () => stock('p4');
+  const sale = await invoices.createInvoice({
+    customerId: 'c1', date: '2026-11-01', due: '2026-11-01', markPaid: true, paymentMode: 'Cash',
+    items: [{ productId: 'p4', name: 'Cassata', unit: 'Box', qty: 4, rate: 500, discount: 20 }],
+  });
+  check('paid sale of 4 Box: 20 → 16', !sale.error && (await p4()) === 16, sale);
+  const src = (await creditNotes.getCreditNoteSource(sale.invoiceId!)).source!;
+  const lineId = src.lines[0].lineId;
+  const cn1 = await creditNotes.createCreditNote({
+    invoiceId: sale.invoiceId!, date: '2026-11-01', reason: 'RETURN', note: '1 melted',
+    lines: [
+      { lineId, qty: 1, rate: 500, discount: 20, creditPct: 100, restock: true },
+      { lineId, qty: 1, rate: 500, discount: 20, creditPct: 50, restock: false },
+    ],
+    deduction: 50, deductionReason: 'Handling',
+  });
+  // 400 + 200 = 600 credited, − 50 handling = 550 taxable, + 18% = 649.
+  check('credit note: part credit and deduction before GST = ₹649', !cn1.error && cn1.total === 649, cn1);
+  check('only the good part went back to stock: 16 → 17', (await p4()) === 17, await p4());
+  check('paid invoice: all ₹649 is the customer’s credit', cn1.refundDue === 649 && cn1.applied === 0, cn1);
+  const tooMany = await creditNotes.createCreditNote({ invoiceId: sale.invoiceId!, date: '2026-11-01', reason: 'RETURN', lines: [{ lineId, qty: 3, rate: 500, discount: 20, restock: true }] });
+  check('can’t return more than is still open on the line', !!tooMany.error && /only 2/i.test(tooMany.error), tooMany);
+  const bigDeduction = await creditNotes.createCreditNote({ invoiceId: sale.invoiceId!, date: '2026-11-01', reason: 'RETURN', lines: [{ lineId, qty: 1, rate: 500, discount: 20, restock: true }], deduction: 1000 });
+  check('a deduction bigger than the credit is refused', !!bigDeduction.error && /deduction/i.test(bigDeduction.error), bigDeduction);
+
+  const unpaid = await invoices.createInvoice({
+    customerId: 'c1', date: '2026-11-01', due: '2026-11-30', markSent: true,
+    items: [{ productId: 'p4', name: 'Cassata', unit: 'Box', qty: 2, rate: 500, discount: 0 }],
+  });
+  const targets = await creditNotes.listInvoicesForCredit(cn1.creditNoteId!);
+  check('unpaid invoices are offered for adjusting', targets.some((t) => t.id === unpaid.invoiceId), targets);
+  const adj = await creditNotes.applyCreditToInvoice(cn1.creditNoteId!, unpaid.invoiceId!, 300);
+  const unpaidRow = await prisma.invoice.findUniqueOrThrow({ where: { id: unpaid.invoiceId! } });
+  check('adjusting ₹300 part-pays the other invoice', !adj.error && Number(unpaidRow.amountPaid) === 300 && unpaidRow.status === 'PARTIALLY_PAID', { adj, paid: unpaidRow.amountPaid, status: unpaidRow.status });
+  check('can’t adjust more than is open', !!(await creditNotes.applyCreditToInvoice(cn1.creditNoteId!, unpaid.invoiceId!, 1000)).error);
+  const refund = await creditNotes.recordRefund(cn1.creditNoteId!, { amount: 349, date: '2026-11-02', mode: 'Cash' });
+  check('refunding the remaining ₹349 works', !refund.error, refund);
+  check('can’t refund past what’s open', !!(await creditNotes.recordRefund(cn1.creditNoteId!, { amount: 1, date: '2026-11-02', mode: 'Cash' })).error);
+
+  // The statement's closing balance = what the invoices still owe − credit still held.
+  const st = (await statements.getCustomerStatement('c1')).statement!;
+  const owed = (await prisma.invoice.findMany({ where: { customerId: 'c1', status: { not: 'DRAFT' } } })).reduce((sum, i) => sum + Number(i.total) - Number(i.amountPaid), 0);
+  const notes = await prisma.creditNote.findMany({ where: { customerId: 'c1' }, include: { payments: true, refunds: true } });
+  const creditHeld = notes.reduce((sum, n) => sum + Number(n.total) - n.payments.reduce((a, x) => a + Number(x.amount), 0) - n.refunds.reduce((a, x) => a + Number(x.amount), 0), 0);
+  check('statement closing = invoices owed − credit held', Math.abs(st.closing - (owed - creditHeld)) < 0.01, { closing: st.closing, owed, creditHeld });
+  check('statement shows the credit note and the refund', st.rows.some((r) => r.kind === 'credit-note' && r.credit === 649) && st.rows.some((r) => r.kind === 'refund' && r.debit === 349), st.rows.map((r) => r.kind));
+
+  const blocked = await creditNotes.deleteCreditNote(cn1.creditNoteId!);
+  check('a credit note with refunds paid can’t be deleted', !!blocked.error && /refund/i.test(blocked.error), blocked);
+  const refundRow = await prisma.refund.findFirstOrThrow({ where: { creditNoteId: cn1.creditNoteId! } });
+  asStaff();
+  check('staff can’t remove a refund', !!(await creditNotes.deleteRefund(refundRow.id)).error);
+  asOwner();
+  check('owner removes the refund', !(await creditNotes.deleteRefund(refundRow.id)).error);
+  const adjPayment = await prisma.payment.findFirstOrThrow({ where: { creditNoteId: cn1.creditNoteId!, invoiceId: unpaid.invoiceId! } });
+  check('owner removes the adjustment', !(await creditNotes.removeCreditAdjustment(adjPayment.id)).error);
+  const unpaidAfter = await prisma.invoice.findUniqueOrThrow({ where: { id: unpaid.invoiceId! } });
+  check('…and the other invoice is unpaid again', Number(unpaidAfter.amountPaid) === 0 && unpaidAfter.status === 'SENT', unpaidAfter.status);
+
+  const cn2 = await creditNotes.createCreditNote({
+    invoiceId: sale.invoiceId!, date: '2026-11-02', reason: 'RETURN',
+    lines: [{ lineId, qty: 1, rate: 500, discount: 20, creditPct: 100, restock: true }],
+    refundNow: { mode: 'UPI', reference: 'UTR123' },
+  });
+  check('refund now pays the whole credit back at once', !cn2.error && cn2.refunded === cn2.total && cn2.total === 472, cn2);
+  const stockBeforeDelete = await p4();
+  const del1 = await creditNotes.deleteCreditNote(cn1.creditNoteId!);
+  check('deleting the credit note takes its restocked part back out', !del1.error && (await p4()) === stockBeforeDelete - 1, { del1, before: stockBeforeDelete, now: await p4() });
 
   // ---- purchases with attachments
   const file = (name: string, type: string, body = 'x') => {

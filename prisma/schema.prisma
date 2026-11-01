@@ -128,6 +128,7 @@ model User {
   active       Boolean              @default(true)
   activities   ActivityLog[]
   movements    StockMovement[]
+  refunds      Refund[]
 }
 
 /// One row per login identifier (email/phone) — tracks recent failures so repeated wrong passwords lock the identifier
@@ -383,7 +384,7 @@ model Invoice {
   // — drafts included — so this is only false on drafts saved before drafts
   // took stock (set by the 20261101000000 migration): those hold nothing,
   // and take their stock the next time they're saved, sent or paid.
-  stockTaken     Boolean        @default(true)
+  stockTaken     Boolean         @default(true)
 
   // e-Invoice (NIC IRP) result — see src/lib/nic/einvoice.ts.
   irn            String?
@@ -472,14 +473,17 @@ model Payment {
   // Sequential receipt number (Company.receiptPrefix/nextReceiptNo) —
   // null for payments recorded before receipts existed.
   receiptNo    String?     @unique
-  // Set when this "payment" is really a credit note applied against the
-  // invoice — deleting the credit note removes it.
-  creditNoteId String?     @unique
+  // Set when this "payment" is really a credit note applied against an
+  // invoice — its own invoice when it's raised, and any other unpaid
+  // invoice of the customer's it's later adjusted against. Deleting the
+  // credit note removes them all.
+  creditNoteId String?
   creditNote   CreditNote? @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
   createdAt    DateTime    @default(now())
 
   @@index([invoiceId])
   @@index([date])
+  @@index([creditNoteId])
 }
 
 /// The inventory ledger — one row per change to a product's stock, always
@@ -603,32 +607,40 @@ model PurchaseItem {
 /// GST credit note against an invoice (goods returned or price corrected).
 /// Its value is applied to the invoice as a Payment row (mode "Credit
 /// note"), capped at the invoice's balance; anything beyond that is
-/// `refundDue`. Restocked lines post SALE_RETURN movements.
+/// `refundDue` — the customer's credit, later paid back (Refund rows) or
+/// adjusted against another of their invoices (more Payment rows). What's
+/// still open = total − its payments − its refunds. Lines marked `restock`
+/// post SALE_RETURN movements.
 model CreditNote {
-  id             String           @id @default(cuid())
-  number         String           @unique
-  date           DateTime
-  invoiceId      String?
-  invoice        Invoice?         @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
-  invoiceNumber  String?
-  customerId     String
-  customer       Customer         @relation(fields: [customerId], references: [id])
-  reason         String?
-  restock        Boolean          @default(true)
-  cgstRate       Decimal          @default(0)
-  sgstRate       Decimal          @default(0)
-  igstRate       Decimal          @default(0)
-  interState     Boolean          @default(false)
-  taxable        Decimal          @default(0)
-  cgst           Decimal          @default(0)
-  sgst           Decimal          @default(0)
-  igst           Decimal          @default(0)
-  total          Decimal          @default(0)
-  refundDue      Decimal          @default(0)
-  items          CreditNoteItem[]
-  payment        Payment?
-  stockMovements StockMovement[]
-  createdAt      DateTime         @default(now())
+  id              String           @id @default(cuid())
+  number          String           @unique
+  date            DateTime
+  invoiceId       String?
+  invoice         Invoice?         @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  invoiceNumber   String?
+  customerId      String
+  customer        Customer         @relation(fields: [customerId], references: [id])
+  reason          String?
+  restock         Boolean          @default(true)
+  cgstRate        Decimal          @default(0)
+  sgstRate        Decimal          @default(0)
+  igstRate        Decimal          @default(0)
+  interState      Boolean          @default(false)
+  taxable         Decimal          @default(0)
+  cgst            Decimal          @default(0)
+  sgst            Decimal          @default(0)
+  igst            Decimal          @default(0)
+  total           Decimal          @default(0)
+  refundDue       Decimal          @default(0)
+  // Taken off the credit before GST — handling charges, or a deduction for
+  // goods that came back used or damaged — with its reason, both printed.
+  deduction       Decimal          @default(0)
+  deductionReason String?
+  items           CreditNoteItem[]
+  payments        Payment[]
+  refunds         Refund[]
+  stockMovements  StockMovement[]
+  createdAt       DateTime         @default(now())
 
   @@index([customerId, date])
   @@index([invoiceId])
@@ -648,9 +660,34 @@ model CreditNoteItem {
   rate         Decimal
   discount     Decimal    @default(0)
   stockQty     Decimal?
+  // Share of the line's value credited — below 100 when the goods came
+  // back used or damaged. 0 records a return that earns no credit.
+  creditPct    Decimal    @default(100)
+  // Whether these goods went back into sellable stock. One invoice line
+  // can be returned as two rows: the good part restocked, the damaged
+  // part not.
+  restock      Boolean    @default(false)
 
   @@index([creditNoteId])
   @@index([productId])
+}
+
+/// Money paid back to a customer out of a credit note's open credit (cash,
+/// UPI, bank…). Can't outlive its credit note — delete the refund first.
+model Refund {
+  id           String     @id @default(cuid())
+  creditNoteId String
+  creditNote   CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Restrict)
+  amount       Decimal
+  date         DateTime
+  mode         String?
+  reference    String?
+  userId       String?
+  user         User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt    DateTime   @default(now())
+
+  @@index([creditNoteId])
+  @@index([date])
 }
 
 /// Who did what — written by src/lib/activity.ts from the server actions.

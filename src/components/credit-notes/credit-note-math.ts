@@ -7,7 +7,9 @@ export function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
-export type CnLine = { qty: number; rate: number; discount: number };
+/** `creditPct` (default 100) is the share of the line's value credited —
+ * lower for goods that came back used or damaged. */
+export type CnLine = { qty: number; rate: number; discount: number; creditPct?: number };
 
 /** The GST a credit note reverses — always the original invoice's own
  * snapshot (never today's company rates), flattened so a disabled tax is
@@ -19,8 +21,12 @@ export type CnTotals = {
   gross: number;
   /** Line-level discounts (each line's disc%). */
   itemDiscount: number;
+  /** What lines credited at less than 100% (used/damaged goods) hold back. */
+  partialCredit: number;
   /** The invoice's bill-level discount, applied proportionally. */
   billDiscount: number;
+  /** The note's own deduction (handling charges, damage), before GST. */
+  deduction: number;
   taxable: number;
   cgst: number;
   sgst: number;
@@ -29,9 +35,19 @@ export type CnTotals = {
   total: number;
 };
 
-/** One line's value after its own discount. */
-export function lineNet(l: CnLine): number {
+function creditShare(l: CnLine): number {
+  const pct = l.creditPct == null ? 100 : Number(l.creditPct);
+  return Number.isFinite(pct) ? Math.min(100, Math.max(0, pct)) / 100 : 1;
+}
+
+/** One line's value after its own discount, before any partial credit. */
+export function lineDiscounted(l: CnLine): number {
   return (Number(l.qty) || 0) * (Number(l.rate) || 0) * (1 - (Number(l.discount) || 0) / 100);
+}
+
+/** What one line credits: its discounted value × its credit %. */
+export function lineNet(l: CnLine): number {
+  return lineDiscounted(l) * creditShare(l);
 }
 
 /** What share of each line's own amount the invoice actually charged GST
@@ -60,11 +76,15 @@ export function creditNoteRates(inv: {
 
 /** Totals for a credit note. Every component is rounded to the paisa so the
  * printed rows add up exactly; the total is rounded to the rupee like an
- * invoice's. */
-export function computeCreditNoteTotals(lines: CnLine[], billFactor: number, rates: CnRates): CnTotals {
+ * invoice's. The deduction comes off before GST (never below zero), so the
+ * tax given back is only on what's actually credited. */
+export function computeCreditNoteTotals(lines: CnLine[], billFactor: number, rates: CnRates, deduction = 0): CnTotals {
   const gross = round2(lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.rate) || 0), 0));
+  const discounted = round2(lines.reduce((s, l) => s + lineDiscounted(l), 0));
   const net = round2(lines.reduce((s, l) => s + lineNet(l), 0));
-  const taxable = round2(net * billFactor);
+  const billed = round2(net * billFactor);
+  const ded = round2(Math.min(Math.max(Number(deduction) || 0, 0), billed));
+  const taxable = round2(billed - ded);
   const cgst = rates.interState ? 0 : round2((taxable * rates.cgstRate) / 100);
   const sgst = rates.interState ? 0 : round2((taxable * rates.sgstRate) / 100);
   const igst = rates.interState ? round2((taxable * rates.igstRate) / 100) : 0;
@@ -72,8 +92,10 @@ export function computeCreditNoteTotals(lines: CnLine[], billFactor: number, rat
   const total = Math.round(raw);
   return {
     gross,
-    itemDiscount: round2(gross - net),
-    billDiscount: round2(net - taxable),
+    itemDiscount: round2(gross - discounted),
+    partialCredit: round2(discounted - net),
+    billDiscount: round2(net - billed),
+    deduction: ded,
     taxable,
     cgst,
     sgst,
@@ -130,7 +152,7 @@ export function creditedPerLine(lines: CreditableLine[], credited: CreditedItem[
  * the "Put items back in stock" default each one starts with. */
 export const CREDIT_REASONS = [
   { id: 'RETURN', label: 'Goods returned', restock: true },
-  { id: 'DAMAGED', label: 'Damaged on delivery', restock: false },
+  { id: 'DAMAGED', label: 'Damaged goods', restock: false },
   { id: 'RATE', label: 'Rate difference or extra discount', restock: false },
   { id: 'OTHER', label: 'Other', restock: false },
 ] as const;
@@ -145,3 +167,6 @@ export function creditReasonText(id: CreditReasonId, note?: string | null): stri
   if (!extra) return label;
   return id === 'OTHER' ? extra : `${label} — ${extra}`;
 }
+
+/** Credit % choices offered per returned line. */
+export const CREDIT_PCTS = [100, 75, 50, 0] as const;

@@ -1,8 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  applyCreditToInvoice,
   createCreditNote,
   deleteCreditNote,
+  deleteRefund,
   listCreditNotesPage,
+  listInvoicesForCredit,
+  recordRefund,
+  removeCreditAdjustment,
   searchInvoicesForCreditNote,
   type CreditNoteInput,
   type CreditNoteListFilters,
@@ -55,6 +60,47 @@ export function useDeleteCreditNote() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => unwrap(await deleteCreditNote(id)),
+    onSuccess: () => invalidateBusinessData(queryClient),
+  });
+}
+
+/** The customer's unpaid invoices a credit note's open credit can pay. */
+export function useInvoicesForCredit(creditNoteId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [...creditNoteKeys.all, 'credit-targets', creditNoteId],
+    queryFn: () => listInvoicesForCredit(creditNoteId),
+    enabled,
+  });
+}
+
+export function useRecordRefund(creditNoteId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { amount: number; date: string; mode: string; reference?: string | null }) => unwrap(await recordRefund(creditNoteId, input)),
+    onSuccess: () => invalidateBusinessData(queryClient),
+  });
+}
+
+export function useDeleteRefund() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (refundId: string) => unwrap(await deleteRefund(refundId)),
+    onSuccess: () => invalidateBusinessData(queryClient),
+  });
+}
+
+export function useApplyCredit(creditNoteId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ invoiceId, amount }: { invoiceId: string; amount: number }) => unwrap(await applyCreditToInvoice(creditNoteId, invoiceId, amount)),
+    onSuccess: () => invalidateBusinessData(queryClient),
+  });
+}
+
+export function useRemoveAdjustment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (paymentId: string) => unwrap(await removeCreditAdjustment(paymentId)),
     onSuccess: () => invalidateBusinessData(queryClient),
   });
 }

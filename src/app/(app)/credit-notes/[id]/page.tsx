@@ -7,14 +7,16 @@ import { loadLetterheadCompany } from '@/components/print/print-data';
 import { loadCreditNoteDocument } from '@/components/credit-notes/credit-note-data';
 import { CreditNoteDocument } from '@/components/credit-notes/credit-note-document';
 import { CreditNoteActions } from '@/components/credit-notes/credit-note-actions';
+import { CreditSettlement } from '@/components/credit-notes/credit-settlement';
 import { ResponsiveSheetScale } from '@/components/invoices/responsive-sheet-scale';
 
 export const dynamic = 'force-dynamic';
 
-/** A saved credit note, read-only: what it did (set off against the
- * invoice, refund due, stock), the note itself exactly as it prints, and
- * Download / Delete. Credit notes aren't edited — delete and raise a new
- * one instead, so the numbered document the customer holds never changes. */
+/** A saved credit note: where its money went (set off against its
+ * invoice, adjusted on others, refunded, still open) with the actions that
+ * settle the rest, the note itself exactly as it prints, and Download /
+ * Delete. Credit notes aren't edited — delete and raise a new one instead,
+ * so the numbered document the customer holds never changes. */
 export default async function CreditNotePage({ params }: { params: Promise<{ id: string }> }) {
   const [{ id }] = await Promise.all([params, requireUser()]);
   const [note, company] = await Promise.all([loadCreditNoteDocument(id), loadLetterheadCompany()]);
@@ -45,35 +47,45 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
         <CreditNoteActions id={note.id} number={note.number} invoiceNumber={note.invoice.number} applied={note.applied} restock={note.restock} />
       </div>
 
-      <div className="mb-4 grid grid-cols-2 gap-2.5 md:grid-cols-4">
+      <div className="mb-4 grid grid-cols-2 gap-2.5 md:grid-cols-5">
         <Stat label="Total credit" value={fmtInr(note.total)} />
-        <Stat label="Set off against invoice" value={fmtInr(note.applied)} />
-        <Stat label="Refund due to customer" value={fmtInr(note.refundDue)} tone={note.refundDue > 0.004 ? 'gold' : undefined} />
-        <Stat label="Stock" value={note.restock ? 'Put back in stock' : 'Not restocked'} text />
+        <Stat label={`Set off on ${note.invoice.number ?? 'invoice'}`} value={fmtInr(note.applied)} />
+        <Stat label="Adjusted on other invoices" value={fmtInr(note.adjusted)} />
+        <Stat label="Refunded" value={fmtInr(note.refunded)} />
+        <Stat label="Open credit" value={fmtInr(note.open)} tone={note.open > 0.004 ? 'gold' : undefined} />
       </div>
-      {note.refundDue > 0.004 && (
-        <p className="mb-4 rounded-lg2 bg-gold-soft px-3 py-2.5 text-[12.5px] text-ink-body">
-          This credit was more than {note.invoice.number ?? 'the invoice'} still owed, so <b className="font-mono text-ink">{fmtInr(note.refundDue)}</b> is to be paid back to the
-          customer.
-        </p>
-      )}
 
-      <div className="rounded-xl2 border border-line bg-surface-alt p-3 shadow-card md:p-5">
-        <ResponsiveSheetScale>
-          <div className="bg-white p-7 shadow-card">
-            <CreditNoteDocument note={note} company={company} />
-          </div>
-        </ResponsiveSheetScale>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+        <div className="order-2 min-w-0 rounded-xl2 border border-line bg-surface-alt p-3 shadow-card md:p-5 lg:order-1">
+          <ResponsiveSheetScale>
+            <div className="bg-white p-7 shadow-card">
+              <CreditNoteDocument note={note} company={company} />
+            </div>
+          </ResponsiveSheetScale>
+        </div>
+        <div className="order-1 min-w-0 lg:order-2">
+          <CreditSettlement
+            note={{
+              id: note.id,
+              number: note.number,
+              customerName: note.customer.name,
+              customerPhone: note.customer.phone,
+              open: note.open,
+              adjustments: note.adjustments,
+              refunds: note.refunds,
+            }}
+          />
+        </div>
       </div>
     </div>
   );
 }
 
-function Stat({ label, value, tone, text }: { label: string; value: string; tone?: 'gold'; text?: boolean }) {
+function Stat({ label, value, tone }: { label: string; value: string; tone?: 'gold' }) {
   return (
-    <div className="rounded-lg2 border border-line bg-surface px-3 py-2.5 shadow-card">
-      <div className="text-[11px] font-bold text-ink-faint">{label}</div>
-      <div className={`mt-0.5 text-[15px] font-bold ${text ? '' : 'font-mono'} ${tone === 'gold' ? 'text-gold' : 'text-ink'}`}>{value}</div>
+    <div className={`rounded-lg2 border px-3 py-2.5 shadow-card ${tone === 'gold' ? 'border-gold bg-gold-soft' : 'border-line bg-surface'}`}>
+      <div className="truncate text-[11px] font-bold text-ink-faint">{label}</div>
+      <div className="mt-0.5 font-mono text-[15px] font-bold text-ink">{value}</div>
     </div>
   );
 }

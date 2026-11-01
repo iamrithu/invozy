@@ -11,6 +11,12 @@ export function statementPeriodLabel(from: string | null, to: string | null): st
   return 'All time';
 }
 
+/** A running balance: what the customer owes, or "716.00 Cr" when they
+ * hold credit with us (a credit note bigger than what they owed). */
+function balanceText(n: number): string {
+  return n < -0.004 ? `${fmtAmount(-n)} Cr` : fmtAmount(n);
+}
+
 /** A customer's statement of account in the Clean style: opening balance,
  * every invoice (debit) and payment / credit note (credit) in date order
  * with a running balance, and the closing balance in figures and words.
@@ -65,7 +71,7 @@ export function StatementDocument({ statement: st, company }: { statement: Custo
             <Td />
             <Td />
             <Td />
-            <Td align="right">{fmtAmount(st.opening)}</Td>
+            <Td align="right">{balanceText(st.opening)}</Td>
           </Tr>
           {st.rows.map((r, i) => (
             <Tr key={i}>
@@ -74,7 +80,7 @@ export function StatementDocument({ statement: st, company }: { statement: Custo
               <Td className="break-words">{r.ref}</Td>
               <Td align="right">{r.debit ? fmtAmount(r.debit) : ''}</Td>
               <Td align="right">{r.credit ? fmtAmount(r.credit) : ''}</Td>
-              <Td align="right">{fmtAmount(r.balance)}</Td>
+              <Td align="right">{balanceText(r.balance)}</Td>
             </Tr>
           ))}
           {st.rows.length === 0 && (
@@ -89,7 +95,7 @@ export function StatementDocument({ statement: st, company }: { statement: Custo
             <Td />
             <Td align="right">{fmtAmount(st.totalDebit)}</Td>
             <Td align="right">{fmtAmount(st.totalCredit)}</Td>
-            <Td align="right">{fmtAmount(st.closing)}</Td>
+            <Td align="right">{balanceText(st.closing)}</Td>
           </TotalTr>
         </tbody>
       </DocTable>
