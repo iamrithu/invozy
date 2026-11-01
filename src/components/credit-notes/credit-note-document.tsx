@@ -56,7 +56,7 @@ function totalRows(note: CreditNoteDoc): TotalRow[] {
  * (src/app/print/credit-notes/[id]) and the on-screen detail page alike. */
 export function CreditNoteDocument({ note, company }: { note: CreditNoteDoc; company: LetterheadCompany }) {
   return (
-    <CleanDoc title="Credit note" copyLabel="Original for recipient">
+    <CleanDoc title="Credit note">
       <Letterhead company={company} />
       <MetaStrip
         items={[

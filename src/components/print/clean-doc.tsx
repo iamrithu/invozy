@@ -89,55 +89,39 @@ export function addressLine(address: string | null | undefined, pincode?: string
   return flat ? `${flat} – ${pin}` : pin;
 }
 
-/** The company address as the letterhead prints it: its own lines as
- * typed (not flattened like addressLine), with the PIN code added to the
- * last one when the address doesn't already include it — the same rule as
- * the Clean invoice's letterhead. */
-export function letterheadAddressLines(address: string | null | undefined, pincode?: string | null): string[] {
-  const lines = (address ?? '')
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const pin = pincode?.trim();
-  if (!pin || lines.join('').replace(/\s/g, '').includes(pin.replace(/\s/g, ''))) return lines;
-  if (!lines.length) return [pin];
-  lines[lines.length - 1] = `${lines[lines.length - 1].replace(/,$/, '')} – ${pin}`;
-  return lines;
-}
-
-/** Logo left (88 × 88, no border), company block centered, an equal 88px
- * slot on the right (`right`, e.g. a QR) so the block stays centered
- * whether or not either slot is filled. */
+/** Logo left (88 × 88, no border), company block in the middle half,
+ * centered, and a slot on the right (`right`, e.g. a QR) — equal side
+ * columns keep the block centered whether or not either slot is filled. */
 export function Letterhead({ company, right }: { company: LetterheadCompany; right?: React.ReactNode }) {
   const phones = [company.phone, company.altPhone].filter(Boolean).join(', ');
-  // Same block as the Clean invoice's letterhead: address, then one detail
-  // per line.
+  // Same block as the Clean invoice's letterhead: the address as one run
+  // balanced over two lines, then one detail per line (no State line — the
+  // GSTIN starts with its code).
+  const address = addressLine(company.address, company.pincode);
   const detailLines = [
-    ...letterheadAddressLines(company.address, company.pincode),
     company.gstin && `GSTIN: ${company.gstin}`,
-    `State: ${company.state} (${gstStateCode(company.state)})`,
     company.fssaiNo && `FSSAI: ${company.fssaiNo}`,
     phones && `Contact: ${phones}`,
     company.email && `Email: ${company.email}`,
   ].filter((l): l is string => !!l);
   return (
-    <div className={cn('grid grid-cols-[88px_minmax(0,1fr)_88px] items-center gap-[18px] border-b px-4 py-3.5', RULE)}>
-      <div className="h-[88px] w-[88px]">
+    <div className={cn('grid grid-cols-[minmax(0,1fr)_50%_minmax(0,1fr)] items-center gap-[18px] border-b px-4 py-3.5', RULE)}>
+      <div className="h-[88px] w-[88px] justify-self-start">
         {company.logoUrl && (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={company.logoUrl} alt="" className="block h-[88px] w-[88px] object-contain" />
         )}
       </div>
-      <div className="grid gap-0.5 text-center">
+      <div className="grid min-w-0 gap-0.5 text-center">
         <div className="clean-strong mb-[3px] text-[20px] leading-[1.2] tracking-[0.01em]">{company.name}</div>
-        {/* Centered as a block, its lines left-aligned. */}
-        <div className="justify-self-center text-left">
+        <div className="break-words">
+          {address && <div className="text-balance">{address}</div>}
           {detailLines.map((line, i) => (
             <div key={i}>{line}</div>
           ))}
         </div>
       </div>
-      <div className="h-[88px] w-[88px]">{right}</div>
+      <div className="h-[88px] w-[88px] justify-self-end">{right}</div>
     </div>
   );
 }

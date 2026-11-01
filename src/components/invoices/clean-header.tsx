@@ -52,21 +52,6 @@ export function addressLine(address: string | null | undefined, pincode?: string
   return flat ? `${flat} – ${pin}` : pin;
 }
 
-/** The company address as the letterhead prints it: its own lines as
- * typed (not flattened like addressLine), with the PIN code added to the
- * last one when the address doesn't already include it. */
-export function letterheadAddressLines(address: string | null | undefined, pincode?: string | null): string[] {
-  const lines = (address ?? '')
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const pin = pincode?.trim();
-  if (!pin || lines.join('').replace(/\s/g, '').includes(pin.replace(/\s/g, ''))) return lines;
-  if (!lines.length) return [pin];
-  lines[lines.length - 1] = `${lines[lines.length - 1].replace(/,$/, '')} – ${pin}`;
-  return lines;
-}
-
 export type CleanHeaderProps = {
   company: {
     name: string;
@@ -82,7 +67,7 @@ export type CleanHeaderProps = {
   };
   /** Document title in the top row. */
   title?: string;
-  /** Small right-aligned note in the title row. */
+  /** Small right-aligned note in the title row — none unless given. */
   copyLabel?: string;
   invoiceNumber?: string;
   date: string;
@@ -105,7 +90,7 @@ export type CleanHeaderProps = {
 };
 
 /** Title row, centered letterhead (logo · company · UPI QR, logo and QR the
- * same 88px, no frame of their own; the company block takes the middle 40%
+ * same 88px, no frame of their own; the company block takes the middle half
  * of the width, its lines centered), the invoice details strip and, once
  * an e-Invoice is filed, its IRN/Ack/QR row. Rendered fresh at the top of
  * every printed page, like CLASSIC's header (see the pagination note in
@@ -113,7 +98,7 @@ export type CleanHeaderProps = {
 export function CleanHeader({
   company,
   title = 'Tax Invoice',
-  copyLabel = 'Original for recipient',
+  copyLabel,
   invoiceNumber,
   date,
   due,
@@ -127,12 +112,13 @@ export function CleanHeader({
   qrImageDataUrl,
 }: CleanHeaderProps) {
   const contact = [company.phone, company.altPhone].filter(Boolean).join(', ');
-  // Address, then one detail per line — a single "GSTIN · State · FSSAI" run
-  // was wider than the address and stuck out of the block.
+  // The address flows as one run (not the lines it was typed in) balanced
+  // over two lines; then one detail per line — a single "GSTIN · FSSAI" run
+  // was wider than the address and stuck out of the block. No State line:
+  // Place of supply sits right below, and the GSTIN starts with its code.
+  const address = addressLine(company.address, company.pincode);
   const detailLines = [
-    ...letterheadAddressLines(company.address, company.pincode),
     company.gstin && `GSTIN: ${company.gstin}`,
-    `State: ${company.state} (${gstStateCode(company.state)})`,
     company.fssaiNo && `FSSAI: ${company.fssaiNo}`,
     contact && `Contact: ${contact}`,
     company.email && `Email: ${company.email}`,
@@ -153,9 +139,9 @@ export function CleanHeader({
         {copyLabel && <span className={`${CLEAN_SOFT} absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] tracking-[0.08em]`}>{copyLabel}</span>}
       </div>
 
-      {/* Equal side columns keep the 40% company block exactly centered;
-          the logo hugs the left edge, the QR the right. */}
-      <div className={`grid grid-cols-[minmax(0,1fr)_40%_minmax(0,1fr)] items-center gap-[18px] border-t ${CLEAN_RULE} px-4 py-3.5`}>
+      {/* Equal side columns keep the company block exactly centered; the
+          logo hugs the left edge, the QR the right. */}
+      <div className={`grid grid-cols-[minmax(0,1fr)_50%_minmax(0,1fr)] items-center gap-[18px] border-t ${CLEAN_RULE} px-4 py-3.5`}>
         {company.logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -174,6 +160,7 @@ export function CleanHeader({
         <div className="grid min-w-0 gap-0.5 text-center">
           <div className={`${CLEAN_STRONG} mb-[3px] text-[20px] leading-tight tracking-[0.01em]`}>{company.name}</div>
           <div className="break-words">
+            {address && <div className="text-balance">{address}</div>}
             {detailLines.map((line, i) => (
               <div key={i}>{line}</div>
             ))}
