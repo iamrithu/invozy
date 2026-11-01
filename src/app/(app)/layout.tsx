@@ -27,9 +27,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // The proxy only checks that the session cookie is validly signed;
   // requireUser also confirms the user exists. A cookie that fails that goes
   // back to the login screen (which doesn't bounce it here again — see
-  // src/app/login/page.tsx).
-  const [user, company] = await Promise.all([requireUser().catch(() => null), getCompany().catch(() => null)]);
-  if (!user || !company) redirect('/login');
+  // src/app/login/page.tsx). Anything else — the company row failing to load
+  // — is thrown to src/app/error.tsx: sending a signed-in user to /login for
+  // it would loop, since /login sends them straight back here.
+  const [userResult, companyResult] = await Promise.allSettled([requireUser(), getCompany()]);
+  if (userResult.status === 'rejected') redirect('/login');
+  if (companyResult.status === 'rejected') throw companyResult.reason;
+  const user = userResult.value;
+  const company = companyResult.value;
   const isNewUser = !user.onboardedAt;
 
   return (

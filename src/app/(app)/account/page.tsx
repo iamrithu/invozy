@@ -11,9 +11,11 @@ export const dynamic = 'force-dynamic';
 
 export default async function AccountPage() {
   // Both are cache()d per request — the app layout already ran them, so
-  // this page costs no extra queries.
-  const [user, company] = await Promise.all([requireUser().catch(() => null), getCompany().catch(() => null)]);
-  if (!user || !company) redirect('/login');
+  // this page costs no extra queries. A company that fails to load throws
+  // (see the app layout) rather than bouncing a signed-in user to /login.
+  const user = await requireUser().catch(() => null);
+  if (!user) redirect('/login');
+  const company = await getCompany();
 
   return (
     <div>
