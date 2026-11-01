@@ -81,22 +81,28 @@ export async function getCompanyProfile() {
   return toPublicCompany(await getCompany());
 }
 
+const SWITCHES = ['cgstEnabled', 'sgstEnabled', 'igstEnabled', 'nicSandbox', 'pdfShowBankDetails', 'pdfShowHsnSummary', 'showUpiQr', 'showGpayNumber'] as const;
+
+type CompanyField = keyof typeof CompanySchema.shape;
+
 export async function updateCompany(_prev: CompanyFormState, formData: FormData): Promise<CompanyFormState> {
-  const raw = Object.fromEntries(formData);
-  const parsed = CompanySchema.safeParse({
-    ...raw,
-    cgstEnabled: raw.cgstEnabled === 'on' || raw.cgstEnabled === 'true',
-    sgstEnabled: raw.sgstEnabled === 'on' || raw.sgstEnabled === 'true',
-    igstEnabled: raw.igstEnabled === 'on' || raw.igstEnabled === 'true',
-    nicSandbox: raw.nicSandbox === 'on' || raw.nicSandbox === 'true',
-    pdfShowBankDetails: raw.pdfShowBankDetails === 'on' || raw.pdfShowBankDetails === 'true',
-    pdfShowHsnSummary: raw.pdfShowHsnSummary === 'on' || raw.pdfShowHsnSummary === 'true',
-    showUpiQr: raw.showUpiQr === 'on' || raw.showUpiQr === 'true',
-    showGpayNumber: raw.showGpayNumber === 'on' || raw.showGpayNumber === 'true',
-  });
+  const raw: Record<string, unknown> = Object.fromEntries(formData);
+  // The Company page saves one section at a time and lists the fields that
+  // section owns in `_fields` — only those are validated and written, so
+  // saving the bank details can't roll back the live invoice counter or
+  // switch off a toggle from another section (an unchecked switch simply
+  // isn't in FormData). Without `_fields`, every field is required as before.
+  const only =
+    typeof raw._fields === 'string' ? raw._fields.split(',').filter((k): k is CompanyField => k in CompanySchema.shape) : null;
+  for (const k of SWITCHES) {
+    if (!only || only.includes(k)) raw[k] = raw[k] === 'on' || raw[k] === 'true';
+  }
+  const schema = only ? CompanySchema.pick(Object.fromEntries(only.map((k) => [k, true])) as Partial<Record<CompanyField, true>>) : CompanySchema;
+  const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     return { error: 'Check the highlighted fields.', fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string> };
   }
+  const data = parsed.data as Partial<z.infer<typeof CompanySchema>>;
   const company = await getCompany();
 
   let logoUrl: string | null | undefined;
@@ -141,14 +147,14 @@ export async function updateCompany(_prev: CompanyFormState, formData: FormData)
 
   await prisma.company.update({
     where: { id: company.id },
-    data: { ...parsed.data, ...(logoUrl !== undefined ? { logoUrl } : {}), ...(signatureUrl !== undefined ? { signatureUrl } : {}), ...secretUpdates },
+    data: { ...data, ...(logoUrl !== undefined ? { logoUrl } : {}), ...(signatureUrl !== undefined ? { signatureUrl } : {}), ...secretUpdates },
   });
   // The company's state decides IGST vs CGST+SGST on every invoice (compared
   // against each customer's state), so moving it re-derives every invoice's
   // stored totals — exactly as the live computeTotals() on the invoice page
   // will.
-  if (parsed.data.state !== company.state) {
-    await recomputeStoredTotals({}, parsed.data.state);
+  if (data.state && data.state !== company.state) {
+    await recomputeStoredTotals({}, data.state);
   }
   revalidatePath('/company');
   revalidatePath('/'); // GST rate changes affect every page that computes totals

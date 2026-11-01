@@ -105,7 +105,7 @@ export function deriveStatus(total: number, amountPaid: number, wasSent: boolean
 // Locale paired with each supported currency so grouping/symbol placement
 // reads naturally (e.g. ₹1,23,456 for INR's lakh/crore grouping vs
 // $123,456 for USD) — see Company.currency (prisma/schema.prisma) and the
-// currency picker in company-form.tsx. Latin-digit locales throughout
+// currency picker in company-profile.tsx. Latin-digit locales throughout
 // (e.g. 'en-AE' not 'ar-AE') so amounts never switch numeral systems.
 const CURRENCY_LOCALE: Record<string, string> = {
   INR: 'en-IN',

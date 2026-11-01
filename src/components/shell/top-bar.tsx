@@ -150,7 +150,7 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
         <div className="flex flex-shrink-0" data-tour="new-invoice">
           <Link
             href="/invoices/new"
-            className="flex items-center gap-1.5 rounded-l-sm2 border-r border-white/25 bg-brand px-2 py-1.5 text-[13px] font-bold text-white shadow-btn transition-colors hover:bg-brand-dark sm:px-4 sm:py-2"
+            className="flex items-center gap-1.5 rounded-l-sm2 border-r border-white/25 bg-brand px-2 py-1.5 text-[13px] font-bold text-white transition-colors hover:bg-brand-dark sm:px-4 sm:py-2"
           >
             <Plus size={14} className="sm:hidden" />
             <Plus size={15} className="hidden sm:block" />

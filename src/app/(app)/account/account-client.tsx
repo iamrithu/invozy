@@ -35,7 +35,7 @@ export function AccountClient({ user }: { user: AccountUser }) {
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
       <div className="flex flex-wrap items-center gap-4 rounded-xl2 border border-line bg-surface p-5 shadow-card lg:col-span-12">
         <span
-          className="flex h-[64px] w-[64px] flex-shrink-0 items-center justify-center rounded-sm2 text-[20px] font-extrabold text-white shadow-brand"
+          className="flex h-[64px] w-[64px] flex-shrink-0 items-center justify-center rounded-sm2 text-[20px] font-extrabold text-white"
           style={{ background: hashColor(displayName) }}
         >
           {initials(displayName.includes('@') ? displayName.split('@')[0] : displayName)}

@@ -102,13 +102,6 @@ const config: Config = {
       boxShadow: {
         card: '0 1px 2px rgba(28,28,28,.06), 0 1px 6px rgba(28,28,28,.05)',
         elevated: '0 10px 26px -8px rgba(28,28,28,.2)',
-        // Neutral (never tinted by the active theme color) — used for
-        // primary/CTA buttons so their shadow reads as "natural depth"
-        // rather than a colored glow, and stays correct across every
-        // per-company theme preset (see src/lib/theme-presets.ts).
-        btn: '0 6px 16px -6px rgba(20,20,20,.35)',
-        // Decorative brand-tinted glow — logo badges, avatars — not buttons.
-        brand: '0 8px 20px -6px rgba(226,55,68,.4)',
       },
       keyframes: {
         'accordion-down': { from: { height: '0' }, to: { height: 'var(--radix-accordion-content-height)' } },

@@ -1894,7 +1894,7 @@ function InvoiceHistory({ invoiceId }: { invoiceId: string }) {
   return <ActivityTimeline entityType="invoice" entityId={invoiceId} />;
 }
 
-/** Controlled variant of company-form.tsx's RateRow — that one is built for
+/** Controlled variant of company-profile.tsx's RateRow — that one is built for
  * an uncontrolled `<form>` + FormData submission (defaultValue/
  * defaultChecked), which doesn't fit this page's fully-controlled
  * useState-per-field pattern, so this is a small parallel component rather

@@ -307,6 +307,34 @@ async function main() {
   const del = await purchases.deletePurchase(p1.purchaseId!);
   check('deleting the bill deletes its files and takes the stock back: 78', !del.error && !onDisk(u1.attachment!.url) && (await stock()) === 78, del);
 
+  // ---- company page: each section saves only its own fields
+  const companyActions = await import('@/actions/company');
+  const coRow = () => prisma.company.findUniqueOrThrow({ where: { id: 'main' } });
+  const form = (fields: Record<string, string>) => {
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(fields)) fd.set(k, v);
+    return fd;
+  };
+  await prisma.company.update({ where: { id: 'main' }, data: { nextInvoiceNo: 42, showUpiQr: true, cgstEnabled: true, pdfShowHsnSummary: true } });
+  const coBefore = await coRow();
+  const bankSave = await companyActions.updateCompany(
+    {},
+    form({ _fields: 'bankName,bankAcc,ifsc,branch,upi,showUpiQr,showGpayNumber,pdfShowBankDetails', bankName: 'Test Co', bankAcc: '1234567890', ifsc: 'SBIN0000001', branch: '', upi: 'test@upi', pdfShowBankDetails: 'on' })
+  );
+  const coAfter = await coRow();
+  check('bank section saves its fields; a switch left off there turns off', !bankSave.error && coAfter.bankAcc === '1234567890' && coAfter.upi === 'test@upi' && coAfter.pdfShowBankDetails && !coAfter.showUpiQr, { bankSave, coAfter });
+  check(
+    '…and leaves other sections alone (invoice counter, GST switches, HSN summary, name)',
+    coAfter.nextInvoiceNo === 42 && coAfter.cgstEnabled && coAfter.pdfShowHsnSummary && coAfter.name === coBefore.name && coAfter.state === coBefore.state,
+    coAfter
+  );
+  const blankName = await companyActions.updateCompany({}, form({ _fields: 'name,domain,phone,altPhone', name: '', phone: '99' }));
+  check('a blank business name is refused, field flagged', !!blankName.fieldErrors?.name && (await coRow()).name === coBefore.name, blankName);
+  const logoOnly = await companyActions.updateCompany({}, form({ _fields: '' }));
+  check('a logo-only save with nothing picked changes nothing', !logoOnly.error && (await coRow()).updatedAt.getTime() >= coAfter.updatedAt.getTime() && (await coRow()).bankAcc === '1234567890', logoOnly);
+  const legacy = await companyActions.updateCompany({}, form({ name: 'Only name' }));
+  check('a save without a section list still needs every required field', !!legacy.error && (await coRow()).name === coBefore.name, legacy);
+
   await prisma.$disconnect();
   fs.rmSync(work, { recursive: true, force: true });
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
