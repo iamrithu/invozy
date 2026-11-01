@@ -47,8 +47,12 @@ export function useInvoicesPage(params: InvoiceListFilters, seed?: { items: any[
 export function useDeleteInvoice() {
   const queryClient = useQueryClient();
   return useMutation({
-    // `restock` only matters for a draft — see deleteInvoice.
-    mutationFn: async ({ invoiceId, restock }: { invoiceId: string; restock?: boolean }) => unwrap(await deleteInvoice(invoiceId, { restock })),
+    // `restock` only matters for a draft — see deleteInvoice. A bare id still
+    // works: a page loaded before the restock choice existed calls it that way.
+    mutationFn: async (args: string | { invoiceId: string; restock?: boolean }) => {
+      const { invoiceId, restock } = typeof args === 'string' ? { invoiceId: args, restock: undefined } : args;
+      return unwrap(await deleteInvoice(invoiceId, { restock }));
+    },
     onSuccess: () => invalidateBusinessData(queryClient),
   });
 }

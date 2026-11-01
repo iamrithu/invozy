@@ -692,6 +692,7 @@ export async function getHeldStock(invoiceId: string): Promise<{ error?: string;
  * stock-history rows stay, keyed by the invoice number, so the ledger still
  * explains the movements. */
 export async function deleteInvoice(id: string, opts?: { restock?: boolean }): Promise<{ error?: string }> {
+  if (typeof id !== 'string' || !id) return { error: 'Invoice not found — refresh the page and try again.' };
   try {
     const user = await requireOwner();
     const invoice = await prisma.invoice.findUnique({
