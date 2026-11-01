@@ -53,16 +53,15 @@ export type InvoiceSheetLine = {
 // Totals ladder — shared by every template (MODERN here, CLASSIC/CLEAN in
 // invoice-sheet-classic.tsx) so they all tell the same discount story:
 //
-//   Gross amount (Σ qty × rate) → Item discount → Bill discount → Taxable
-//   value → CGST/SGST or IGST → Round off → Total → "You saved ₹X"
+//   Sub total → Bill discount → Taxable value → CGST/SGST or IGST →
+//   Round off → Total → "You saved ₹X"
 //
-// Previously the sheets started at a "Subtotal" that was already net of
-// the per-line discounts, so the gross and the item discount were never
-// shown at all, and only MODERN mentioned savings. computeTotals() stays
-// the single source of truth: taxable/tax/round-off/total are read from the
-// `totals` it produced, and the discount rows are just its own inputs made
-// visible (gross − subtotal = item discounts; overallDiscountAmount = the
-// bill discount), so the ladder always adds up to the printed Total.
+// Item discounts aren't a row of their own: each line already prints its
+// Disc% and its discounted Amount, so the ladder starts from the sum of
+// those (the sub total), and only the bill discount — which no line shows —
+// gets a step. computeTotals() stays the single source of truth: every row
+// is read from the `totals` it produced, so the ladder always adds up to
+// the printed Total. "You saved" still counts both kinds of discount.
 // ---------------------------------------------------------------------------
 
 const EPSILON = 0.005;
@@ -112,16 +111,15 @@ export function totalsLadder({
   const saved = itemDiscount + billDiscount >= EPSILON ? itemDiscount + billDiscount : 0;
 
   const rows: LadderRow[] = [];
-  // Without any discount, gross and taxable are the same number — one row.
-  if (saved > 0) {
-    rows.push({ key: 'gross', label: 'Gross amount', amount: gross });
-    if (itemDiscount >= EPSILON) rows.push({ key: 'item-discount', label: 'Item discount', amount: itemDiscount, sign: '−' });
-    if (billDiscount >= EPSILON) {
-      const label = discountType === 'PERCENT' && discountValue ? `Bill discount (${pct(discountValue)}%)` : 'Bill discount';
-      rows.push({ key: 'bill-discount', label, amount: billDiscount, sign: '−' });
-    }
+  // Without a bill discount, sub total and taxable value are the same
+  // number — one row.
+  const hasBillDiscount = billDiscount >= EPSILON;
+  if (hasBillDiscount) {
+    const label = discountType === 'PERCENT' && discountValue ? `Bill discount (${pct(discountValue)}%)` : 'Bill discount';
+    rows.push({ key: 'subtotal', label: 'Sub total', amount: totals.subtotal });
+    rows.push({ key: 'bill-discount', label, amount: billDiscount, sign: '−' });
   }
-  rows.push({ key: 'taxable', label: 'Taxable value', amount: totals.taxable, rule: saved > 0 });
+  rows.push({ key: 'taxable', label: 'Taxable value', amount: totals.taxable, rule: hasBillDiscount });
   if (totals.useIgst) {
     if (totals.igst >= EPSILON) rows.push({ key: 'igst', label: `IGST ${pct(rates.igstRate)}%`, amount: totals.igst });
   } else {
