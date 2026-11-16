@@ -4,9 +4,10 @@ import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
-import { Search, Bell, Plus, Building2, ChevronDown, Package, Users, Receipt, LogOut, UserCog, Compass, UsersRound, History } from 'lucide-react';
+import { Search, Plus, Building2, ChevronDown, Package, Users, Receipt, LogOut, UserCog, Compass, UsersRound, History } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
 import { CommandPalette } from '@/components/shell/command-palette';
+import { NotificationsBell } from '@/components/shell/notifications-bell';
 import { ThemeToggle } from '@/components/shell/theme-toggle';
 import { ProductFormDialog } from '@/components/products/product-form-dialog';
 import { CustomerFormDialog } from '@/components/customers/customer-form-dialog';
@@ -139,13 +140,7 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
       <div className="flex items-center justify-self-end gap-1.5 sm:gap-3">
         <ThemeToggle className="h-7 w-7 sm:h-9 sm:w-9" iconSize={14} />
 
-        <button
-          aria-label="Notifications"
-          className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-sm2 border border-line bg-surface text-ink-soft sm:h-9 sm:w-9"
-        >
-          <Bell size={14} className="sm:hidden" />
-          <Bell size={16} className="hidden sm:block" />
-        </button>
+        <NotificationsBell />
 
         <div className="flex flex-shrink-0" data-tour="new-invoice">
           <Link

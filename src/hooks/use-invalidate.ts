@@ -6,7 +6,7 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query';
  * invoice delete changes the customer's balance, reports, search results
  * and stock), so mutations refresh them all together instead of each hook
  * guessing which neighbours it affects. */
-const BUSINESS_KEYS = [['invoices'], ['customers'], ['products'], ['reports'], ['global-search'], ['inventory'], ['credit-notes'], ['purchases'], ['suppliers'], ['activity']];
+const BUSINESS_KEYS = [['invoices'], ['customers'], ['products'], ['reports'], ['global-search'], ['inventory'], ['credit-notes'], ['purchases'], ['suppliers'], ['activity'], ['notifications']];
 
 export function invalidateBusinessData(queryClient: QueryClient) {
   return Promise.all(BUSINESS_KEYS.map((queryKey) => queryClient.invalidateQueries({ queryKey })));

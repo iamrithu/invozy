@@ -126,6 +126,8 @@ function tiersFor(p: Product): PriceTier[] {
 type Company = {
   name: string;
   address: string;
+  /** CLEAN product-row style for the live preview (src/lib/settings.ts). */
+  pdfItemRows?: 'none' | 'lines' | 'zebra';
   gstin: string;
   state: string;
   logoUrl?: string | null;
@@ -971,7 +973,8 @@ export function BuilderClient({
     );
 
   const busy = saving;
-  const overdue = !!editInvoice && status !== 'PAID' && editInvoice.due < todayIst();
+  // Same rule as the invoice list: only issued (sent / part-paid) invoices can be overdue.
+  const overdue = !!editInvoice && (status === 'SENT' || status === 'PARTIALLY_PAID') && editInvoice.due < todayIst();
 
   const moreMenu = (
     <DropdownMenu>

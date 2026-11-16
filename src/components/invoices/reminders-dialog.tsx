@@ -23,7 +23,9 @@ function fmtDay(iso: string) {
 /** Every overdue invoice in one list, oldest first, each with its own
  * WhatsApp reminder. WhatsApp can't send in bulk from a link, so each tap
  * opens one chat with the message ready — send it, come back, tap the next;
- * rows already done this time are ticked. */
+ * rows already done this time are ticked. "Remind all" walks the same list
+ * for you: one tap per reminder (a browser only opens WhatsApp from a
+ * click), always the next one not yet sent, with progress. */
 export function RemindersDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { data = [], isLoading } = useQuery({ queryKey: ['invoices', 'overdue-reminders'], queryFn: () => listOverdueForReminders(), enabled: open });
   const whatsApp = useWhatsAppShare();
@@ -68,6 +70,7 @@ export function RemindersDialog({ open, onOpenChange }: { open: boolean; onOpenC
             <p className="text-[12.5px] text-ink-soft">
               {data.length} overdue · <b className="font-mono text-ink">{fmtInr(totalDue)}</b> to collect. Each Send opens WhatsApp with the message ready.
             </p>
+            <RemindAllBar rows={data} sent={sent} pending={whatsApp.isPending} onRemind={remind} />
             <ul className="max-h-[min(55vh,420px)] divide-y divide-line overflow-y-auto overscroll-contain rounded-lg2 border border-line">
               {data.map((r) => {
                 const late = daysBetween(r.due, today);
@@ -99,5 +102,36 @@ export function RemindersDialog({ open, onOpenChange }: { open: boolean; onOpenC
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** "Remind all": the next unsent reminder (with a phone) one tap away, and
+ * how far through the list you are. */
+function RemindAllBar({ rows, sent, pending, onRemind }: { rows: OverdueReminder[]; sent: Set<string>; pending: boolean; onRemind: (r: OverdueReminder) => void }) {
+  const reachable = rows.filter((r) => r.phone);
+  const done = reachable.filter((r) => sent.has(r.id)).length;
+  const next = reachable.find((r) => !sent.has(r.id));
+  const noPhone = rows.length - reachable.length;
+  if (!reachable.length) return null;
+  return (
+    <div className="rounded-lg2 border border-line bg-bg p-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[12.5px] font-bold text-ink">{next ? `Remind all · ${done} of ${reachable.length} sent` : `All ${reachable.length} reminders sent`}</div>
+          <div className="truncate text-[11.5px] text-ink-soft">
+            {next ? `Next: ${next.customer} · ${next.number}` : 'Nice — everyone overdue has been reminded.'}
+            {noPhone > 0 && ` · ${noPhone} without a phone number`}
+          </div>
+        </div>
+        {next && (
+          <Button type="button" size="sm" onClick={() => onRemind(next)} disabled={pending}>
+            <MessageCircle size={13} /> {done === 0 ? 'Start' : 'Send next'}
+          </Button>
+        )}
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-alt" role="progressbar" aria-valuemin={0} aria-valuemax={reachable.length} aria-valuenow={done}>
+        <div className="h-full rounded-full bg-green transition-[width]" style={{ width: `${(done / reachable.length) * 100}%` }} />
+      </div>
+    </div>
   );
 }

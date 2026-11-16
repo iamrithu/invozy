@@ -449,7 +449,7 @@ const LIST_SELECT = {
   _count: { select: { items: true } },
 } satisfies Prisma.InvoiceSelect;
 
-function toListRow(inv: Prisma.InvoiceGetPayload<{ select: typeof LIST_SELECT }>, now: Date) {
+function toListRow(inv: Prisma.InvoiceGetPayload<{ select: typeof LIST_SELECT }>, startOfToday: Date) {
   const total = Number(inv.total);
   const amountPaid = Number(inv.amountPaid);
   const { _count, total: _t, interState, ...rest } = inv;
@@ -459,12 +459,21 @@ function toListRow(inv: Prisma.InvoiceGetPayload<{ select: typeof LIST_SELECT }>
     computedTotal: total,
     amountPaid,
     balanceDue: total - amountPaid,
-    isOverdue: inv.status !== 'PAID' && inv.due < now,
+    isOverdue: isOverdue(inv.status, inv.due, startOfToday),
     // Inter-state (IGST) vs intra-state (CGST+SGST) — for the GST type
     // filter on the Invoices list.
     useIgst: interState,
     itemCount: _count.items,
   };
+}
+
+/** Overdue means the same thing everywhere (list, dashboard, bell,
+ * reminders): an issued invoice — sent or part-paid — still owing money
+ * after its due date in India. Drafts were never issued, so they're never
+ * overdue; paid ones owe nothing. */
+const OVERDUE_STATUSES: InvoiceStatus[] = ['SENT', 'PARTIALLY_PAID'];
+function isOverdue(status: InvoiceStatus, due: Date, startOfToday: Date) {
+  return OVERDUE_STATUSES.includes(status) && due < startOfToday;
 }
 
 type InvoiceWhereFilters = Omit<InvoiceListFilters, 'sort' | 'page' | 'pageSize'>;
@@ -515,7 +524,11 @@ export async function getInvoiceStatusCounts(
   const where = invoiceWhere({ search, dateFrom, dateTo, ...opts });
   const [all, overdue] = await Promise.all([
     prisma.invoice.groupBy({ by: ['status'], where, _count: { _all: true } }),
-    prisma.invoice.groupBy({ by: ['status'], where: { AND: [where, { status: { not: 'PAID' }, due: { lt: new Date() } }] }, _count: { _all: true } }),
+    prisma.invoice.groupBy({
+      by: ['status'],
+      where: { AND: [where, { status: { in: OVERDUE_STATUSES }, due: { lt: istDayRangeUtc(todayIst()).gte } }] },
+      _count: { _all: true },
+    }),
   ]);
   const counts: Record<string, number> = {};
   for (const row of all) counts[row.status] = row._count._all;
@@ -572,8 +585,8 @@ export async function listInvoicesPage(opts?: InvoiceListFilters) {
     }),
     prisma.invoice.count({ where }),
   ]);
-  const now = new Date();
-  return { items: JSON.parse(JSON.stringify(rows.map((inv) => toListRow(inv, now)))), total };
+  const startOfToday = istDayRangeUtc(todayIst()).gte;
+  return { items: JSON.parse(JSON.stringify(rows.map((inv) => toListRow(inv, startOfToday)))), total };
 }
 
 const PaymentSchema = z.object({
