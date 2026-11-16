@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import { getAppSettings } from '@/lib/settings';
 import { verifySignedToken } from '@/lib/signed-token';
 import { loadPrintLetterhead, loadReceiptDocument } from '@/components/print/print-data';
 import { PrintPageShell } from '@/components/print/print-page-shell';
@@ -19,12 +20,14 @@ export default async function PrintReceiptPage({ params, searchParams }: { param
   const [{ paymentId }, { t }] = await Promise.all([params, searchParams]);
   if (verifySignedToken('print-receipt', typeof t === 'string' ? t : null) !== paymentId) notFound();
 
-  const [receipt, company] = await Promise.all([loadReceiptDocument(paymentId), loadPrintLetterhead()]);
+  const [receipt, company, settings] = await Promise.all([loadReceiptDocument(paymentId), loadPrintLetterhead(), getAppSettings()]);
   if (!receipt || receipt.creditNoteId || !company) notFound();
 
   return (
     <PrintPageShell>
-      <ReceiptDocument receipt={receipt} company={company} />
+      <div className={`doc-rows-${settings.pdfItemRows}`}>
+        <ReceiptDocument receipt={receipt} company={company} />
+      </div>
     </PrintPageShell>
   );
 }

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
 import { COMPANY_ID } from '@/lib/company-id';
+import { getAppSettings } from '@/lib/settings';
 import { verifySignedToken } from '@/lib/signed-token';
 import { computeInvoiceTotals } from '@/lib/invoice-totals';
 import { isGstLayout } from '@/lib/invoice-template';
@@ -33,12 +34,13 @@ export default async function PrintInvoicePage({ params, searchParams }: { param
   const [{ id }, { t }] = await Promise.all([params, searchParams]);
   if (verifySignedToken('print-invoice', typeof t === 'string' ? t : null) !== id) notFound();
 
-  const [invoice, company] = await Promise.all([
+  const [invoice, company, settings] = await Promise.all([
     prisma.invoice.findUnique({
       where: { id },
       include: { customer: true, items: { include: { product: { select: { packQty: true } } } } },
     }),
     prisma.company.findUnique({ where: { id: COMPANY_ID } }),
+    getAppSettings(),
   ]);
   if (!invoice || !company) notFound();
 
@@ -77,6 +79,7 @@ export default async function PrintInvoicePage({ params, searchParams }: { param
   // rates and section toggles come from the invoice's own snapshot, never
   // the live company settings (see schema.prisma's Invoice.cgstRate).
   const sheetCompany = {
+    pdfItemRows: settings.pdfItemRows,
     name: company.name,
     address: company.address,
     pincode: company.pincode,

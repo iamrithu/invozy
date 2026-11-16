@@ -40,6 +40,8 @@ import { StateSelect, DistrictSelect } from '@/components/ui/location-field';
 import { isThemePresetKey, THEME_PRESET_KEYS, THEME_PRESETS, themePreviewColor, type ThemePresetKey } from '@/lib/theme-presets';
 import type { toPublicCompany } from '@/lib/public-company';
 import type { InvoiceTemplateName } from '@/lib/invoice-template';
+import type { PdfItemRows } from '@/lib/settings';
+import { PdfRowStyle } from './pdf-row-style';
 import { cn } from '@/lib/utils';
 
 /** The Company row as the settings page hands it over: no encrypted NIC
@@ -78,7 +80,7 @@ type SectionId = (typeof SECTIONS)[number]['id'];
 /** Every company detail on one scrolling page — each section shows its
  * values straight away and edits in place (Edit → fields → Save), saving
  * only that section's fields (see updateCompany's `_fields`). */
-export function CompanyProfile({ company: co }: { company: PublicCompany }) {
+export function CompanyProfile({ company: co, pdfItemRows = 'none' }: { company: PublicCompany; pdfItemRows?: PdfItemRows }) {
   const [editing, setEditing] = useState<Set<SectionId>>(new Set());
   const [active, setActive] = useState<SectionId>('business');
 
@@ -184,7 +186,7 @@ export function CompanyProfile({ company: co }: { company: PublicCompany }) {
             title="Theme & invoice template"
             hint="The app's colour and how invoice PDFs look. The logo is at the top of this page."
             fields={['themeColor', 'invoiceTemplate']}
-            view={<BrandView co={co} />}
+            view={<BrandView co={co} pdfItemRows={pdfItemRows} />}
             form={() => <BrandFields co={co} />}
           />
 
@@ -721,7 +723,7 @@ function AddressFields({ co, errors }: { co: PublicCompany; errors: Errors }) {
   );
 }
 
-function BrandView({ co }: { co: PublicCompany }) {
+function BrandView({ co, pdfItemRows }: { co: PublicCompany; pdfItemRows: PdfItemRows }) {
   const themeLabel = isThemePresetKey(co.themeColor) ? THEME_PRESETS[co.themeColor as ThemePresetKey].label : 'Custom';
   const template = TEMPLATES.find((t) => t.id === co.invoiceTemplate) ?? TEMPLATES[0];
   return (
@@ -742,6 +744,9 @@ function BrandView({ co }: { co: PublicCompany }) {
             <div className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">{template.blurb}</div>
           </div>
         </div>
+      </div>
+      <div className="sm:col-span-2">
+        <PdfRowStyle value={pdfItemRows} />
       </div>
     </div>
   );

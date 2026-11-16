@@ -3,6 +3,7 @@ import { getCompany } from '@/lib/get-company';
 import { listProducts } from '@/actions/products';
 import { loadInvoiceForEditor } from '@/lib/invoice-editor-data';
 import { toPublicCompany } from '@/lib/public-company';
+import { getAppSettings } from '@/lib/settings';
 import { BuilderClient } from '../new/builder-client';
 
 export const dynamic = 'force-dynamic';
@@ -15,14 +16,14 @@ export default async function InvoicePage({ params, searchParams }: { params: Pr
   const [{ id }, { edit }] = await Promise.all([params, searchParams]);
   // getCompany() also enforces sign-in, so the invoice read is discarded
   // (Promise.all rejects) for an unauthenticated request.
-  const [products, company, invoice] = await Promise.all([listProducts({ activeOnly: true }), getCompany(), loadInvoiceForEditor(id)]);
+  const [products, company, invoice, settings] = await Promise.all([listProducts({ activeOnly: true }), getCompany(), loadInvoiceForEditor(id), getAppSettings()]);
   if (!invoice) notFound();
 
   return (
     <BuilderClient
       key={invoice.id}
       products={JSON.parse(JSON.stringify(products))}
-      company={JSON.parse(JSON.stringify(toPublicCompany(company)))}
+      company={JSON.parse(JSON.stringify({ ...toPublicCompany(company), pdfItemRows: settings.pdfItemRows }))}
       editInvoice={invoice}
       initialMode={invoice.status === 'PAID' && edit !== '1' ? 'preview' : 'edit'}
     />

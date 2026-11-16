@@ -1,5 +1,6 @@
 import { Building2 } from 'lucide-react';
 import { getCompanyProfile } from '@/actions/company';
+import { getAppSettings } from '@/lib/settings';
 import { CompanyProfile } from './company-profile';
 
 export const dynamic = 'force-dynamic';
@@ -7,7 +8,7 @@ export const dynamic = 'force-dynamic';
 export default async function CompanyPage() {
   // Without the encrypted NIC credentials — the page only needs to know
   // whether each one is saved (see src/lib/public-company.ts).
-  const company = await getCompanyProfile();
+  const [company, settings] = await Promise.all([getCompanyProfile(), getAppSettings()]);
   return (
     <div>
       <div className="mb-4">
@@ -16,7 +17,7 @@ export default async function CompanyPage() {
         </h1>
         <p className="mt-1 text-[12px] text-ink-faint">Everything here prints on your invoices. Tap Edit on any section to change it in place.</p>
       </div>
-      <CompanyProfile company={JSON.parse(JSON.stringify(company))} />
+      <CompanyProfile company={JSON.parse(JSON.stringify(company))} pdfItemRows={settings.pdfItemRows} />
     </div>
   );
 }

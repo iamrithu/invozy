@@ -17,10 +17,9 @@ import { rupeesInWords } from './format';
 // white paper in dark mode too. Kept as literal class strings so Tailwind's
 // scanner picks them up.
 
-/** The one rule colour. */
+/** The one rule — every border on a document is this same 1px line. Tables
+ * draw column rules only, never a line between item rows. */
 export const RULE = 'border-[#6b7280]';
-/** Between item rows only — lighter so a long table doesn't read as a grid. */
-const ROW_RULE = 'border-[#d1d5db]';
 const SOFT = 'text-[#4b5563]';
 const FILL = 'bg-[#f3f4f6]';
 
@@ -201,14 +200,16 @@ export function Td({ children, align = 'left', className, colSpan }: { children?
   );
 }
 
-/** An item row — light rule underneath, never split across pages. */
+/** An item row — never split across pages. No rule underneath by default
+ * (column rules only); a `.doc-rows-lines` / `.doc-rows-zebra` wrapper
+ * (the company's PDF row style, see globals.css) adds lines or shading. */
 export function Tr({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <tr className={cn('border-b [break-inside:avoid] last:border-b-0', ROW_RULE, className)}>{children}</tr>;
+  return <tr className={cn('clean-item-row [break-inside:avoid]', className)}>{children}</tr>;
 }
 
-/** A totals/summary row inside a DocTable (full rule above, light fill).
- * The rule sits on the cells, not the row: in a collapsed table the row
- * above's light bottom rule would otherwise win the shared edge. */
+/** A totals/summary row inside a DocTable (rule above, light fill). The
+ * rule sits on the cells, not the row, so it draws reliably in a collapsed
+ * table. */
 export function TotalTr({ children }: { children: React.ReactNode }) {
   return <tr className={cn('[break-inside:avoid] [&>td]:border-t', FILL)}>{children}</tr>;
 }

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import { getAppSettings } from '@/lib/settings';
 import { verifySignedToken } from '@/lib/signed-token';
 import { loadPrintLetterhead } from '@/components/print/print-data';
 import { PrintPageShell } from '@/components/print/print-page-shell';
@@ -20,12 +21,14 @@ export default async function PrintCreditNotePage({ params, searchParams }: { pa
   const [{ id }, { t }] = await Promise.all([params, searchParams]);
   if (verifySignedToken('print-credit-note', typeof t === 'string' ? t : null) !== id) notFound();
 
-  const [note, company] = await Promise.all([loadCreditNoteDocument(id), loadPrintLetterhead()]);
+  const [note, company, settings] = await Promise.all([loadCreditNoteDocument(id), loadPrintLetterhead(), getAppSettings()]);
   if (!note || !company) notFound();
 
   return (
     <PrintPageShell>
-      <CreditNoteDocument note={note} company={company} />
+      <div className={`doc-rows-${settings.pdfItemRows}`}>
+        <CreditNoteDocument note={note} company={company} />
+      </div>
     </PrintPageShell>
   );
 }

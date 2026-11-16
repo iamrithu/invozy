@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import { getAppSettings } from '@/lib/settings';
 import { verifySignedToken } from '@/lib/signed-token';
 import { loadPrintLetterhead } from '@/components/print/print-data';
 import { buildCustomerStatement } from '@/components/print/statement-data';
@@ -23,12 +24,14 @@ export default async function PrintStatementPage({ params, searchParams }: { par
   const [{ customerId }, query] = await Promise.all([params, searchParams]);
   if (verifySignedToken('print-statement', one(query.t)) !== customerId) notFound();
 
-  const [statement, company] = await Promise.all([buildCustomerStatement(customerId, one(query.from), one(query.to)), loadPrintLetterhead()]);
+  const [statement, company, settings] = await Promise.all([buildCustomerStatement(customerId, one(query.from), one(query.to)), loadPrintLetterhead(), getAppSettings()]);
   if (!statement || !company) notFound();
 
   return (
     <PrintPageShell>
-      <StatementDocument statement={statement} company={company} />
+      <div className={`doc-rows-${settings.pdfItemRows}`}>
+        <StatementDocument statement={statement} company={company} />
+      </div>
     </PrintPageShell>
   );
 }

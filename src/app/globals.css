@@ -32,6 +32,12 @@
        when a company's brand color is itself red, blue, or black. */
     --red: 356 75% 53%;
     --red-soft: 356 86% 95%;
+    /* Fixed two-series chart palette (sales, collections) — deliberately not
+       the company theme colour, so a blue-themed company doesn't get two blue
+       series. Validated for colour-blind separation and contrast in both
+       themes (dataviz palette validator). */
+    --chart-sales: 355 75% 55%;
+    --chart-collected: 211 61% 43%;
     /* Fixed near-black "chrome" — floating bars, tooltips, the block-ice
        tile — deliberately does NOT follow the theme (unlike --ink), the
        same way the reference design keeps a couple of always-dark UI
@@ -80,6 +86,8 @@
     --green-soft: 134 35% 16%;
     --red: 356 78% 62%;
     --red-soft: 356 40% 18%;
+    --chart-sales: 355 80% 62%;
+    --chart-collected: 211 60% 60%;
     --accent-foreground: 355 75% 78%;
   }
 }
@@ -337,4 +345,17 @@ main:has(> .invoice-builder-root) {
   .form-kit .form-affix input {
     height: 42px;
   }
+}
+
+/* PDF product-row style (Company → Branding → "Product rows"; stored in
+   AppSetting, see src/lib/settings.ts). Tables draw column rules only by
+   default; these opt in to a line between rows or light alternate shading.
+   Same 1px rule colour as every other CLEAN border. The wrapper class sits
+   on the items table (invoices) or around a whole document (credit notes,
+   receipts, statements, reports). */
+.doc-rows-lines .clean-item-row + .clean-item-row > td {
+  border-top: 1px solid #6b7280;
+}
+.doc-rows-zebra .clean-item-row:nth-child(even) > td {
+  background-color: #f4f5f6;
 }

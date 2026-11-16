@@ -41,7 +41,7 @@ export default async function PrintLoadingSheetPage({ searchParams }: { searchPa
   return (
     <PrintPageShell>
       <main className="print-doc text-[10.5px] leading-snug text-ink" style={PAPER_STYLE}>
-        <header className="mb-3 flex items-end justify-between gap-4 border-b-2 border-ink pb-2">
+        <header className="mb-3 flex items-end justify-between gap-4 border-b border-ink pb-2">
           <div>
             <div className="text-[15px] font-extrabold">{company?.name ?? 'Loading sheet'}</div>
             <div className="text-[11px] text-ink-soft">
@@ -172,7 +172,7 @@ function GroupSection({ group, groupWord, first, money }: { group: LoadingGroup;
           ))}
         </tbody>
         <tfoot>
-          <tr className="border-t-2 border-ink font-bold">
+          <tr className="border-t border-ink font-bold">
             <td />
             <td className="py-1 pr-2">Total · {group.totals.shops} shop{group.totals.shops === 1 ? '' : 's'}</td>
             <td />

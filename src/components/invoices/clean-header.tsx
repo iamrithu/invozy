@@ -16,10 +16,9 @@ import { gstStateCode } from '@/lib/gst-state-codes';
 // 10.5 · 9px.
 // ---------------------------------------------------------------------------
 
-/** The single rule colour — every border on a CLEAN sheet. */
+/** The single rule — every border on a CLEAN sheet is this same 1px line in
+ * this one colour. Tables draw column rules only, never a line between rows. */
 export const CLEAN_RULE = 'border-[#6b7280]';
-/** Row separators inside a table: same 1px, lighter grey. */
-export const CLEAN_ROW_RULE = 'border-[#d1d5db]';
 /** Table header / grand-total row background. */
 export const CLEAN_FILL = 'bg-[#f3f4f6]';
 /** Secondary text. `clean-soft` (not a text-colour utility) so it survives

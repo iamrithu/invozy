@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { getAppSettings } from '@/lib/settings';
 import { ArrowLeft, FileMinus } from 'lucide-react';
 import { requireUser } from '@/lib/session';
 import { fmtInr, formatInvoiceDate } from '@/lib/gst';
@@ -19,7 +20,7 @@ export const dynamic = 'force-dynamic';
  * so the numbered document the customer holds never changes. */
 export default async function CreditNotePage({ params }: { params: Promise<{ id: string }> }) {
   const [{ id }] = await Promise.all([params, requireUser()]);
-  const [note, company] = await Promise.all([loadCreditNoteDocument(id), loadLetterheadCompany()]);
+  const [note, company, settings] = await Promise.all([loadCreditNoteDocument(id), loadLetterheadCompany(), getAppSettings()]);
   if (!note || !company) notFound();
 
   return (
@@ -59,7 +60,9 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
         <div className="order-2 min-w-0 rounded-xl2 border border-line bg-surface-alt p-3 shadow-card md:p-5 lg:order-1">
           <ResponsiveSheetScale>
             <div className="bg-white p-7 shadow-card">
-              <CreditNoteDocument note={note} company={company} />
+              <div className={`doc-rows-${settings.pdfItemRows}`}>
+                <CreditNoteDocument note={note} company={company} />
+              </div>
             </div>
           </ResponsiveSheetScale>
         </div>

@@ -16,7 +16,7 @@ import { numberToWords, amountToWordsWithPaise } from '@/lib/number-to-words';
 import { gstStateCode } from '@/lib/gst-state-codes';
 import { computeCapacities, paginateLinesUniform, useMeasuredSections, FRAME_FILL_PX } from './print-pagination';
 import { clampDiscount, printedLines, totalsLadder, type TotalsLadder } from './invoice-sheet';
-import { addressLine, CleanHeader, CLEAN_FILL, CLEAN_LABEL, CLEAN_ROW_RULE, CLEAN_RULE, CLEAN_SOFT, plainAmount } from './clean-header';
+import { addressLine, CleanHeader, CLEAN_FILL, CLEAN_LABEL, CLEAN_RULE, CLEAN_SOFT, plainAmount } from './clean-header';
 
 export type ClassicCompany = {
   name: string;
@@ -46,6 +46,10 @@ export type ClassicCompany = {
   signatureUrl?: string | null;
   /** Per-company display currency for printed amounts — defaults to INR via fmtInr() when absent. */
   currency?: string;
+  /** CLEAN only: how product rows are separated — column rules only
+   * (default), a line between rows, or light alternate shading. From the
+   * AppSetting table (src/lib/settings.ts); see `.doc-rows-*` in globals.css. */
+  pdfItemRows?: 'none' | 'lines' | 'zebra';
   /** PDF section toggles from Company settings — undefined behaves as "off" (hidden). */
   pdfShowBankDetails?: boolean;
   pdfShowHsnSummary?: boolean;
@@ -320,10 +324,12 @@ function cleanTheadRow({ editable, hasAltQty, altUnitLabel, showDisc }: ColumnCf
 }
 
 function cleanRowCells(l: ClassicLine, serial: number, ctx: RowCtx) {
-  const { company, editable, hasAltQty, showDisc, last, onUpdateLine, onIncrement, onDecrement, onRemoveLine } = ctx;
+  const { company, editable, hasAltQty, showDisc, onUpdateLine, onIncrement, onDecrement, onRemoveLine } = ctx;
   const amount = l.qty * l.rate * (1 - l.discount / 100);
   const altQty = l.altUnit && l.altQtyPerUnit ? l.qty * l.altQtyPerUnit : null;
-  const td = `px-1.5 py-1.5 align-top ${last ? '' : `border-b ${CLEAN_ROW_RULE}`}`;
+  // Column rules only — no line between item rows (the owner's call: a
+  // grid of horizontal rules made the product list read as a spreadsheet).
+  const td = 'px-1.5 py-1.5 align-top';
   const sep = `border-l ${CLEAN_RULE}`;
   return (
     <>
@@ -1224,7 +1230,7 @@ function CleanItemsTable({ company, lines, editable, cols, onUpdateLine, onIncre
   const n = columnCount(cols);
   return (
     <div className={`flex-none overflow-x-auto border-t ${CLEAN_RULE} print:overflow-visible`}>
-      <table className={`${CLEAN_ITEMS_TABLE} print:min-w-0 ${editable ? 'min-w-[680px]' : ''}`}>
+      <table className={`${CLEAN_ITEMS_TABLE} doc-rows-${company.pdfItemRows ?? 'none'} print:min-w-0 ${editable ? 'min-w-[680px]' : ''}`}>
         <thead>{theadRow(cols)}</thead>
         <tbody>
           {lines.length === 0 ? (
@@ -1235,7 +1241,9 @@ function CleanItemsTable({ company, lines, editable, cols, onUpdateLine, onIncre
             </tr>
           ) : (
             lines.map((l, i) => (
-              <tr key={l.lineId}>{rowCells(l, base + i + 1, { ...cols, company, last: i === lines.length - 1 && !fillPx, onUpdateLine, onIncrement, onDecrement, onRemoveLine })}</tr>
+              <tr key={l.lineId} className="clean-item-row">
+                {rowCells(l, base + i + 1, { ...cols, company, last: i === lines.length - 1 && !fillPx, onUpdateLine, onIncrement, onDecrement, onRemoveLine })}
+              </tr>
             ))
           )}
           {fillPx > 0 && (
@@ -1395,7 +1403,7 @@ function CleanHsnSummary({ company, totals, hsnRows, hsnTotal }: SharedProps) {
         </thead>
         <tbody>
           {hsnRows.map((r, i) => (
-            <tr key={r.hsn} className={i > 0 ? `border-t ${CLEAN_ROW_RULE}` : ''}>
+            <tr key={r.hsn}>
               <td className="px-2.5 py-1">{r.hsn}</td>
               <td className={`${td} ${sep}`}>{plainAmount(r.taxableValue, currency)}</td>
               {taxCells(r, true)}
@@ -1410,7 +1418,7 @@ function CleanHsnSummary({ company, totals, hsnRows, hsnTotal }: SharedProps) {
           </tr>
         </tbody>
       </table>
-      <div className={`border-t ${CLEAN_ROW_RULE} px-2.5 py-1.5`}>
+      <div className={`border-t ${CLEAN_RULE} px-2.5 py-1.5`}>
         <span className={CLEAN_LABEL}>Tax amount in words</span>
         INR {amountToWordsWithPaise(hsnTotal.totalTax)} Only
       </div>
