@@ -7,7 +7,8 @@ import { toActionError } from '@/lib/action-result';
 import { logActivity } from '@/lib/activity';
 import { fmtInr } from '@/lib/gst';
 import { setAppSetting, type PdfItemRows } from '@/lib/settings';
-import { DEFAULT_PDF_LAYOUT, normalizePdfLayout, type PdfLayout } from '@/lib/pdf-layout';
+import { normalizePdfLayout, type PdfLayout } from '@/lib/pdf-layout';
+import type { InvoiceTemplateName } from '@/lib/invoice-template';
 
 /** The dashboard's monthly sales target (net sales, ₹). Null clears it. */
 export async function setMonthlySalesTarget(amount: number | null): Promise<{ error?: string }> {
@@ -23,43 +24,38 @@ export async function setMonthlySalesTarget(amount: number | null): Promise<{ er
   }
 }
 
-/** How product rows are separated on CLEAN-style documents. Every stored
- * invoice PDF is drawn in the old style, so Company.updatedAt (part of each
- * PDF's cache key, see src/lib/invoice-pdf.ts) is bumped to rebuild them. */
-export async function setPdfItemRows(style: PdfItemRows): Promise<{ error?: string }> {
-  try {
-    const user = await requireOwner();
-    if (!['none', 'lines', 'zebra'].includes(style)) return { error: 'Pick one of the row styles.' };
-    await setAppSetting('pdfItemRows', style);
-    await prisma.$executeRaw`UPDATE "Company" SET "updatedAt" = NOW()`;
-    await logActivity({ userId: user.id, action: 'company.pdf-rows', entityType: 'company', summary: `PDF product rows: ${style === 'none' ? 'column lines only' : style === 'lines' ? 'a line between rows' : 'light shading on alternate rows'}` });
-    revalidatePath('/company');
-    return {};
-  } catch (err) {
-    return toActionError(err);
-  }
-}
+const TEMPLATE_NAMES: readonly InvoiceTemplateName[] = ['MODERN', 'CLASSIC', 'CLEAN'];
+const ROW_STYLES: readonly PdfItemRows[] = ['none', 'lines', 'zebra'];
+const ROW_STYLE_LABEL: Record<PdfItemRows, string> = { none: 'column lines only', lines: 'a line between rows', zebra: 'light shading' };
 
-/** Company → PDF layout: paper margins, row spacing, rows per page and the
- * page furniture of every PDF. Values are clamped to sensible limits
- * (src/lib/pdf-layout.ts). Bumps Company.updatedAt like setPdfItemRows, so
- * stored invoice PDFs are rebuilt with the new layout. */
-export async function setPdfLayout(input: Partial<PdfLayout> | null): Promise<{ error?: string; layout?: PdfLayout }> {
+/** Company → Invoice template & PDF layout, saved together: the template,
+ * how product rows are separated, and the layout (margins, row spacing,
+ * rows per page, page furniture — clamped by src/lib/pdf-layout.ts). Also
+ * moves Company.updatedAt, part of every stored invoice PDF's cache key
+ * (src/lib/invoice-pdf.ts), so saved PDFs redraw the next time they open. */
+export async function savePdfSettings(input: {
+  invoiceTemplate: InvoiceTemplateName;
+  pdfItemRows: PdfItemRows;
+  layout: Partial<PdfLayout>;
+}): Promise<{ error?: string; layout?: PdfLayout }> {
   try {
     const user = await requireOwner();
-    const layout = normalizePdfLayout(input ?? DEFAULT_PDF_LAYOUT);
+    if (!TEMPLATE_NAMES.includes(input.invoiceTemplate)) return { error: 'Pick one of the invoice templates.' };
+    if (!ROW_STYLES.includes(input.pdfItemRows)) return { error: 'Pick one of the row styles.' };
+    const layout = normalizePdfLayout(input.layout);
+    // Settings first: if the settings table isn't there yet, nothing changes.
+    await setAppSetting('pdfItemRows', input.pdfItemRows);
     await setAppSetting('pdfLayout', layout);
-    await prisma.$executeRaw`UPDATE "Company" SET "updatedAt" = NOW()`;
+    await prisma.company.updateMany({ data: { invoiceTemplate: input.invoiceTemplate, updatedAt: new Date() } });
     const l = layout;
     await logActivity({
       userId: user.id,
       action: 'company.pdf-layout',
       entityType: 'company',
-      summary: input
-        ? `PDF layout: margins ${l.marginTop}/${l.marginRight}/${l.marginBottom}/${l.marginLeft} mm, ${l.rowSpacing} rows, up to ${l.maxRowsPerPage} rows a page (${l.maxRowsWithTotals} with totals)`
-        : 'PDF layout reset to defaults',
+      summary: `Invoice PDF: ${input.invoiceTemplate.charAt(0) + input.invoiceTemplate.slice(1).toLowerCase()} template, ${ROW_STYLE_LABEL[input.pdfItemRows]}, margins ${l.marginTop}/${l.marginRight}/${l.marginBottom}/${l.marginLeft} mm, ${l.rowSpacing} rows, up to ${l.maxRowsPerPage} rows a page (${l.maxRowsWithTotals} with totals)`,
     });
     revalidatePath('/company');
+    revalidatePath('/invoices', 'layout');
     return { layout };
   } catch (err) {
     return toActionError(err);

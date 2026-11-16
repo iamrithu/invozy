@@ -28,7 +28,6 @@ import {
   CircleCheck,
   AlertTriangle,
   Undo2,
-  Ruler,
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -40,10 +39,8 @@ import { ZoomableImage } from '@/components/ui/image-lightbox';
 import { StateSelect, DistrictSelect } from '@/components/ui/location-field';
 import { isThemePresetKey, THEME_PRESET_KEYS, THEME_PRESETS, themePreviewColor, type ThemePresetKey } from '@/lib/theme-presets';
 import type { toPublicCompany } from '@/lib/public-company';
-import type { InvoiceTemplateName } from '@/lib/invoice-template';
 import type { PdfItemRows } from '@/lib/settings';
-import { PdfRowStyle } from './pdf-row-style';
-import { PdfLayoutSection } from './pdf-layout-settings';
+import { PdfSettingsSection } from './pdf-layout-settings';
 import { DEFAULT_PDF_LAYOUT, type PdfLayout } from '@/lib/pdf-layout';
 import { cn } from '@/lib/utils';
 
@@ -52,12 +49,6 @@ import { cn } from '@/lib/utils';
 export type PublicCompany = ReturnType<typeof toPublicCompany<Company>>;
 
 type Errors = Record<string, string | undefined>;
-
-const TEMPLATES: { id: InvoiceTemplateName; name: string; blurb: string }[] = [
-  { id: 'MODERN', name: 'Modern', blurb: 'Colour accent, rounded card. Best for simple retail bills.' },
-  { id: 'CLASSIC', name: 'Classic', blurb: 'Tally-style GST invoice with IRN/QR, HSN summary and e-Way Bill page.' },
-  { id: 'CLEAN', name: 'Clean', blurb: 'Centered letterhead, logo and QR the same size, thin even lines, one font weight.' },
-];
 
 const CURRENCIES = [
   { value: 'INR', label: 'INR — Indian Rupee' },
@@ -70,11 +61,11 @@ const CURRENCIES = [
 const SECTIONS = [
   { id: 'business', label: 'Business', icon: Building2 },
   { id: 'address', label: 'Address & registration', icon: MapPin },
-  { id: 'brand', label: 'Theme & template', icon: Palette },
+  { id: 'brand', label: 'Theme', icon: Palette },
+  { id: 'pdf-layout', label: 'Template & PDF', icon: FileText },
   { id: 'tax', label: 'GST & tax', icon: Percent },
   { id: 'bank', label: 'Bank & UPI', icon: Landmark },
   { id: 'invoice', label: 'Numbering & PDF', icon: Hash },
-  { id: 'pdf-layout', label: 'PDF layout', icon: Ruler },
   { id: 'signature', label: 'Signature', icon: PenLine },
   { id: 'einvoice', label: 'e-Invoice API', icon: ShieldCheck },
 ] as const;
@@ -187,12 +178,14 @@ export function CompanyProfile({ company: co, pdfItemRows = 'none', pdfLayout = 
           <Section
             {...sectionProps('brand')}
             icon={Palette}
-            title="Theme & invoice template"
-            hint="The app's colour and how invoice PDFs look. The logo is at the top of this page."
-            fields={['themeColor', 'invoiceTemplate']}
-            view={<BrandView co={co} pdfItemRows={pdfItemRows} />}
+            title="Theme colour"
+            hint="The app's colour, kept readable in light and dark mode. The logo is at the top of this page."
+            fields={['themeColor']}
+            view={<BrandView co={co} />}
             form={() => <BrandFields co={co} />}
           />
+
+          <PdfSettingsSection id="pdf-layout" template={co.invoiceTemplate} rows={pdfItemRows} layout={pdfLayout} />
 
           <Section
             {...sectionProps('tax')}
@@ -335,8 +328,6 @@ export function CompanyProfile({ company: co, pdfItemRows = 'none', pdfLayout = 
               </div>
             )}
           />
-
-          <PdfLayoutSection id="pdf-layout" value={pdfLayout} />
 
           <Section
             {...sectionProps('signature')}
@@ -729,31 +720,12 @@ function AddressFields({ co, errors }: { co: PublicCompany; errors: Errors }) {
   );
 }
 
-function BrandView({ co, pdfItemRows }: { co: PublicCompany; pdfItemRows: PdfItemRows }) {
+function BrandView({ co }: { co: PublicCompany }) {
   const themeLabel = isThemePresetKey(co.themeColor) ? THEME_PRESETS[co.themeColor as ThemePresetKey].label : 'Custom';
-  const template = TEMPLATES.find((t) => t.id === co.invoiceTemplate) ?? TEMPLATES[0];
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-      <div>
-        <div className="text-[11px] font-bold uppercase tracking-wide text-ink-faint">Theme colour</div>
-        <div className="mt-1.5 flex items-center gap-2.5">
-          <span className="h-8 w-8 flex-shrink-0 rounded-sm2 border border-line" style={{ background: themePreviewColor(co.themeColor) }} />
-          <span className="text-[13.5px] font-semibold text-ink">{themeLabel}</span>
-        </div>
-      </div>
-      <div>
-        <div className="text-[11px] font-bold uppercase tracking-wide text-ink-faint">Invoice template</div>
-        <div className="mt-1.5 grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-          <TemplateThumb id={template.id} />
-          <div className="min-w-0">
-            <div className="text-[13.5px] font-semibold text-ink">{template.name}</div>
-            <div className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">{template.blurb}</div>
-          </div>
-        </div>
-      </div>
-      <div className="sm:col-span-2">
-        <PdfRowStyle value={pdfItemRows} />
-      </div>
+    <div className="flex items-center gap-2.5">
+      <span className="h-8 w-8 flex-shrink-0 rounded-sm2 border border-line" style={{ background: themePreviewColor(co.themeColor) }} />
+      <span className="text-[13.5px] font-semibold text-ink">{themeLabel}</span>
     </div>
   );
 }
@@ -764,7 +736,6 @@ function BrandFields({ co }: { co: PublicCompany }) {
   // preset is clicked and then the custom colour is wanted back.
   const [lastCustomColor, setLastCustomColor] = useState<string>(isThemePresetKey(co.themeColor) ? '#ff0000' : co.themeColor || '#ff0000');
   const isCustomActive = !isThemePresetKey(themeColor);
-  const [template, setTemplate] = useState<InvoiceTemplateName>(co.invoiceTemplate);
 
   return (
     <div className="space-y-5">
@@ -811,35 +782,6 @@ function BrandFields({ co }: { co: PublicCompany }) {
         </div>
         <input type="hidden" name="themeColor" value={themeColor} />
         <p className="mt-2 text-[11px] text-ink-faint">Any colour works — the app keeps it readable in light and dark mode.</p>
-      </div>
-      <div>
-        <div className="mb-1.5 text-[11px] font-bold text-ink-faint">Invoice template</div>
-        <div role="radiogroup" aria-label="Invoice template" className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-          {TEMPLATES.map((t) => {
-            const active = template === t.id;
-            return (
-              <button
-                key={t.id}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                onClick={() => setTemplate(t.id)}
-                // 2px border when picked, padding trimmed by the same 1px so
-                // the card doesn't shift.
-                className={cn('grid content-start gap-2 rounded-lg2 bg-surface text-left transition-colors', active ? 'border-2 border-brand p-[9px]' : 'border border-line p-2.5 hover:border-ink-faint')}
-              >
-                <TemplateThumb id={t.id} />
-                <span className="flex items-center justify-between gap-2 text-[13px] font-bold text-ink">
-                  {t.name}
-                  {active && <span className="rounded-sm2 bg-brand-light px-1.5 py-0.5 text-[10.5px] font-bold text-brand-dark">Selected</span>}
-                </span>
-                <span className="text-[11.5px] leading-snug text-ink-soft">{t.blurb}</span>
-              </button>
-            );
-          })}
-        </div>
-        <input type="hidden" name="invoiceTemplate" value={template} />
-        <p className="mt-2 text-[11px] text-ink-faint">Applies to every invoice PDF, including saved ones — each is redrawn the next time it&apos;s opened.</p>
       </div>
     </div>
   );
@@ -1020,50 +962,3 @@ function RatePill({ value, label, enabled }: { value: number; label: string; ena
   );
 }
 
-/** A tiny schematic of each template's first page — always on white paper,
- * like the invoice itself, whatever the app theme. */
-function TemplateThumb({ id }: { id: InvoiceTemplateName }) {
-  // tailwind-merge (cn) so a bar's own height/colour reliably replaces the
-  // default — plain string concatenation leaves that to CSS order.
-  const bar = (cls: string) => cn('block h-1.5 rounded-[2px] bg-[#d1d5db]', cls);
-  return (
-    <span aria-hidden="true" className="grid h-[84px] content-start gap-1.5 overflow-hidden rounded-md2 border border-line bg-white p-2.5">
-      {id === 'MODERN' && (
-        <>
-          <span className={bar('h-2.5 w-[40%] bg-brand')} />
-          <span className={bar('w-[70%]')} />
-          <span className={bar('w-[55%]')} />
-          <span className={bar('h-[26px] bg-[#f1f5f9]')} />
-        </>
-      )}
-      {id === 'CLASSIC' && (
-        <>
-          <span className={bar('h-2 bg-[#9ca3af]')} />
-          <span className="flex gap-1.5">
-            <span className={bar('h-[18px] w-[18px] flex-none')} />
-            <span className="grid flex-1 content-start gap-1">
-              <span className={bar('w-[60%]')} />
-              <span className={bar('w-[90%]')} />
-            </span>
-          </span>
-          <span className={bar('h-[26px] bg-[#e5e7eb]')} />
-        </>
-      )}
-      {id === 'CLEAN' && (
-        <>
-          <span className={bar('mx-auto w-[40%]')} />
-          <span className="grid grid-cols-[22px_1fr_22px] items-center gap-1.5">
-            <span className={bar('h-[22px] bg-brand opacity-70')} />
-            <span className="grid justify-items-center gap-[3px]">
-              <span className={bar('h-[7px] w-[70%] bg-[#6b7280]')} />
-              <span className={bar('w-[90%]')} />
-              <span className={bar('w-[60%]')} />
-            </span>
-            <span className={bar('h-[22px] bg-[#1c1c1c]')} />
-          </span>
-          <span className={bar('h-6 rounded-none border border-[#9ca3af] bg-[#f3f4f6]')} />
-        </>
-      )}
-    </span>
-  );
-}

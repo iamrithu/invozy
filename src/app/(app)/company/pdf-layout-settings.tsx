@@ -3,12 +3,26 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Check, Flag, Pencil, RotateCcw, Ruler, X } from 'lucide-react';
-import { setPdfLayout } from '@/actions/settings';
+import { Check, FileText, Flag, Pencil, RotateCcw, X } from 'lucide-react';
+import { savePdfSettings } from '@/actions/settings';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { A4, contentHeightMm, contentWidthMm, DEFAULT_PDF_LAYOUT, normalizePdfLayout, PDF_LIMITS, type PdfLayout, type RowSpacing } from '@/lib/pdf-layout';
+import type { InvoiceTemplateName } from '@/lib/invoice-template';
+import type { PdfItemRows } from '@/lib/settings';
 import { cn } from '@/lib/utils';
+
+const TEMPLATES: { id: InvoiceTemplateName; name: string; blurb: string }[] = [
+  { id: 'MODERN', name: 'Modern', blurb: 'Colour accent, rounded card. Best for simple retail bills.' },
+  { id: 'CLASSIC', name: 'Classic', blurb: 'Tally-style GST invoice with IRN/QR, HSN summary and e-Way Bill page.' },
+  { id: 'CLEAN', name: 'Clean', blurb: 'Centered letterhead, logo and QR the same size, thin even lines, one font weight.' },
+];
+
+const ROW_STYLES: { id: PdfItemRows; name: string; blurb: string }[] = [
+  { id: 'none', name: 'Column lines only', blurb: 'Clean, no line between products.' },
+  { id: 'lines', name: 'Line between rows', blurb: 'A thin rule under each product.' },
+  { id: 'zebra', name: 'Light shading', blurb: 'Every other row lightly shaded.' },
+];
 
 const SPACING: { id: RowSpacing; name: string; blurb: string; gap: number }[] = [
   { id: 'compact', name: 'Compact', blurb: 'More rows fit a page', gap: 3 },
@@ -16,30 +30,40 @@ const SPACING: { id: RowSpacing; name: string; blurb: string; gap: number }[] = 
   { id: 'relaxed', name: 'Relaxed', blurb: 'Airier, fewer rows a page', gap: 7 },
 ];
 
-/** Company → PDF layout: the paper margins, item-row spacing, how many item
- * rows a page may hold, and the furniture on multi-page invoices. Its own
- * card (not part of the Company form) because it saves to the settings
- * table — see src/actions/settings.ts setPdfLayout. Every invoice template
- * (Modern, Classic, Clean) and every other PDF uses it. */
-export function PdfLayoutSection({ id, value }: { id: string; value: PdfLayout }) {
+/** Company → Invoice template & PDF layout: everything about how the PDFs
+ * look in one card — the invoice template, how product rows are separated,
+ * the paper margins, item-row spacing, how many rows a page may hold, and
+ * the furniture on multi-page invoices. Saved together by
+ * src/actions/settings.ts savePdfSettings. */
+export function PdfSettingsSection({ id, template, rows, layout: value }: { id: string; template: InvoiceTemplateName; rows: PdfItemRows; layout: PdfLayout }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<PdfLayout>(value);
+  const [draftTemplate, setDraftTemplate] = useState<InvoiceTemplateName>(template);
+  const [draftRows, setDraftRows] = useState<PdfItemRows>(rows);
   const [pending, start] = useTransition();
+  const current = TEMPLATES.find((t) => t.id === template) ?? TEMPLATES[0];
 
   const set = <K extends keyof PdfLayout>(key: K, v: PdfLayout[K]) => setDraft((d) => ({ ...d, [key]: v }));
   const isDefault = JSON.stringify(normalizePdfLayout(draft)) === JSON.stringify(DEFAULT_PDF_LAYOUT);
 
-  function save(next: PdfLayout | null) {
+  function startEditing() {
+    setDraft(value);
+    setDraftTemplate(template);
+    setDraftRows(rows);
+    setEditing(true);
+  }
+
+  function save() {
     start(async () => {
-      const res = await setPdfLayout(next);
+      const res = await savePdfSettings({ invoiceTemplate: draftTemplate, pdfItemRows: draftRows, layout: normalizePdfLayout(draft) });
       if (res.error || !res.layout) {
-        toast.error(res.error ?? 'Could not save the PDF layout.');
+        toast.error(res.error ?? 'Could not save the PDF settings.');
         return;
       }
       setDraft(res.layout);
       setEditing(false);
-      toast.success(next ? 'PDF layout saved — invoices redraw with it' : 'PDF layout reset to the defaults');
+      toast.success('Invoice template & PDF layout saved — invoices redraw with it');
       router.refresh();
     });
   }
@@ -48,20 +72,17 @@ export function PdfLayoutSection({ id, value }: { id: string; value: PdfLayout }
     <section id={id} className={cn('scroll-mt-[118px] rounded-xl2 border bg-surface shadow-card sm:scroll-mt-[128px] lg:scroll-mt-[80px]', editing ? 'border-brand' : 'border-line')}>
       <header className="flex items-start gap-3 border-b border-line px-4 py-3 sm:px-5">
         <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-sm2 bg-brand-light text-brand-dark">
-          <Ruler size={15} />
+          <FileText size={15} />
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="text-[14px] font-extrabold text-ink sm:text-[15px]">PDF layout</h2>
-          <p className="mt-0.5 text-[11.5px] leading-snug text-ink-faint">Paper margins, row spacing and how many items a page holds — for the Modern, Classic and Clean invoices and every other PDF.</p>
+          <h2 className="text-[14px] font-extrabold text-ink sm:text-[15px]">Invoice template &amp; PDF layout</h2>
+          <p className="mt-0.5 text-[11.5px] leading-snug text-ink-faint">How every invoice PDF looks: the template, product rows, paper margins and how many items a page holds.</p>
         </div>
         {!editing && (
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
-              setDraft(value);
-              setEditing(true);
-            }}
+            onClick={startEditing}
           >
             <Pencil size={13} /> Edit
           </Button>
@@ -72,12 +93,65 @@ export function PdfLayoutSection({ id, value }: { id: string; value: PdfLayout }
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            save(normalizePdfLayout(draft));
+            save();
           }}
           className="px-4 py-4 sm:px-5"
         >
           <div className="grid grid-cols-1 gap-5 md:grid-cols-[minmax(0,1fr)_150px]">
             <div className="space-y-5">
+              <Group title="Invoice template" note="Applies to every invoice PDF, including saved ones — each is redrawn the next time it's opened.">
+                <div role="radiogroup" aria-label="Invoice template" className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                  {TEMPLATES.map((t) => {
+                    const active = draftTemplate === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setDraftTemplate(t.id)}
+                        // 2px border when picked, padding trimmed by the same 1px so the card doesn't shift.
+                        className={cn('grid content-start gap-2 rounded-lg2 bg-surface text-left transition-colors', active ? 'border-2 border-brand p-[9px]' : 'border border-line p-2.5 hover:border-ink-faint')}
+                      >
+                        <TemplateThumb id={t.id} />
+                        <span className="flex items-center justify-between gap-2 text-[13px] font-bold text-ink">
+                          {t.name}
+                          {active && <span className="rounded-sm2 bg-brand-light px-1.5 py-0.5 text-[10.5px] font-bold text-brand-dark">Selected</span>}
+                        </span>
+                        <span className="text-[11.5px] leading-snug text-ink-soft">{t.blurb}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Group>
+
+              <Group title="Product rows" note="How products are separated on the Clean invoice, credit notes, receipts and statements.">
+                <div role="radiogroup" aria-label="Product rows" className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {ROW_STYLES.map((o) => {
+                    const active = draftRows === o.id;
+                    return (
+                      <button
+                        key={o.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setDraftRows(o.id)}
+                        className={cn(
+                          'grid grid-cols-[52px_minmax(0,1fr)] items-center gap-2.5 rounded-lg2 bg-surface text-left transition-colors',
+                          active ? 'border-2 border-brand p-[7px]' : 'border border-line p-2 hover:border-ink-faint'
+                        )}
+                      >
+                        <RowsThumb id={o.id} />
+                        <span className="min-w-0">
+                          <span className="block text-[12.5px] font-bold text-ink">{o.name}</span>
+                          <span className="block text-[11px] leading-snug text-ink-soft">{o.blurb}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Group>
+
               <Group title="Paper margins" note={`A4, in millimetres (${PDF_LIMITS.margin.min}–${PDF_LIMITS.margin.max}). The printable area is ${fmtMm(contentWidthMm(normalizePdfLayout(draft)))} × ${fmtMm(contentHeightMm(normalizePdfLayout(draft)))} mm.`}>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <MmInput label="Top" value={draft.marginTop} onChange={(v) => set('marginTop', v)} />
@@ -176,8 +250,8 @@ export function PdfLayoutSection({ id, value }: { id: string; value: PdfLayout }
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
-            <Button type="button" variant="ghost" disabled={pending || isDefault} onClick={() => setDraft(DEFAULT_PDF_LAYOUT)}>
-              <RotateCcw size={13} /> Defaults
+            <Button type="button" variant="ghost" disabled={pending || isDefault} onClick={() => setDraft(DEFAULT_PDF_LAYOUT)} title="Margins, spacing and rows per page back to the defaults (the template and row style stay)">
+              <RotateCcw size={13} /> Default layout
             </Button>
             <div className="flex gap-2">
               <Button
@@ -200,7 +274,16 @@ export function PdfLayoutSection({ id, value }: { id: string; value: PdfLayout }
       ) : (
         <div className="grid grid-cols-1 gap-4 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_110px] sm:px-5">
           <div className="space-y-4">
+            <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+              <TemplateThumb id={current.id} />
+              <div className="min-w-0">
+                <div className="text-[11px] font-bold uppercase tracking-wide text-ink-faint">Invoice template</div>
+                <div className="mt-0.5 text-[13.5px] font-semibold text-ink">{current.name}</div>
+                <div className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">{current.blurb}</div>
+              </div>
+            </div>
             <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
+              <ViewRow label="Product rows" value={ROW_STYLES.find((r) => r.id === rows)?.name ?? 'Column lines only'} />
               <ViewRow label="Margins (top · right · bottom · left)" value={`${fmtMm(value.marginTop)} · ${fmtMm(value.marginRight)} · ${fmtMm(value.marginBottom)} · ${fmtMm(value.marginLeft)} mm`} mono />
               <ViewRow label="Item row spacing" value={SPACING.find((s) => s.id === value.rowSpacing)?.name ?? 'Normal'} />
               <ViewRow label="Items per page" value={`Up to ${value.maxRowsPerPage}`} />
@@ -363,5 +446,76 @@ function PaperPreview({ layout }: { layout: PdfLayout }) {
       </div>
       {layout.pageFooter && <span className="absolute inset-x-[10%] bottom-[2%] block h-[2px] rounded-full bg-[#d1d5db]" />}
     </div>
+  );
+}
+
+/** A tiny schematic of each template's first page — always on white paper,
+ * like the invoice itself, whatever the app theme. */
+function TemplateThumb({ id }: { id: InvoiceTemplateName }) {
+  // tailwind-merge (cn) so a bar's own height/colour reliably replaces the
+  // default — plain string concatenation leaves that to CSS order.
+  const bar = (cls: string) => cn('block h-1.5 rounded-[2px] bg-[#d1d5db]', cls);
+  return (
+    <span aria-hidden="true" className="grid h-[84px] content-start gap-1.5 overflow-hidden rounded-md2 border border-line bg-white p-2.5">
+      {id === 'MODERN' && (
+        <>
+          <span className={bar('h-2.5 w-[40%] bg-brand')} />
+          <span className={bar('w-[70%]')} />
+          <span className={bar('w-[55%]')} />
+          <span className={bar('h-[26px] bg-[#f1f5f9]')} />
+        </>
+      )}
+      {id === 'CLASSIC' && (
+        <>
+          <span className={bar('h-2 bg-[#9ca3af]')} />
+          <span className="flex gap-1.5">
+            <span className={bar('h-[18px] w-[18px] flex-none')} />
+            <span className="grid flex-1 content-start gap-1">
+              <span className={bar('w-[60%]')} />
+              <span className={bar('w-[90%]')} />
+            </span>
+          </span>
+          <span className={bar('h-[26px] bg-[#e5e7eb]')} />
+        </>
+      )}
+      {id === 'CLEAN' && (
+        <>
+          <span className={bar('mx-auto w-[40%]')} />
+          <span className="grid grid-cols-[22px_1fr_22px] items-center gap-1.5">
+            <span className={bar('h-[22px] bg-brand opacity-70')} />
+            <span className="grid justify-items-center gap-[3px]">
+              <span className={bar('h-[7px] w-[70%] bg-[#6b7280]')} />
+              <span className={bar('w-[90%]')} />
+              <span className={bar('w-[60%]')} />
+            </span>
+            <span className={bar('h-[22px] bg-[#1c1c1c]')} />
+          </span>
+          <span className={bar('h-6 rounded-none border border-[#9ca3af] bg-[#f3f4f6]')} />
+        </>
+      )}
+    </span>
+  );
+}
+
+/** A tiny paper table showing the row style — fixed paper colours, like the PDF itself. */
+function RowsThumb({ id }: { id: PdfItemRows }) {
+  return (
+    <span aria-hidden className="block overflow-hidden rounded-[3px] border border-[#6b7280] bg-white">
+      <span className="block h-[7px] border-b border-[#6b7280] bg-[#f3f4f6]" />
+      {[0, 1, 2, 3].map((i) => (
+        <span
+          key={i}
+          className={cn(
+            'grid h-[7px] grid-cols-[1fr_2.4fr_1fr]',
+            id === 'lines' && i > 0 && 'border-t border-[#6b7280]',
+            id === 'zebra' && i % 2 === 1 && 'bg-[#e9ebee]'
+          )}
+        >
+          <span />
+          <span className="border-l border-[#6b7280]" />
+          <span className="border-l border-[#6b7280]" />
+        </span>
+      ))}
+    </span>
   );
 }
