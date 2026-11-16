@@ -5,8 +5,8 @@ import { parseReportTab } from './report-tabs';
 
 export const dynamic = 'force-dynamic';
 
-export default async function ReportsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
-  const { tab } = await searchParams;
+export default async function ReportsPage({ searchParams }: { searchParams: Promise<{ tab?: string; period?: string }> }) {
+  const { tab, period } = await searchParams;
   // Opening on the Overview (the default), the page renders with its
   // all-time, unfiltered figures already in place — the client's default
   // filter state — so it paints with real data instead of a loading flash,
@@ -14,8 +14,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   // The profit estimate is left to load client-side (heaviest query, below
   // the fold). A link straight to another tab skips all of this: those
   // tabs load their own data with skeletons, and nothing here would be
-  // shown.
-  if (parseReportTab(tab) !== 'overview') {
+  // shown — and so does a link with dates in it (`?period=`), since the
+  // seed is the all-time view.
+  if (parseReportTab(tab) !== 'overview' || (period && period !== 'all')) {
     const company = await getCompany();
     return <ReportsClient currency={company.currency} />;
   }

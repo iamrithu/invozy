@@ -1,5 +1,6 @@
 'use server';
 
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireUser } from '@/lib/session';
 import { istDayRangeUtc, todayIst } from '@/lib/dates';
@@ -21,30 +22,52 @@ function span(from: string, to: string) {
 }
 
 export type PeriodFigures = {
-  sales: number;
-  credits: number;
-  netSales: number;
+  /** Issued invoices dated in the period: count and billed total. */
   invoices: number;
+  sales: number;
+  /** Drafts dated in the period (not issued, so not in `sales`). */
+  drafts: number;
+  draftsValue: number;
+  credits: number;
+  creditCount: number;
+  netSales: number;
+  /** Cash received in the period (by payment date), credit notes excluded. */
   collected: number;
   /** Distinct customers (walk-in guests included) with an issued invoice in
    * the period, and how many of them were billed for the first time ever. */
   customers: number;
   newCustomers: number;
-  /** What this period's invoices still owe today. */
+  /** Distinct products on the period's issued invoices, and their lines. */
+  productsSold: number;
+  lines: number;
+  /** What the period's invoices still owe today, and the overdue part. */
   unpaid: number;
+  openCount: number;
+  overdue: number;
+  overdueCount: number;
+  /** Purchase bills dated in the period. */
+  purchases: number;
+  purchaseCount: number;
+  suppliers: number;
 };
 
-async function figures(r: { gte: Date; lt: Date }): Promise<PeriodFigures> {
-  const [[inv], [cn], [pay], [fresh]] = await Promise.all([
-    prisma.$queryRaw<{ total: number; n: number; customers: number; unpaid: number }[]>`
+async function figures(r: { gte: Date; lt: Date }, todayStart: Date): Promise<PeriodFigures> {
+  const [[inv], [draft], [cn], [pay], [fresh], [items], [buy]] = await Promise.all([
+    prisma.$queryRaw<{ total: number; n: number; customers: number; unpaid: number; open: number; overdue: number; overdueCount: number }[]>`
       SELECT
         COALESCE(SUM(total), 0)::float8 AS total,
         COUNT(*)::int AS n,
         COUNT(DISTINCT "customerId")::int AS customers,
-        COALESCE(SUM(GREATEST(total - "amountPaid", 0)) FILTER (WHERE status IN ('SENT', 'PARTIALLY_PAID')), 0)::float8 AS unpaid
+        COALESCE(SUM(GREATEST(total - "amountPaid", 0)) FILTER (WHERE status IN ('SENT', 'PARTIALLY_PAID')), 0)::float8 AS unpaid,
+        (COUNT(*) FILTER (WHERE status IN ('SENT', 'PARTIALLY_PAID') AND total - "amountPaid" > 0.004))::int AS open,
+        COALESCE(SUM(GREATEST(total - "amountPaid", 0)) FILTER (WHERE status IN ('SENT', 'PARTIALLY_PAID') AND due < ${todayStart}), 0)::float8 AS overdue,
+        (COUNT(*) FILTER (WHERE status IN ('SENT', 'PARTIALLY_PAID') AND total - "amountPaid" > 0.004 AND due < ${todayStart}))::int AS "overdueCount"
       FROM "Invoice" WHERE status <> 'DRAFT' AND date >= ${r.gte} AND date < ${r.lt}`,
-    prisma.$queryRaw<{ total: number }[]>`
-      SELECT COALESCE(SUM(total), 0)::float8 AS total FROM "CreditNote" WHERE date >= ${r.gte} AND date < ${r.lt}`,
+    prisma.$queryRaw<{ n: number; total: number }[]>`
+      SELECT COUNT(*)::int AS n, COALESCE(SUM(total), 0)::float8 AS total
+      FROM "Invoice" WHERE status = 'DRAFT' AND date >= ${r.gte} AND date < ${r.lt}`,
+    prisma.$queryRaw<{ total: number; n: number }[]>`
+      SELECT COALESCE(SUM(total), 0)::float8 AS total, COUNT(*)::int AS n FROM "CreditNote" WHERE date >= ${r.gte} AND date < ${r.lt}`,
     // Cash actually received — a credit note settles an invoice without any
     // money changing hands, so its payment row isn't a collection.
     prisma.$queryRaw<{ total: number }[]>`
@@ -56,16 +79,34 @@ async function figures(r: { gte: Date; lt: Date }): Promise<PeriodFigures> {
         SELECT "customerId" FROM "Invoice" WHERE status <> 'DRAFT'
         GROUP BY "customerId" HAVING MIN(date) >= ${r.gte} AND MIN(date) < ${r.lt}
       ) t`,
+    prisma.$queryRaw<{ products: number; lines: number }[]>`
+      SELECT COUNT(DISTINCT it."productId")::int AS products, COUNT(*)::int AS lines
+      FROM "InvoiceItem" it JOIN "Invoice" i ON i.id = it."invoiceId"
+      WHERE i.status <> 'DRAFT' AND i.date >= ${r.gte} AND i.date < ${r.lt}`,
+    prisma.$queryRaw<{ total: number; n: number; suppliers: number }[]>`
+      SELECT COALESCE(SUM(total), 0)::float8 AS total, COUNT(*)::int AS n, COUNT(DISTINCT "supplierId")::int AS suppliers
+      FROM "Purchase" WHERE date >= ${r.gte} AND date < ${r.lt}`,
   ]);
   return {
-    sales: inv.total,
-    credits: cn.total,
-    netSales: inv.total - cn.total,
     invoices: inv.n,
+    sales: inv.total,
+    drafts: draft.n,
+    draftsValue: draft.total,
+    credits: cn.total,
+    creditCount: cn.n,
+    netSales: inv.total - cn.total,
     collected: pay.total,
     customers: inv.customers,
     newCustomers: fresh.n,
+    productsSold: items.products,
+    lines: items.lines,
     unpaid: inv.unpaid,
+    openCount: inv.open,
+    overdue: inv.overdue,
+    overdueCount: inv.overdueCount,
+    purchases: buy.total,
+    purchaseCount: buy.n,
+    suppliers: buy.suppliers,
   };
 }
 
@@ -84,9 +125,10 @@ export type DashboardKpis = {
  * come from resolveDashboardRange (inclusive IST dates). */
 export async function getDashboardKpis(range: { from: string; to: string; prevFrom: string; prevTo: string }): Promise<DashboardKpis> {
   await requireUser();
+  const todayStart = istDayRangeUtc(todayIst()).gte;
   const [current, previous, p, pp] = await Promise.all([
-    figures(span(range.from, range.to)),
-    figures(span(range.prevFrom, range.prevTo)),
+    figures(span(range.from, range.to), todayStart),
+    figures(span(range.prevFrom, range.prevTo), todayStart),
     queryProfitEstimate({ dateFrom: range.from, dateTo: range.to }, 0),
     queryProfitEstimate({ dateFrom: range.prevFrom, dateTo: range.prevTo }, 0),
   ]);
@@ -129,28 +171,45 @@ export async function getDueSoon(days = 7, limit = 6): Promise<{ items: DueSoon[
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-export type TrendPoint = { key: string; label: string; sales: number; collected: number };
-export type Trend = { granularity: 'day' | 'month'; points: TrendPoint[] };
+export type TrendPoint = { key: string; label: string; tip: string; sales: number; collected: number };
+export type Trend = { granularity: 'day' | 'week' | 'month'; points: TrendPoint[] };
+
+/** Monday on or before an IST date. */
+function weekStart(date: string): string {
+  const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
+  return addDays(date, -(dow === 0 ? 6 : dow - 1));
+}
+const dm = (d: string) => `${Number(d.slice(8))} ${MONTHS[Number(d.slice(5, 7)) - 1]}`;
 
 /** Issued sales and cash collected over the chosen period — one bar per day
- * when it spans a month or less (at least the last 7 days, so "Today" still
- * shows a week of context), else one per calendar month (at most the last
- * 24). Bars only count days inside the range, so they add up to the tiles. */
+ * up to a month (at least the last 7 days, so "Today" still shows a week of
+ * context), per week (from Monday) up to about four months, else per
+ * calendar month (at most the last 24). Bars only count days inside the
+ * range, so they add up to the period's figures. */
 export async function getSalesCollectionsTrend(from: string, to: string): Promise<Trend> {
   await requireUser();
   const days = daysBetween(from, to) + 1;
-  const daily = days <= 31;
+  const granularity: Trend['granularity'] = days <= 31 ? 'day' : days <= 120 ? 'week' : 'month';
   let start = from;
-  const keys: { key: string; label: string }[] = [];
+  const keys: { key: string; label: string; tip: string }[] = [];
 
-  if (daily) {
+  if (granularity === 'day') {
     if (days < 7) start = addDays(to, -6);
-    for (let d = start; d <= to; d = addDays(d, 1)) keys.push({ key: d, label: `${Number(d.slice(8))} ${MONTHS[Number(d.slice(5, 7)) - 1]}` });
+    for (let d = start; d <= to; d = addDays(d, 1)) keys.push({ key: d, label: dm(d), tip: dm(d) });
+  } else if (granularity === 'week') {
+    for (let w = weekStart(from); w <= to; w = addDays(w, 7)) {
+      const a = w < from ? from : w;
+      const b = addDays(w, 6) > to ? to : addDays(w, 6);
+      // Labelled by the first day it counts (a partial first week starts at `from`).
+      const tip = a === b ? dm(a) : a.slice(0, 7) === b.slice(0, 7) ? `${Number(a.slice(8))}–${dm(b)}` : `${dm(a)} – ${dm(b)}`;
+      keys.push({ key: w, label: dm(a), tip });
+    }
   } else {
     let m = `${from.slice(0, 7)}-01`;
     const last = `${to.slice(0, 7)}-01`;
     while (m <= last) {
-      keys.push({ key: m.slice(0, 7), label: `${MONTHS[Number(m.slice(5, 7)) - 1]} ${m.slice(2, 4)}` });
+      const label = `${MONTHS[Number(m.slice(5, 7)) - 1]} ${m.slice(2, 4)}`;
+      keys.push({ key: m.slice(0, 7), label, tip: `${MONTHS[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}` });
       const d = new Date(`${m}T00:00:00Z`);
       d.setUTCMonth(d.getUTCMonth() + 1);
       m = d.toISOString().slice(0, 10);
@@ -162,21 +221,73 @@ export async function getSalesCollectionsTrend(from: string, to: string): Promis
   }
 
   const r = span(start, to);
-  const fmt = daily ? 'YYYY-MM-DD' : 'YYYY-MM';
   // Bucket by IST calendar date (UTC + 5:30), not the server's timezone.
+  const bucket =
+    granularity === 'day'
+      ? Prisma.sql`to_char(date + interval '330 minutes', 'YYYY-MM-DD')`
+      : granularity === 'week'
+        ? Prisma.sql`to_char(date_trunc('week', date + interval '330 minutes'), 'YYYY-MM-DD')`
+        : Prisma.sql`to_char(date + interval '330 minutes', 'YYYY-MM')`;
   const [sales, collected] = await Promise.all([
     prisma.$queryRaw<{ k: string; total: number }[]>`
-      SELECT to_char(date + interval '330 minutes', ${fmt}) AS k, SUM(total)::float8 AS total
+      SELECT ${bucket} AS k, SUM(total)::float8 AS total
       FROM "Invoice" WHERE status <> 'DRAFT' AND date >= ${r.gte} AND date < ${r.lt}
       GROUP BY 1`,
     prisma.$queryRaw<{ k: string; total: number }[]>`
-      SELECT to_char(date + interval '330 minutes', ${fmt}) AS k, SUM(amount)::float8 AS total
+      SELECT ${bucket} AS k, SUM(amount)::float8 AS total
       FROM "Payment" WHERE "creditNoteId" IS NULL AND date >= ${r.gte} AND date < ${r.lt}
       GROUP BY 1`,
   ]);
   const s = new Map(sales.map((x) => [x.k, x.total]));
   const c = new Map(collected.map((x) => [x.k, x.total]));
-  return { granularity: daily ? 'day' : 'month', points: keys.map(({ key, label }) => ({ key, label, sales: s.get(key) ?? 0, collected: c.get(key) ?? 0 })) };
+  return { granularity, points: keys.map(({ key, label, tip }) => ({ key, label, tip, sales: s.get(key) ?? 0, collected: c.get(key) ?? 0 })) };
+}
+
+export type RunningTotals = {
+  /** Cumulative issued sales at the end of each day, from the first day of
+   * the period (and, separately, of the comparison period). */
+  current: { date: string; total: number }[];
+  previous: { date: string; total: number }[];
+};
+
+/** Day-by-day running total of issued sales for the period and for its
+ * comparison period — "are we ahead of the same days last time?". Both end
+ * at the same totals as the period's Total billed figures. */
+export async function getRunningTotals(range: { from: string; to: string; prevFrom: string; prevTo: string }): Promise<RunningTotals> {
+  await requireUser();
+  const lo = range.prevFrom < range.from ? range.prevFrom : range.from;
+  const hi = range.prevTo > range.to ? range.prevTo : range.to;
+  const r = span(lo, hi);
+  const rows = await prisma.$queryRaw<{ k: string; total: number }[]>`
+    SELECT to_char(date + interval '330 minutes', 'YYYY-MM-DD') AS k, SUM(total)::float8 AS total
+    FROM "Invoice" WHERE status <> 'DRAFT' AND date >= ${r.gte} AND date < ${r.lt}
+    GROUP BY 1`;
+  const byDay = new Map(rows.map((x) => [x.k, x.total]));
+  const run = (from: string, to: string) => {
+    const out: { date: string; total: number }[] = [];
+    let sum = 0;
+    for (let d = from; d <= to; d = addDays(d, 1)) {
+      sum += byDay.get(d) ?? 0;
+      out.push({ date: d, total: sum });
+    }
+    return out;
+  };
+  return { current: run(range.from, range.to), previous: run(range.prevFrom, range.prevTo) };
+}
+
+export type PaymentModeShare = { mode: string; amount: number; count: number; largest: number };
+
+/** Cash received in the period by how it was paid (Cash, UPI, Bank
+ * transfer…), largest first. Credit-note adjustments aren't money in, so
+ * they're left out — matching the Collected figure. */
+export async function getPaymentModes(from: string, to: string): Promise<PaymentModeShare[]> {
+  await requireUser();
+  const r = span(from, to);
+  return prisma.$queryRaw<PaymentModeShare[]>`
+    SELECT COALESCE(NULLIF(btrim(mode), ''), 'Not recorded') AS mode, SUM(amount)::float8 AS amount, COUNT(*)::int AS count, MAX(amount)::float8 AS largest
+    FROM "Payment" WHERE "creditNoteId" IS NULL AND date >= ${r.gte} AND date < ${r.lt}
+    GROUP BY 1
+    ORDER BY 2 DESC`;
 }
 
 export type RouteSales = { name: string; total: number; shops: number; share: number; noRoute: boolean };
@@ -208,37 +319,6 @@ export async function getSalesByRoute(from: string, to: string): Promise<{ rows:
   }
   if (none) out.push({ name: 'Walk-in & no route', total: none.total, shops: none.shops, share: share(none.total), noRoute: true });
   return { rows: out, total, anyRoutes: named.length > 0 };
-}
-
-export type AgingBucket = { key: 'current' | 'd30' | 'd60' | 'd90' | 'd90plus'; label: string; amount: number; count: number; overdue: boolean };
-
-/** What customers owe on issued invoices, by how late it is. */
-export async function getReceivablesAging(): Promise<AgingBucket[]> {
-  await requireUser();
-  const todayStart = istDayRangeUtc(todayIst()).gte;
-  const rows = await prisma.$queryRaw<{ bucket: string; amount: number; count: number }[]>`
-    SELECT
-      CASE
-        WHEN due >= ${todayStart} THEN 'current'
-        WHEN ${todayStart}::timestamp - due <= interval '30 days' THEN 'd30'
-        WHEN ${todayStart}::timestamp - due <= interval '60 days' THEN 'd60'
-        WHEN ${todayStart}::timestamp - due <= interval '90 days' THEN 'd90'
-        ELSE 'd90plus'
-      END AS bucket,
-      SUM(total - "amountPaid")::float8 AS amount,
-      COUNT(*)::int AS count
-    FROM "Invoice"
-    WHERE status IN ('SENT', 'PARTIALLY_PAID') AND total - "amountPaid" > 0.004
-    GROUP BY 1`;
-  const by = new Map(rows.map((r) => [r.bucket, r]));
-  const defs: [AgingBucket['key'], string, boolean][] = [
-    ['current', 'Not yet due', false],
-    ['d30', '1–30 days late', true],
-    ['d60', '31–60 days late', true],
-    ['d90', '61–90 days late', true],
-    ['d90plus', 'Over 90 days late', true],
-  ];
-  return defs.map(([key, label, overdue]) => ({ key, label, overdue, amount: by.get(key)?.amount ?? 0, count: by.get(key)?.count ?? 0 }));
 }
 
 export type RecentInvoice = { id: string; number: string; date: string; status: string; total: number; balance: number; isOverdue: boolean; customer: string };
@@ -309,8 +389,6 @@ export type BusinessOverview = {
     total: number;
     issued: number;
     byStatus: Record<StatusKey, StatusFigures>;
-    /** Drafts that have taken their lines out of stock. */
-    draftsHoldingStock: number;
   };
   creditNotes: { total: number; count: number };
   /** Issued invoices only. billed ≈ received + creditAdjusted + unpaid —
@@ -326,8 +404,6 @@ export type BusinessOverview = {
     /** Days the longest-overdue invoice is past its due date (0: none). */
     oldestOverdueDays: number;
   };
-  /** The customer owing the most overdue money, if anyone does. */
-  biggestOverdue: { customer: string; amount: number; days: number } | null;
   purchases: { total: number; count: number; suppliers: number };
   /** All-time gross profit estimate (Reports' method). */
   profit: ProfitFigures;
@@ -345,7 +421,7 @@ export async function getBusinessOverview(): Promise<BusinessOverview> {
   await requireUser();
   const today = todayIst();
   const todayStart = istDayRangeUtc(today).gte;
-  const [[prod], [cust], [sup], [dues], statusRows, [pay], [cn], [buy], [late], biggest, [settle], profit] = await Promise.all([
+  const [[prod], [cust], [sup], [dues], statusRows, [pay], [cn], [buy], [late], [settle], profit] = await Promise.all([
     prisma.$queryRaw<{ active: number; inactive: number; categories: number }[]>`
       SELECT
         (COUNT(*) FILTER (WHERE active))::int AS active,
@@ -363,7 +439,7 @@ export async function getBusinessOverview(): Promise<BusinessOverview> {
       WHERE status IN ('SENT', 'PARTIALLY_PAID') AND total - "amountPaid" > 0.004`,
     // Overdue only means something for sent / part-paid invoices (drafts are
     // never overdue, paid ones owe nothing) — read from those below.
-    prisma.$queryRaw<{ status: StatusKey; n: number; total: number; balance: number; open: number; overdueCount: number; overdue: number; held: number }[]>`
+    prisma.$queryRaw<{ status: StatusKey; n: number; total: number; balance: number; open: number; overdueCount: number; overdue: number; }[]>`
       SELECT
         status::text AS status,
         COUNT(*)::int AS n,
@@ -371,8 +447,7 @@ export async function getBusinessOverview(): Promise<BusinessOverview> {
         COALESCE(SUM(GREATEST(total - "amountPaid", 0)), 0)::float8 AS balance,
         (COUNT(*) FILTER (WHERE total - "amountPaid" > 0.004))::int AS open,
         (COUNT(*) FILTER (WHERE due < ${todayStart} AND total - "amountPaid" > 0.004))::int AS "overdueCount",
-        COALESCE(SUM(GREATEST(total - "amountPaid", 0)) FILTER (WHERE due < ${todayStart}), 0)::float8 AS overdue,
-        (COUNT(*) FILTER (WHERE "stockTaken"))::int AS held
+        COALESCE(SUM(GREATEST(total - "amountPaid", 0)) FILTER (WHERE due < ${todayStart}), 0)::float8 AS overdue
       FROM "Invoice" GROUP BY status`,
     prisma.$queryRaw<{ cash: number; credit: number }[]>`
       SELECT
@@ -389,13 +464,6 @@ export async function getBusinessOverview(): Promise<BusinessOverview> {
     prisma.$queryRaw<{ days: number | null }[]>`
       SELECT MAX(${today}::date - due::date)::int AS days FROM "Invoice"
       WHERE status IN ('SENT', 'PARTIALLY_PAID') AND total - "amountPaid" > 0.004 AND due < ${todayStart}`,
-    prisma.$queryRaw<{ name: string; shopName: string | null; amount: number; days: number }[]>`
-      SELECT c.name, c."shopName", SUM(i.total - i."amountPaid")::float8 AS amount, MAX(${today}::date - i.due::date)::int AS days
-      FROM "Invoice" i JOIN "Customer" c ON c.id = i."customerId"
-      WHERE i.status IN ('SENT', 'PARTIALLY_PAID') AND i.total - i."amountPaid" > 0.004 AND i.due < ${todayStart}
-      GROUP BY c.id, c.name, c."shopName"
-      ORDER BY amount DESC
-      LIMIT 1`,
     prisma.$queryRaw<{ avgDays: number | null; n: number; onTime: number }[]>`
       WITH f AS (
         SELECT i.date, i.due, MAX(p.date) AS "paidAt"
@@ -413,10 +481,8 @@ export async function getBusinessOverview(): Promise<BusinessOverview> {
 
   const empty = (): StatusFigures => ({ count: 0, total: 0, balance: 0, openCount: 0, overdueCount: 0, overdue: 0 });
   const byStatus: Record<StatusKey, StatusFigures> = { DRAFT: empty(), SENT: empty(), PARTIALLY_PAID: empty(), PAID: empty() };
-  let draftsHoldingStock = 0;
   for (const r of statusRows) {
     const owing = r.status === 'SENT' || r.status === 'PARTIALLY_PAID';
-    if (r.status === 'DRAFT') draftsHoldingStock = r.held;
     byStatus[r.status] = {
       count: r.n,
       total: r.total,
@@ -428,13 +494,12 @@ export async function getBusinessOverview(): Promise<BusinessOverview> {
   }
   const { DRAFT, SENT, PARTIALLY_PAID: PART, PAID } = byStatus;
   const issued = SENT.count + PART.count + PAID.count;
-  const top = biggest[0];
 
   return {
     products: prod,
     customers: { ...cust, withDues: dues.n },
     suppliers: sup,
-    invoices: { total: DRAFT.count + issued, issued, byStatus, draftsHoldingStock },
+    invoices: { total: DRAFT.count + issued, issued, byStatus },
     creditNotes: { total: cn.total, count: cn.n },
     money: {
       billed: SENT.total + PART.total + PAID.total,
@@ -446,7 +511,6 @@ export async function getBusinessOverview(): Promise<BusinessOverview> {
       openCount: SENT.openCount + PART.openCount,
       oldestOverdueDays: late.days ?? 0,
     },
-    biggestOverdue: top ? { customer: customerDisplayName({ name: top.name, shopName: top.shopName }), amount: top.amount, days: top.days } : null,
     purchases: { total: buy.total, count: buy.n, suppliers: buy.suppliers },
     profit: { profit: profit.profit, margin: profit.margin, unknownShare: profit.unknown.share },
     collection: { avgDaysToPay: settle.n > 0 ? settle.avgDays : null, onTimeShare: settle.n > 0 ? settle.onTime / settle.n : null, paidInvoices: settle.n },

@@ -369,7 +369,9 @@ export async function listInventoryPage(opts?: {
       ...p,
       status: stockStatus(p),
       ...f,
-      reorder: f.daysLeft != null && f.daysLeft <= company.reorderLeadDays,
+      // Running out = still has stock but won't last the lead time. A product
+      // already at 0 is "Out of stock", not "about to run out".
+      reorder: p.stockQty > EPS && f.daysLeft != null && f.daysLeft <= company.reorderLeadDays,
       nextExpiry: expiring.get(p.id)?.[0]?.expiryDate ?? null,
     };
   });
@@ -708,10 +710,11 @@ export async function getDraftsHoldingStock(): Promise<DraftsHoldingStock> {
 
 export type ReorderSuggestion = { id: string; name: string; unit: string; stockText: string; daysLeft: number; suggested: number };
 
-/** Tracked products due to run out within the reorder lead time, with how
- * much to order (forecast's two lead times of recent sales, in the main
- * unit) and the supplier most of them were last bought from — the
- * Inventory screen's one-tap purchase bill. Most urgent first. */
+/** Tracked products that still have stock but will run out within the
+ * reorder lead time, with how much to order (forecast's two lead times of
+ * recent sales, in the main unit) and the supplier most of them were last
+ * bought from — the Inventory screen's one-tap purchase bill. Most urgent
+ * first. Products already at 0 aren't listed: they're Out of stock. */
 export type ReorderSuggestions = { items: ReorderSuggestion[]; supplier: { id: string; name: string; phone: string | null } | null; leadDays: number };
 
 export async function getReorderSuggestions(): Promise<ReorderSuggestions> {
@@ -722,7 +725,7 @@ export async function getReorderSuggestions(): Promise<ReorderSuggestions> {
   const items = products
     .flatMap((p) => {
       const f = forecast(p, sales.get(p.id), company.reorderLeadDays);
-      if (f.daysLeft == null || f.daysLeft > company.reorderLeadDays || !f.suggestedReorder) return [];
+      if (p.stockQty <= EPS || f.daysLeft == null || f.daysLeft > company.reorderLeadDays || !f.suggestedReorder) return [];
       return [{ id: p.id, name: p.name, unit: p.unit, stockText: formatStock(p.stockQty, p), daysLeft: f.daysLeft, suggested: f.suggestedReorder }];
     })
     .sort((a, b) => a.daysLeft - b.daysLeft);

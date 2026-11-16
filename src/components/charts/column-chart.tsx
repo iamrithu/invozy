@@ -66,9 +66,9 @@ export function ColumnChart({
   return (
     <div className="relative" onMouseLeave={() => setActive(null)}>
       <div className="flex">
-        <div className="relative w-11 flex-shrink-0" style={{ height: PLOT_H }} aria-hidden>
+        <div className="relative w-[68px] flex-shrink-0" style={{ height: PLOT_H }} aria-hidden>
           {ticks.map((t) => (
-            <span key={t} className="absolute right-2 translate-y-1/2 font-mono text-[10px] tabular-nums text-ink-faint" style={{ bottom: `${(t / top) * 100}%` }}>
+            <span key={t} className="absolute right-2 translate-y-1/2 whitespace-nowrap font-mono text-[10px] tabular-nums text-ink-faint" style={{ bottom: `${(t / top) * 100}%` }}>
               {formatAxis(t)}
             </span>
           ))}

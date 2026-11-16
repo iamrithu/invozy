@@ -24,7 +24,7 @@ import {
   useSortedRows,
 } from '@/components/reports/report-ui';
 import { downloadCsv } from '@/components/reports/csv-download';
-import { fmtCompactMoney, fmtPct, rangeLabel } from '@/components/reports/format';
+import { fmtMoneyWhole, fmtPct, rangeLabel } from '@/components/reports/format';
 import { useSalesAnalysis, useSalesByWeekday } from '@/hooks/use-reports';
 import { fmtInr } from '@/lib/gst';
 import type { ProfitTotals, ReportFilters, SalesDimension, SalesRow } from '@/actions/reports';
@@ -187,7 +187,7 @@ export function SalesTab({ filters, currency }: { filters: ReportFilters; curren
                     detail: `${money(w.revenue)} over ${w.days} ${w.label}${w.days === 1 ? '' : 's'} · ${w.invoices} invoice${w.invoices === 1 ? '' : 's'}`,
                   }))}
                   format={money}
-                  formatAxis={(n) => fmtCompactMoney(n, currency)}
+                  formatAxis={(n) => fmtMoneyWhole(n, currency)}
                   emptyText="No invoices in this period."
                 />
               ) : (

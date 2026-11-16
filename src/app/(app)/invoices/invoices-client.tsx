@@ -15,12 +15,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { RecordPaymentDialog } from '@/components/invoices/record-payment-dialog';
 import { useCurrentUser } from '@/components/current-user';
-import { DateRangeFilter } from '@/components/filters/date-range-filter';
+import { PeriodPicker, type PeriodValue } from '@/components/filters/period-picker';
+import { InvoiceTotals, selectionTotals } from '@/components/invoices/invoice-totals';
 import { fmtInr } from '@/lib/gst';
 import { customerDisplayName } from '@/lib/customer';
-import { resolveDateRange, type DateFilterMode } from '@/lib/dates';
+import { resolveDashboardRange } from '@/lib/dashboard-period';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
-import { useInvoicesPage, useInvoiceStatusCounts, useDuplicateInvoice, useWhatsAppShare } from '@/hooks/use-invoices';
+import { useInvoicesPage, useInvoiceStatusCounts, useInvoiceSummary, useDuplicateInvoice, useWhatsAppShare } from '@/hooks/use-invoices';
 import { DeleteInvoiceDialog } from '@/components/invoices/delete-invoice-dialog';
 import { RemindersDialog } from '@/components/invoices/reminders-dialog';
 import { useCustomersForFilter } from '@/hooks/use-customers';
@@ -44,16 +45,20 @@ type Invoice = {
   payments: { amount: number; date: string; mode: string | null }[];
 };
 
+// Status buttons pick one or several (Paid + Draft…); "All" clears them.
+// The list, its group headings and the totals strip all follow the pick.
 const FILTERS = [
   { id: 'all', label: 'All' },
   { id: 'DRAFT', label: 'Draft' },
   { id: 'SENT', label: 'Sent' },
-  { id: 'PARTIALLY_PAID', label: 'Partial' },
+  { id: 'PARTIALLY_PAID', label: 'Part-paid' },
   { id: 'PAID', label: 'Paid' },
+  { id: 'OVERDUE', label: 'Overdue' },
 ];
+const FILTER_ORDER = FILTERS.map((f) => f.id);
 
 const GROUP_ORDER = ['Overdue', 'DRAFT', 'SENT', 'PARTIALLY_PAID', 'PAID'];
-const GROUP_LABEL: Record<string, string> = { Overdue: 'Overdue', DRAFT: 'Draft', SENT: 'Sent', PARTIALLY_PAID: 'Partially Paid', PAID: 'Paid' };
+const GROUP_LABEL: Record<string, string> = { Overdue: 'Overdue', OVERDUE: 'Overdue', DRAFT: 'Draft', SENT: 'Sent', PARTIALLY_PAID: 'Partially Paid', PAID: 'Paid' };
 
 const PAGE_SIZE = 10;
 
@@ -73,7 +78,16 @@ export function InvoicesClient({
   /** `?remind=1` — the Dashboard's overdue banner opens the reminders list. */
   openReminders?: boolean;
 }) {
-  const [filter, setFilter] = useState(initialStatus);
+  const [filter, setFilter] = useState(initialStatus || 'all');
+  const picked = useMemo(() => (filter === 'all' ? [] : filter.split(',').filter((x) => FILTER_ORDER.includes(x))), [filter]);
+  function toggleStatus(id: string) {
+    if (id === 'all') return setFilter('all');
+    const next = new Set(picked);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    const ordered = FILTER_ORDER.filter((x) => next.has(x));
+    setFilter(ordered.length ? ordered.join(',') : 'all');
+  }
   const [searchInput, setSearchInput] = useState('');
   const search = useDebouncedValue(searchInput, 300);
   const [sort, setSort] = useState<InvoiceSort>('newest');
@@ -90,10 +104,10 @@ export function InvoicesClient({
   // Defaults to all-time (matching the server's SSR-seeded fetch — see
   // invoices/page.tsx) so the list opens showing full history; "Today" or a
   // custom range are one click away.
-  const [dateMode, setDateMode] = useState<DateFilterMode>('all');
-  const [customFrom, setCustomFrom] = useState(initialDate);
-  const [customTo, setCustomTo] = useState(initialDate);
-  const { from: dateFrom, to: dateTo } = resolveDateRange(dateMode, customFrom, customTo);
+  const [period, setPeriod] = useState<PeriodValue>({ preset: 'all' });
+  const range = period.preset === 'all' ? null : resolveDashboardRange({ period: period.preset, from: period.from, to: period.to }, initialDate);
+  const dateFrom = range?.from;
+  const dateTo = range?.to;
 
   const [customerId, setCustomerId] = useState('all');
   const [amountMinInput, setAmountMinInput] = useState('');
@@ -106,10 +120,10 @@ export function InvoicesClient({
 
   useEffect(
     () => setPage(1),
-    [search, filter, sort, dateMode, customFrom, customTo, customerId, amountMin, amountMax, gstType]
+    [search, filter, sort, period, customerId, amountMin, amountMax, gstType]
   );
 
-  const isDefaultParams = filter === initialStatus && search === '' && sort === 'newest' && page === 1 && dateMode === 'all' && !hasMoreFiltersActive;
+  const isDefaultParams = filter === initialStatus && search === '' && sort === 'newest' && page === 1 && period.preset === 'all' && !hasMoreFiltersActive;
   const { data, isFetching, isLoading } = useInvoicesPage(
     { status: filter, search, sort, page, pageSize: PAGE_SIZE, dateFrom, dateTo, customerId: customerId === 'all' ? undefined : customerId, amountMin, amountMax, gstType },
     isDefaultParams ? initialData : undefined
@@ -125,14 +139,27 @@ export function InvoicesClient({
   }, [total, page, isFetching]);
 
   // Full-set counts (not just this page) for the "Overdue · N" group labels.
-  const { data: statusCounts } = useInvoiceStatusCounts(search, dateFrom, dateTo, { customerId: customerId === 'all' ? undefined : customerId, amountMin, amountMax, gstType });
+  const otherFilters = { customerId: customerId === 'all' ? undefined : customerId, amountMin, amountMax, gstType };
+  const { data: statusCounts } = useInvoiceStatusCounts(search, dateFrom, dateTo, otherFilters);
+  // Count, total, paid and owed per status — the totals strip adds up the
+  // picked ones, and each status button shows its count.
+  const { data: summary, isFetching: summaryFetching } = useInvoiceSummary(search, dateFrom, dateTo, otherFilters);
+  const selection = useMemo(() => selectionTotals(summary, picked), [summary, picked]);
+  const chipCount = (id: string) => {
+    if (!summary) return null;
+    if (id === 'all') return summary.DRAFT.count + summary.SENT.count + summary.PARTIALLY_PAID.count + summary.PAID.count;
+    if (id === 'OVERDUE') return summary.overdue.SENT.count + summary.overdue.PARTIALLY_PAID.count;
+    return summary[id as 'DRAFT' | 'SENT' | 'PARTIALLY_PAID' | 'PAID'].count;
+  };
 
   const groups = useMemo(() => {
-    if (filter !== 'all') return [{ key: filter, items: pageItems, count: total }];
+    if (picked.length === 1) return [{ key: picked[0], items: pageItems, count: total }];
     const map = new Map<string, Invoice[]>();
     for (const inv of pageItems) map.set(groupKey(inv), [...(map.get(groupKey(inv)) ?? []), inv]);
-    return GROUP_ORDER.filter((k) => map.has(k)).map((k) => ({ key: k, items: map.get(k)!, count: statusCounts?.[k] ?? map.get(k)!.length }));
-  }, [pageItems, filter, total, statusCounts]);
+    // Full-set counts where they're exact for this pick, else this page's.
+    const exact = (k: string) => filter === 'all' || picked.includes(k === 'Overdue' ? 'OVERDUE' : k);
+    return GROUP_ORDER.filter((k) => map.has(k)).map((k) => ({ key: k, items: map.get(k)!, count: exact(k) ? (statusCounts?.[k] ?? map.get(k)!.length) : map.get(k)!.length }));
+  }, [pageItems, picked, filter, total, statusCounts]);
 
   const deleteTarget = pageItems.find((i) => i.id === deleteTargetId) ?? null;
 
@@ -193,7 +220,7 @@ export function InvoicesClient({
         </div>
       </div>
 
-      <div className="mb-4 rounded-xl2 border border-line bg-surface p-3 shadow-card">
+      <div className="mb-3 rounded-xl2 border border-line bg-surface p-3 shadow-card">
         <div className="flex flex-wrap items-center gap-2">
           <Input
             value={searchInput}
@@ -201,14 +228,19 @@ export function InvoicesClient({
             placeholder="Search invoice #, customer, or shop name…"
             className="max-w-xs flex-shrink-0"
           />
-          <div className="flex flex-1 gap-1 overflow-x-auto">
-            {FILTERS.map((f) => (
-              <Button key={f.id} type="button" size="sm" variant={filter === f.id ? 'default' : 'outline'} onClick={() => setFilter(f.id)}>
-                {f.label}
-              </Button>
-            ))}
+          <div role="group" aria-label="Statuses" className="flex flex-1 flex-wrap gap-1">
+            {FILTERS.map((f) => {
+              const on = f.id === 'all' ? filter === 'all' : picked.includes(f.id);
+              const n = chipCount(f.id);
+              return (
+                <Button key={f.id} type="button" size="sm" variant={on ? 'default' : 'outline'} aria-pressed={on} onClick={() => toggleStatus(f.id)}>
+                  {f.label}
+                  {n !== null && <span className={`font-mono text-[10.5px] ${on ? 'opacity-80' : 'text-ink-faint'}`}>{n}</span>}
+                </Button>
+              );
+            })}
           </div>
-          <DateRangeFilter mode={dateMode} onModeChange={setDateMode} from={customFrom} to={customTo} onFromChange={setCustomFrom} onToChange={setCustomTo} />
+          <PeriodPicker value={period} onChange={setPeriod} today={initialDate} allowAll />
           <Select value={sort} onValueChange={(v) => setSort(v as InvoiceSort)}>
             <SelectTrigger className="h-8 w-[170px] flex-shrink-0 text-[11.5px]">
               <SelectValue />
@@ -302,6 +334,8 @@ export function InvoicesClient({
         )}
       </div>
 
+      <InvoiceTotals sel={selection} picked={picked} periodLabel={range ? range.dates : 'All time'} loading={summaryFetching && !summary} />
+
       {isLoading ? (
         <SkeletonTable cols={6} />
       ) : total === 0 ? (
@@ -326,7 +360,7 @@ export function InvoicesClient({
             <TableBody>
               {groups.map((g) => (
                 <Fragment key={g.key}>
-                  {filter === 'all' && (
+                  {(filter === 'all' || picked.length > 1) && (
                     <TableRow className="hover:bg-transparent">
                       <TableCell colSpan={7} className="bg-surface-alt py-1.5 text-[10.5px] font-extrabold uppercase tracking-wide text-ink-soft">
                         {GROUP_LABEL[g.key]} · {g.count}

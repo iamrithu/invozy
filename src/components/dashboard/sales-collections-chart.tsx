@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import { fmtInr } from '@/lib/gst';
+import { fmtMoneyWhole } from '@/components/reports/format';
 import type { TrendPoint } from '@/actions/dashboard';
 
 const W = 640;
 const H = 220;
-const PAD_L = 44;
+const PAD_L = 70; // room for full ₹ axis labels
 const PAD_R = 8;
 const PAD_T = 12;
 const PAD_B = 26;
@@ -16,13 +17,6 @@ const GAP = 2; // surface gap between a month's two columns
 const SALES = 'hsl(var(--chart-sales))';
 const COLLECTED = 'hsl(var(--chart-collected))';
 
-/** ₹ in Indian short form for axis ticks: 45K, 1.2L, 2Cr. */
-function compact(n: number) {
-  if (n >= 1e7) return `${+(n / 1e7).toFixed(1)}Cr`;
-  if (n >= 1e5) return `${+(n / 1e5).toFixed(1)}L`;
-  if (n >= 1e3) return `${+(n / 1e3).toFixed(0)}K`;
-  return String(Math.round(n));
-}
 
 /** A "nice" axis maximum and 4 even ticks above zero. */
 function niceTicks(max: number): number[] {
@@ -42,7 +36,7 @@ function roundedTop(x: number, y: number, w: number, h: number, r = 4) {
 /** Issued sales vs cash collected per day or month — paired columns on
  * one baseline, one axis, a hover tooltip per bucket. Bars narrow to fit a
  * month of days; labels thin out so at most about eight show. */
-export function SalesCollectionsChart({ data, currency, granularity = 'month' }: { data: TrendPoint[]; currency: string; granularity?: 'day' | 'month' }) {
+export function SalesCollectionsChart({ data, currency, granularity = 'month' }: { data: TrendPoint[]; currency: string; granularity?: 'day' | 'week' | 'month' }) {
   const [hover, setHover] = useState<number | null>(null);
   const max = Math.max(0, ...data.flatMap((d) => [d.sales, d.collected]));
   const ticks = niceTicks(max);
@@ -52,7 +46,7 @@ export function SalesCollectionsChart({ data, currency, granularity = 'month' }:
   const band = plotW / Math.max(data.length, 1);
   const BAR = Math.max(3, Math.min(MAX_BAR, (band - GAP - 8) / 2));
   const labelStep = Math.ceil(data.length / 8);
-  const unit = granularity === 'day' ? 'day' : 'month';
+  const unit = granularity;
   const y = (v: number) => PAD_T + plotH - (v / top) * plotH;
   const hasData = max > 0;
 
@@ -77,7 +71,7 @@ export function SalesCollectionsChart({ data, currency, granularity = 'month' }:
               <g key={t}>
                 <line x1={PAD_L} x2={W - PAD_R} y1={y(t)} y2={y(t)} stroke="hsl(var(--line))" strokeWidth={1} />
                 <text x={PAD_L - 8} y={y(t)} dy="0.32em" textAnchor="end" className="fill-ink-faint font-mono text-[10px]">
-                  {compact(t)}
+                  {fmtMoneyWhole(t, currency)}
                 </text>
               </g>
             ))}
@@ -107,7 +101,7 @@ export function SalesCollectionsChart({ data, currency, granularity = 'month' }:
                     onFocus={() => setHover(i)}
                     onBlur={() => setHover(null)}
                     tabIndex={0}
-                    aria-label={`${d.label}: sales ${fmtInr(d.sales, currency)}, collected ${fmtInr(d.collected, currency)}`}
+                    aria-label={`${d.tip}: sales ${fmtInr(d.sales, currency)}, collected ${fmtInr(d.collected, currency)}`}
                   />
                 </g>
               );
@@ -119,7 +113,7 @@ export function SalesCollectionsChart({ data, currency, granularity = 'month' }:
               className="pointer-events-none absolute top-1 z-10 min-w-[170px] -translate-x-1/2 rounded-lg2 border border-line bg-surface px-3 py-2 text-[11.5px] shadow-elevated"
               style={{ left: `${((PAD_L + band * hover + band / 2) / W) * 100}%` }}
             >
-              <div className="mb-1 font-bold text-ink">{data[hover].label}</div>
+              <div className="mb-1 font-bold text-ink">{granularity === 'week' ? `Week: ${data[hover].tip}` : data[hover].tip}</div>
               <TipRow color={SALES} label="Sales" value={fmtInr(data[hover].sales, currency)} />
               <TipRow color={COLLECTED} label="Collected" value={fmtInr(data[hover].collected, currency)} />
             </div>
@@ -128,7 +122,7 @@ export function SalesCollectionsChart({ data, currency, granularity = 'month' }:
             <caption>Sales and collections by {unit}</caption>
             <thead>
               <tr>
-                <th>{granularity === 'day' ? 'Day' : 'Month'}</th>
+                <th>{granularity === 'day' ? 'Day' : granularity === 'week' ? 'Week' : 'Month'}</th>
                 <th>Sales</th>
                 <th>Collected</th>
               </tr>
@@ -136,7 +130,7 @@ export function SalesCollectionsChart({ data, currency, granularity = 'month' }:
             <tbody>
               {data.map((d) => (
                 <tr key={d.key}>
-                  <td>{d.label}</td>
+                  <td>{d.tip}</td>
                   <td>{fmtInr(d.sales, currency)}</td>
                   <td>{fmtInr(d.collected, currency)}</td>
                 </tr>

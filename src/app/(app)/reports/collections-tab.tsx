@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { BarList } from '@/components/charts/bar-list';
 import { ColumnChart } from '@/components/charts/column-chart';
 import { CardSkeleton, ChangeBadge, EmptyState, Refreshing, ReportCard, StatTile, TilesSkeleton } from '@/components/reports/report-ui';
-import { daysText, fmtCompactMoney, fmtDay, fmtPct } from '@/components/reports/format';
+import { daysText, fmtMoneyWhole, fmtDay, fmtPct } from '@/components/reports/format';
 import { useCollections } from '@/hooks/use-reports';
 import { fmtInr } from '@/lib/gst';
 import type { ReportFilters } from '@/actions/reports';
@@ -99,7 +99,7 @@ export function CollectionsTab({ filters, currency }: { filters: ReportFilters; 
                 color="bg-green"
                 data={data.trend.map((t) => ({ key: t.key, label: t.label, value: t.amount }))}
                 format={money}
-                formatAxis={(n) => fmtCompactMoney(n, currency)}
+                formatAxis={(n) => fmtMoneyWhole(n, currency)}
                 emptyText="No payments in this stretch."
               />
             </ReportCard>

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowRight, Landmark, Package, Percent, PieChart, PiggyBank, Receipt, TrendingUp, Users, Wallet } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Landmark, Package, Percent, PieChart, PiggyBank, Receipt, TrendingUp, Users, Wallet } from 'lucide-react';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BillingTrendChart } from '@/components/charts/billing-trend-chart';
@@ -43,7 +43,22 @@ const TOP_CUSTOMERS = 8;
  * best sellers and best customers — what the Reports page always was. The
  * seed is only used while the filters are at their defaults (it IS the
  * default view); any other filter loads with skeletons first. */
-export function OverviewTab({ filters, isDefault, seed, currency, onOpenSales }: { filters: ReportFilters; isDefault: boolean; seed?: OverviewSeed; currency?: string; onOpenSales: () => void }) {
+export function OverviewTab({
+  filters,
+  isDefault,
+  seed,
+  currency,
+  includeDrafts = false,
+  onOpenSales,
+}: {
+  filters: ReportFilters;
+  isDefault: boolean;
+  seed?: OverviewSeed;
+  currency?: string;
+  /** The Include drafts switch: Overall = Paid + Remaining (drafts + unpaid). */
+  includeDrafts?: boolean;
+  onOpenSales: () => void;
+}) {
   const s = isDefault ? seed : undefined;
   const { data: stats, isPlaceholderData } = useReportStats(filters, s?.stats);
   const { data: previousStats } = usePreviousPeriodStats(filters);
@@ -62,25 +77,28 @@ export function OverviewTab({ filters, isDefault, seed, currency, onOpenSales }:
   return (
     <Refreshing busy={isPlaceholderData}>
       {stats ? (
-        <div className="mb-3.5 grid grid-cols-2 gap-2 md:grid-cols-5">
-          <StatTile icon={<Receipt size={14} />} label="Taxable value" value={money(stats.taxable)} badge={<ChangeBadge current={stats.taxable} previous={previousStats?.taxable} />} />
-          <StatTile
-            icon={<Percent size={14} />}
-            label="CGST + SGST"
-            value={money(stats.cgst + stats.sgst)}
-            badge={<ChangeBadge current={stats.cgst + stats.sgst} previous={previousStats ? previousStats.cgst + previousStats.sgst : undefined} />}
-          />
-          <StatTile icon={<Percent size={14} />} label="IGST" value={money(stats.igst)} badge={<ChangeBadge current={stats.igst} previous={previousStats?.igst} />} />
-          <StatTile icon={<TrendingUp size={14} />} label="Total billed" value={money(stats.total)} badge={<ChangeBadge current={stats.total} previous={previousStats?.total} />} />
-          <StatTile
-            icon={<Wallet size={14} />}
-            label="Outstanding"
-            value={money(stats.outstanding)}
-            badge={<ChangeBadge current={stats.outstanding} previous={previousStats?.outstanding} upIsGood={false} />}
-          />
+        <div className="mb-3.5 space-y-2">
+          {/* The same three figures, by the same rules, as the Dashboard: sent
+              and paid invoices, GST included — Total billed = Paid + Unpaid;
+              with Include drafts on, Overall = Paid + Remaining. */}
+          <MoneyTiles stats={stats} previous={previousStats ?? undefined} includeDrafts={includeDrafts} money={money} />
+          {/* The GST split of that total — for returns; Reports only. */}
+          <div className="rounded-xl2 border border-dashed border-line p-2">
+            <div className="mb-1.5 px-1 text-[11px] font-bold uppercase tracking-wide text-ink-faint">GST split of the total billed{includeDrafts ? ' (drafts have no GST until issued)' : ''}</div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <StatTile icon={<Receipt size={14} />} label="Taxable value (before GST)" value={money(stats.taxable)} badge={<ChangeBadge current={stats.taxable} previous={previousStats?.taxable} />} />
+              <StatTile
+                icon={<Percent size={14} />}
+                label="CGST + SGST"
+                value={money(stats.cgst + stats.sgst)}
+                badge={<ChangeBadge current={stats.cgst + stats.sgst} previous={previousStats ? previousStats.cgst + previousStats.sgst : undefined} />}
+              />
+              <StatTile icon={<Percent size={14} />} label="IGST" value={money(stats.igst)} badge={<ChangeBadge current={stats.igst} previous={previousStats?.igst} />} />
+            </div>
+          </div>
         </div>
       ) : (
-        <TilesSkeleton count={5} className="mb-3.5 md:grid-cols-5" />
+        <TilesSkeleton count={6} className="mb-3.5 sm:grid-cols-3" />
       )}
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[7fr_5fr]">
@@ -258,6 +276,66 @@ function Legend({ color, label, value }: { color: string; label: string; value: 
       <span className="h-2.5 w-2.5 flex-shrink-0 rounded-sm2" style={{ background: color }} />
       <span className="flex-1 text-ink-soft">{label}</span>
       <span className="font-mono font-bold text-ink">{value}</span>
+    </div>
+  );
+}
+
+type Stats = { total: number; outstanding: number; overdue: number; overdueCount: number; invoiceCount: number; drafts: number; draftCount: number };
+
+/** Total billed → Paid → Unpaid (or, with drafts in, Overall → Paid →
+ * Remaining), each with its change against the comparison period, and the
+ * overdue part of what's owed called out in red. */
+function MoneyTiles({ stats, previous, includeDrafts, money }: { stats: Stats; previous?: Stats; includeDrafts: boolean; money: (n: number) => string }) {
+  const paid = stats.total - stats.outstanding;
+  const prevPaid = previous ? previous.total - previous.outstanding : undefined;
+  const total = stats.total + (includeDrafts ? stats.drafts : 0);
+  const prevTotal = previous ? previous.total + (includeDrafts ? previous.drafts : 0) : undefined;
+  const remaining = stats.outstanding + (includeDrafts ? stats.drafts : 0);
+  const pct = total > 0.004 ? Math.round((paid / total) * 100) : null;
+  const overdueLine =
+    stats.overdue > 0.004 ? (
+      <span className="block font-semibold text-red">
+        {money(stats.overdue)} overdue · {stats.overdueCount} invoice{stats.overdueCount === 1 ? '' : 's'}
+      </span>
+    ) : (
+      <span className="block">Nothing overdue</span>
+    );
+
+  return (
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+      <StatTile
+        icon={<TrendingUp size={14} />}
+        label={includeDrafts ? 'Overall (drafts included)' : 'Total billed (GST included)'}
+        value={money(total)}
+        badge={<ChangeBadge current={total} previous={prevTotal} />}
+        sub={
+          includeDrafts
+            ? `${money(stats.total)} sent and paid + ${money(stats.drafts)} in ${stats.draftCount} draft${stats.draftCount === 1 ? '' : 's'}`
+            : stats.draftCount > 0
+              ? `Not counted: ${money(stats.drafts)} in ${stats.draftCount} draft${stats.draftCount === 1 ? '' : 's'}`
+              : `${stats.invoiceCount} sent and paid invoice${stats.invoiceCount === 1 ? '' : 's'}`
+        }
+      />
+      <StatTile
+        icon={<CheckCircle2 size={14} />}
+        label="Paid"
+        value={money(paid)}
+        tone="green"
+        badge={<ChangeBadge current={paid} previous={prevPaid} />}
+        sub={pct === null ? 'Nothing billed' : `${pct}% of the ${includeDrafts ? 'overall' : 'total billed'}`}
+      />
+      <StatTile
+        icon={<Wallet size={14} />}
+        label={includeDrafts ? 'Remaining (drafts + unpaid)' : 'Unpaid'}
+        value={money(remaining)}
+        badge={<ChangeBadge current={stats.outstanding} previous={previous?.outstanding} upIsGood={false} />}
+        sub={
+          <>
+            {includeDrafts && <span className="block">{`${money(stats.drafts)} in drafts + ${money(stats.outstanding)} unpaid`}</span>}
+            {overdueLine}
+          </>
+        }
+      />
     </div>
   );
 }

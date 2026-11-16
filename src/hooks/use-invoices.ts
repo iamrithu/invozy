@@ -5,6 +5,7 @@ import {
   duplicateInvoice,
   getInvoiceShareLink,
   getInvoiceStatusCounts,
+  getInvoiceSummary,
   listInvoicesPage,
   markReminded,
   recordPayment,
@@ -21,7 +22,19 @@ export const invoiceKeys = {
   page: (params: InvoiceListFilters) => [...invoiceKeys.all, 'page', params] as const,
   statusCounts: (search: string, dateFrom: string | undefined, dateTo: string | undefined, opts: StatusCountFilters) =>
     [...invoiceKeys.all, 'status-counts', search, dateFrom, dateTo, opts] as const,
+  summary: (search: string, dateFrom: string | undefined, dateTo: string | undefined, opts: StatusCountFilters) =>
+    [...invoiceKeys.all, 'summary', search, dateFrom, dateTo, opts] as const,
 };
+
+/** Per-status count, total, paid and still owed for the list's filters —
+ * the totals strip adds up whichever statuses are picked. */
+export function useInvoiceSummary(search: string, dateFrom?: string, dateTo?: string, opts: StatusCountFilters = {}) {
+  return useQuery({
+    queryKey: invoiceKeys.summary(search, dateFrom, dateTo, opts),
+    queryFn: () => getInvoiceSummary(search, dateFrom, dateTo, opts),
+    placeholderData: (prev) => prev,
+  });
+}
 
 export function useInvoiceStatusCounts(search: string, dateFrom?: string, dateTo?: string, opts: StatusCountFilters = {}) {
   return useQuery({

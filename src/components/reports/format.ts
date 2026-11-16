@@ -3,11 +3,12 @@
 
 const LOCALE: Record<string, string> = { INR: 'en-IN', USD: 'en-US', EUR: 'en-IE', GBP: 'en-GB', AED: 'en-AE' };
 
-/** "₹1.2L", "₹15K", "₹2.5Cr" — chart axes and tight labels, where the full
- * "₹1,23,456.00" won't fit. Same locale pairing as fmtInr (src/lib/gst.ts),
- * so Indian lakh/crore steps come out for INR. */
-export function fmtCompactMoney(n: number, currency = 'INR'): string {
-  return new Intl.NumberFormat(LOCALE[currency] ?? 'en-IN', { style: 'currency', currency, notation: 'compact', minimumFractionDigits: 0, maximumFractionDigits: 1 }).format(n || 0);
+/** "₹1,23,456" — whole rupees written out in full with Indian digit
+ * grouping, for chart axes and other tight labels. (Amounts stated in text
+ * use fmtInr from src/lib/gst.ts, paise included.) Same locale pairing as
+ * fmtInr, so INR gets lakh/crore grouping. */
+export function fmtMoneyWhole(n: number, currency = 'INR'): string {
+  return new Intl.NumberFormat(LOCALE[currency] ?? 'en-IN', { style: 'currency', currency, maximumFractionDigits: 0 }).format(Math.round(n || 0));
 }
 
 /** 0.4567 → "45.7%" (or "46%" with digits = 0). */

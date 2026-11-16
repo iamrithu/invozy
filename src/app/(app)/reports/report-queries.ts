@@ -30,6 +30,12 @@ export type ReportFilters = {
   dateTo?: string;
   customerId?: string;
   status?: 'all' | 'SENT' | 'PARTIALLY_PAID' | 'PAID';
+  /** The period to compare against, when the caller has one (the shared
+   * date picker's — "the same days of October" — so Reports and the
+   * Dashboard compare alike). Without it, the equal-length period just
+   * before. */
+  compareFrom?: string;
+  compareTo?: string;
 };
 
 /** Conditions on `"Invoice" i` for the given filters. */
@@ -47,20 +53,40 @@ function whereSql(conds: Prisma.Sql[]): Prisma.Sql {
   return conds.length ? Prisma.sql`WHERE ${Prisma.join(conds, ' AND ')}` : Prisma.empty;
 }
 
+/** The headline figures: issued invoices (sent, part-paid, paid) for the
+ * filters — totals, GST split, what's still owed and the overdue part of it
+ * — plus the drafts for the same dates and customer, kept apart so the
+ * page can add them in only when asked ("Include drafts"). */
 export async function queryReportStats(filters?: ReportFilters) {
-  const [row] = await prisma.$queryRaw<{ taxable: number; cgst: number; sgst: number; igst: number; total: number; outstanding: number; invoiceCount: number }[]>`
-    SELECT
-      COALESCE(SUM(i.taxable), 0)::float8 AS "taxable",
-      COALESCE(SUM(i.cgst), 0)::float8 AS "cgst",
-      COALESCE(SUM(i.sgst), 0)::float8 AS "sgst",
-      COALESCE(SUM(i.igst), 0)::float8 AS "igst",
-      COALESCE(SUM(i.total), 0)::float8 AS "total",
-      COALESCE(SUM(GREATEST(i.total - i."amountPaid", 0)), 0)::float8 AS "outstanding",
-      COUNT(*)::int AS "invoiceCount"
-    FROM "Invoice" i
-    ${whereSql(filterConds(filters, { excludeDrafts: true }))}
-  `;
-  return row;
+  const todayStart = istDayRangeUtc(todayIst()).gte;
+  const draftConds: Prisma.Sql[] = [Prisma.sql`i.status = 'DRAFT'`];
+  if (filters?.customerId) draftConds.push(Prisma.sql`i."customerId" = ${filters.customerId}`);
+  if (filters?.dateFrom) draftConds.push(Prisma.sql`i.date >= ${istDayRangeUtc(filters.dateFrom).gte}`);
+  if (filters?.dateTo) draftConds.push(Prisma.sql`i.date < ${istDayRangeUtc(filters.dateTo).lt}`);
+  const [[row], [draft]] = await Promise.all([
+    prisma.$queryRaw<
+      { taxable: number; cgst: number; sgst: number; igst: number; total: number; outstanding: number; overdue: number; overdueCount: number; invoiceCount: number }[]
+    >`
+      SELECT
+        COALESCE(SUM(i.taxable), 0)::float8 AS "taxable",
+        COALESCE(SUM(i.cgst), 0)::float8 AS "cgst",
+        COALESCE(SUM(i.sgst), 0)::float8 AS "sgst",
+        COALESCE(SUM(i.igst), 0)::float8 AS "igst",
+        COALESCE(SUM(i.total), 0)::float8 AS "total",
+        COALESCE(SUM(GREATEST(i.total - i."amountPaid", 0)), 0)::float8 AS "outstanding",
+        COALESCE(SUM(GREATEST(i.total - i."amountPaid", 0)) FILTER (WHERE i.status IN ('SENT', 'PARTIALLY_PAID') AND i.due < ${todayStart}), 0)::float8 AS "overdue",
+        (COUNT(*) FILTER (WHERE i.status IN ('SENT', 'PARTIALLY_PAID') AND i.due < ${todayStart} AND i.total - i."amountPaid" > 0.004))::int AS "overdueCount",
+        COUNT(*)::int AS "invoiceCount"
+      FROM "Invoice" i
+      ${whereSql(filterConds(filters, { excludeDrafts: true }))}
+    `,
+    prisma.$queryRaw<{ drafts: number; draftCount: number }[]>`
+      SELECT COALESCE(SUM(i.total), 0)::float8 AS "drafts", COUNT(*)::int AS "draftCount"
+      FROM "Invoice" i
+      ${whereSql(draftConds)}
+    `,
+  ]);
+  return { ...row, ...draft };
 }
 
 /** Shifts a `[from, to]` IST calendar-date range back to the immediately
@@ -86,8 +112,8 @@ function shiftToPreviousPeriod(fromStr: string, toStr: string): { from: string; 
  * any filter set with an open-ended date), since there's no well-defined
  * "period before all of history". */
 export async function queryPreviousPeriodStats(filters?: ReportFilters) {
-  if (!filters?.dateFrom || !filters?.dateTo) return null;
-  const prev = shiftToPreviousPeriod(filters.dateFrom, filters.dateTo);
+  const prev = previousRange(filters);
+  if (!prev) return null;
   return queryReportStats({ ...filters, dateFrom: prev.from, dateTo: prev.to });
 }
 
@@ -634,6 +660,7 @@ export type SalesAnalysis = {
  * range is open on either side, where "previous" has no meaning. */
 function previousRange(filters?: ReportFilters): { from: string; to: string } | null {
   if (!filters?.dateFrom || !filters?.dateTo) return null;
+  if (filters.compareFrom && filters.compareTo) return { from: filters.compareFrom, to: filters.compareTo };
   return shiftToPreviousPeriod(filters.dateFrom, filters.dateTo);
 }
 

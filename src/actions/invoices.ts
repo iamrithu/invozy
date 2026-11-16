@@ -478,12 +478,40 @@ function isOverdue(status: InvoiceStatus, due: Date, startOfToday: Date) {
 
 type InvoiceWhereFilters = Omit<InvoiceListFilters, 'sort' | 'page' | 'pageSize'>;
 
-/** One WHERE for the Invoices list and its status counts, so the two can
- * never disagree. Every filter — including amount range and GST type —
- * runs in Postgres against the stored totals columns. */
+const LIST_STATUSES = ['DRAFT', 'SENT', 'PARTIALLY_PAID', 'PAID'] as const;
+
+/** The statuses picked in the list's filter — `status` is one status or
+ * several joined by commas ("PAID,DRAFT"), and may include OVERDUE (sent or
+ * part-paid and past due). 'all', empty or unknown values pick nothing,
+ * meaning no status filter. */
+function pickedStatuses(status?: string): string[] {
+  return (status ?? '')
+    .split(',')
+    .map((x) => x.trim().toUpperCase())
+    .filter((x) => (LIST_STATUSES as readonly string[]).includes(x) || x === 'OVERDUE');
+}
+
+function statusWhere(status?: string): Prisma.InvoiceWhereInput | null {
+  const picked = pickedStatuses(status);
+  if (!picked.length) return null;
+  const plain = picked.filter((x) => x !== 'OVERDUE') as InvoiceStatus[];
+  const any: Prisma.InvoiceWhereInput[] = [];
+  if (plain.length) any.push({ status: { in: plain } });
+  if (picked.includes('OVERDUE')) any.push({ status: { in: OVERDUE_STATUSES }, due: { lt: istDayRangeUtc(todayIst()).gte } });
+  return any.length === 1 ? any[0] : { OR: any };
+}
+
+/** One WHERE for the Invoices list, its status counts and its totals, so
+ * they can never disagree. Every filter — including amount range and GST
+ * type — runs in Postgres against the stored totals columns. */
 function invoiceWhere(f: InvoiceWhereFilters): Prisma.InvoiceWhereInput {
+  const rest = invoiceWhereWithoutStatus(f);
+  const st = statusWhere(f.status);
+  return st ? { AND: [st, rest] } : rest;
+}
+
+function invoiceWhereWithoutStatus(f: InvoiceWhereFilters): Prisma.InvoiceWhereInput {
   return {
-    ...(f.status && f.status !== 'all' ? { status: f.status as InvoiceStatus } : {}),
     ...(f.customerId ? { customerId: f.customerId } : {}),
     ...(f.search
       ? {
@@ -538,6 +566,50 @@ export async function getInvoiceStatusCounts(
   }
   for (const key of Object.keys(counts)) if (counts[key] === 0) delete counts[key];
   return counts;
+}
+
+export type InvoiceBucket = { count: number; total: number; paid: number; balance: number };
+export type InvoiceSummary = Record<(typeof LIST_STATUSES)[number], InvoiceBucket> & {
+  /** The overdue part of SENT and PARTIALLY_PAID. */
+  overdue: Record<'SENT' | 'PARTIALLY_PAID', InvoiceBucket>;
+};
+
+/** Count, total, paid and still-owed per status for the list's other
+ * filters (search, dates, customer, amount, GST type) — the list's totals
+ * strip adds up whichever statuses are picked, so "All" sums everything,
+ * "Paid" only paid, "Paid + Draft" both. Amounts include GST (what the
+ * customer pays). A draft owes nothing yet: its value is its total. */
+export async function getInvoiceSummary(
+  search?: string,
+  dateFrom?: string,
+  dateTo?: string,
+  opts?: { customerId?: string; amountMin?: number; amountMax?: number; gstType?: 'all' | 'intra' | 'inter' }
+): Promise<InvoiceSummary> {
+  await requireUser();
+  const where = invoiceWhereWithoutStatus({ search, dateFrom, dateTo, ...opts });
+  const [all, late] = await Promise.all([
+    prisma.invoice.groupBy({ by: ['status'], where, _count: { _all: true }, _sum: { total: true, amountPaid: true } }),
+    prisma.invoice.groupBy({
+      by: ['status'],
+      where: { AND: [where, { status: { in: OVERDUE_STATUSES }, due: { lt: istDayRangeUtc(todayIst()).gte } }] },
+      _count: { _all: true },
+      _sum: { total: true, amountPaid: true },
+    }),
+  ]);
+  const bucket = (status: InvoiceStatus, row?: { _count: { _all: number }; _sum: { total: Prisma.Decimal | null; amountPaid: Prisma.Decimal | null } }): InvoiceBucket => {
+    const total = Number(row?._sum.total ?? 0);
+    const paid = status === 'DRAFT' ? 0 : status === 'PAID' ? total : Math.min(Number(row?._sum.amountPaid ?? 0), total);
+    return { count: row?._count._all ?? 0, total, paid, balance: status === 'DRAFT' ? 0 : Math.max(0, total - paid) };
+  };
+  const by = new Map(all.map((r) => [r.status, r]));
+  const lateBy = new Map(late.map((r) => [r.status, r]));
+  return {
+    DRAFT: bucket('DRAFT', by.get('DRAFT')),
+    SENT: bucket('SENT', by.get('SENT')),
+    PARTIALLY_PAID: bucket('PARTIALLY_PAID', by.get('PARTIALLY_PAID')),
+    PAID: bucket('PAID', by.get('PAID')),
+    overdue: { SENT: bucket('SENT', lateBy.get('SENT')), PARTIALLY_PAID: bucket('PARTIALLY_PAID', lateBy.get('PARTIALLY_PAID')) },
+  };
 }
 
 export type InvoiceSort = 'newest' | 'oldest' | 'amount-desc' | 'amount-asc';
