@@ -16,6 +16,10 @@
     "src/app/api/cron/backup/route.ts": {
       "maxDuration": 60
     },
+    "src/app/api/cron/daily/route.ts": {
+      "memory": 2048,
+      "maxDuration": 60
+    },
     "src/app/api/export/backup/route.ts": {
       "maxDuration": 60
     },
@@ -23,5 +27,8 @@
       "maxDuration": 60
     }
   },
-  "crons": [{ "path": "/api/cron/backup", "schedule": "30 21 * * *" }]
+  "crons": [
+    { "path": "/api/cron/backup", "schedule": "30 21 * * *" },
+    { "path": "/api/cron/daily", "schedule": "30 2 * * *" }
+  ]
 }

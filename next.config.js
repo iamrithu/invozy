@@ -36,9 +36,19 @@ const nextConfig = {
   // build's .nft.json — it looks more idiomatic but is actually broken.
   // Every route that renders a PDF in headless Chromium needs the same
   // three entries — invoices, credit notes, receipts, statements, the
-  // loading sheet, and the cron warm-up.
+  // loading sheet, the monthly report, the cron warm-up and the daily
+  // summary (which attaches the monthly report on the 1st).
   outputFileTracingIncludes: Object.fromEntries(
-    ['/api/invoices/*/pdf', '/api/pdf/credit-notes/*', '/api/pdf/receipts/*', '/api/pdf/statements/*', '/api/pdf/loading-sheet', '/api/cron/warm'].map((route) => [
+    [
+      '/api/invoices/*/pdf',
+      '/api/pdf/credit-notes/*',
+      '/api/pdf/receipts/*',
+      '/api/pdf/statements/*',
+      '/api/pdf/loading-sheet',
+      '/api/pdf/monthly-report',
+      '/api/cron/warm',
+      '/api/cron/daily',
+    ].map((route) => [
       route,
       ['./node_modules/playwright-core/**/*', './node_modules/playwright-core/browsers.json', './node_modules/@sparticuz/chromium/**/*'],
     ])
