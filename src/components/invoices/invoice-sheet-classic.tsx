@@ -15,7 +15,7 @@ import {
 import { numberToWords, amountToWordsWithPaise } from '@/lib/number-to-words';
 import { gstStateCode } from '@/lib/gst-state-codes';
 import { pageBudgets, planOptions, planPages, useMeasuredLayout, mmToPx } from './print-pagination';
-import { normalizePdfLayout, type PdfLayout } from '@/lib/pdf-layout';
+import { LOGO_BASE_PX, logoPx, normalizePdfLayout, type PdfLayout } from '@/lib/pdf-layout';
 
 const pxToMm = (px: number) => Math.round((px / mmToPx(1)) * 10) / 10;
 import { clampDiscount, printedLines, totalsLadder, type TotalsLadder } from './invoice-sheet';
@@ -747,7 +747,8 @@ function ClassicHeader({ company, invoiceNumber, date }: SharedProps) {
                   <img
                     src={company.logoUrl}
                     alt=""
-                    className="h-11 w-11 flex-none rounded-sm2 border border-line object-contain"
+                    className="flex-none rounded-sm2 border border-line object-contain"
+                    style={{ width: logoPx(LOGO_BASE_PX.CLASSIC, normalizePdfLayout(company.pdfLayout)), height: logoPx(LOGO_BASE_PX.CLASSIC, normalizePdfLayout(company.pdfLayout)) }}
                     onError={(e) => {
                       e.currentTarget.style.display = 'none';
                     }}

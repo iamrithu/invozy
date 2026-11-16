@@ -7,7 +7,7 @@ import { Check, FileText, Flag, Pencil, RotateCcw, X } from 'lucide-react';
 import { savePdfSettings } from '@/actions/settings';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { A4, contentHeightMm, contentWidthMm, DEFAULT_PDF_LAYOUT, normalizePdfLayout, PDF_LIMITS, type PdfLayout, type RowSpacing } from '@/lib/pdf-layout';
+import { A4, contentHeightMm, contentWidthMm, DEFAULT_PDF_LAYOUT, LOGO_BASE_PX, logoPx, normalizePdfLayout, PDF_LIMITS, type PdfLayout, type RowSpacing } from '@/lib/pdf-layout';
 import type { InvoiceTemplateName } from '@/lib/invoice-template';
 import type { PdfItemRows } from '@/lib/settings';
 import { cn } from '@/lib/utils';
@@ -35,7 +35,19 @@ const SPACING: { id: RowSpacing; name: string; blurb: string; gap: number }[] = 
  * the paper margins, item-row spacing, how many rows a page may hold, and
  * the furniture on multi-page invoices. Saved together by
  * src/actions/settings.ts savePdfSettings. */
-export function PdfSettingsSection({ id, template, rows, layout: value }: { id: string; template: InvoiceTemplateName; rows: PdfItemRows; layout: PdfLayout }) {
+export function PdfSettingsSection({
+  id,
+  template,
+  rows,
+  layout: value,
+  logoUrl,
+}: {
+  id: string;
+  template: InvoiceTemplateName;
+  rows: PdfItemRows;
+  layout: PdfLayout;
+  logoUrl?: string | null;
+}) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<PdfLayout>(value);
@@ -122,6 +134,45 @@ export function PdfSettingsSection({ id, template, rows, layout: value }: { id: 
                       </button>
                     );
                   })}
+                </div>
+              </Group>
+
+              <Group title="Logo size" note="100% is each template's standard size. A bigger logo makes the letterhead taller, so the first page holds a row or two fewer.">
+                <div className="grid grid-cols-1 items-center gap-4 rounded-lg2 border border-line bg-bg p-3 sm:grid-cols-[minmax(0,1fr)_172px]">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range"
+                        aria-label="Logo size"
+                        min={PDF_LIMITS.logoScale.min}
+                        max={PDF_LIMITS.logoScale.max}
+                        step={5}
+                        value={draft.logoScale}
+                        onChange={(e) => set('logoScale', Number(e.target.value))}
+                        className="h-2 w-full min-w-0 cursor-pointer accent-brand"
+                      />
+                      <span className="w-14 flex-none text-right font-mono text-[15px] font-extrabold text-ink">{draft.logoScale}%</span>
+                    </div>
+                    <div className="mt-2.5 flex flex-wrap gap-1.5">
+                      {LOGO_PRESETS.map((p) => (
+                        <button
+                          key={p.value}
+                          type="button"
+                          onClick={() => set('logoScale', p.value)}
+                          className={cn(
+                            'rounded-sm2 border px-2.5 py-1 text-[12px] font-bold transition-colors',
+                            draft.logoScale === p.value ? 'border-brand bg-brand-light text-brand-dark' : 'border-line bg-surface text-ink-soft hover:border-ink-faint'
+                          )}
+                        >
+                          {p.label} · {p.value}%
+                        </button>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-[11px] leading-snug text-ink-faint">
+                      On the {TEMPLATES.find((t) => t.id === draftTemplate)?.name ?? 'invoice'} template: {fmtMm(pxMm(logoPx(LOGO_BASE_PX[draftTemplate], draft)))} mm square. Receipts, statements and credit notes use the Clean size.
+                    </p>
+                  </div>
+                  <LogoPreview logoUrl={logoUrl} px={logoPx(LOGO_BASE_PX[draftTemplate], draft)} />
                 </div>
               </Group>
 
@@ -284,6 +335,7 @@ export function PdfSettingsSection({ id, template, rows, layout: value }: { id: 
             </div>
             <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
               <ViewRow label="Product rows" value={ROW_STYLES.find((r) => r.id === rows)?.name ?? 'Column lines only'} />
+              <ViewRow label="Logo size" value={`${value.logoScale}%${value.logoScale === 100 ? ' (standard)' : ''}`} />
               <ViewRow label="Margins (top · right · bottom · left)" value={`${fmtMm(value.marginTop)} · ${fmtMm(value.marginRight)} · ${fmtMm(value.marginBottom)} · ${fmtMm(value.marginLeft)} mm`} mono />
               <ViewRow label="Item row spacing" value={SPACING.find((s) => s.id === value.rowSpacing)?.name ?? 'Normal'} />
               <ViewRow label="Items per page" value={`Up to ${value.maxRowsPerPage}`} />
@@ -306,6 +358,34 @@ export function PdfSettingsSection({ id, template, rows, layout: value }: { id: 
 }
 
 const fmtMm = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+const pxMm = (px: number) => Math.round((px * 25.4) / 96 * 2) / 2;
+
+const LOGO_PRESETS = [
+  { label: 'Small', value: 75 },
+  { label: 'Standard', value: 100 },
+  { label: 'Large', value: 130 },
+  { label: 'Extra large', value: 160 },
+];
+
+/** The company's logo at the size it prints (CSS px at 96dpi match the
+ * PDF), on white paper like the invoice. */
+function LogoPreview({ logoUrl, px }: { logoUrl?: string | null; px: number }) {
+  return (
+    <div className="grid justify-items-center gap-1.5">
+      <div className="flex h-[160px] w-[172px] items-center justify-center overflow-hidden rounded-md2 border border-line bg-white">
+        {logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={logoUrl} alt="Your logo at the chosen size" className="block object-contain outline outline-1 outline-offset-0 outline-dashed outline-[#93c5fd]" style={{ width: px, height: px }} />
+        ) : (
+          <span className="flex items-center justify-center rounded-[3px] border border-dashed border-[#9ca3af] bg-[#f3f4f6] text-center text-[10px] leading-tight text-[#6b7280]" style={{ width: px, height: px }}>
+            Logo
+          </span>
+        )}
+      </div>
+      <span className="text-[10.5px] text-ink-faint">{logoUrl ? 'Actual size on paper' : 'No logo yet — add one at the top of this page'}</span>
+    </div>
+  );
+}
 
 function Group({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
   return (

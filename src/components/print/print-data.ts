@@ -10,27 +10,33 @@ import { inlineImage } from '@/app/print/inline-image';
 import { customerDisplayName } from '@/lib/customer';
 import { addressLine, type BuyerInfo, type LetterheadCompany } from './clean-doc';
 import { istDateString } from './format';
+import { getAppSettings } from '@/lib/settings';
 
 /** The company fields a letterhead and signatory block print. Read
- * directly by id — getCompany() would demand a signed-in user. */
+ * directly by id — getCompany() would demand a signed-in user. The logo
+ * size comes from Company → PDF layout. */
 export async function loadLetterheadCompany(): Promise<LetterheadCompany | null> {
-  return prisma.company.findUnique({
-    where: { id: COMPANY_ID },
-    select: {
-      name: true,
-      address: true,
-      pincode: true,
-      state: true,
-      gstin: true,
-      fssaiNo: true,
-      phone: true,
-      altPhone: true,
-      email: true,
-      logoUrl: true,
-      signatoryName: true,
-      signatureUrl: true,
-    },
-  });
+  const [company, settings] = await Promise.all([
+    prisma.company.findUnique({
+      where: { id: COMPANY_ID },
+      select: {
+        name: true,
+        address: true,
+        pincode: true,
+        state: true,
+        gstin: true,
+        fssaiNo: true,
+        phone: true,
+        altPhone: true,
+        email: true,
+        logoUrl: true,
+        signatoryName: true,
+        signatureUrl: true,
+      },
+    }),
+    getAppSettings(),
+  ]);
+  return company && { ...company, logoScale: settings.pdfLayout.logoScale };
 }
 
 /** loadLetterheadCompany for a /print/** page: the logo and signature are

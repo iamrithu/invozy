@@ -185,7 +185,7 @@ export function CompanyProfile({ company: co, pdfItemRows = 'none', pdfLayout = 
             form={() => <BrandFields co={co} />}
           />
 
-          <PdfSettingsSection id="pdf-layout" template={co.invoiceTemplate} rows={pdfItemRows} layout={pdfLayout} />
+          <PdfSettingsSection id="pdf-layout" template={co.invoiceTemplate} rows={pdfItemRows} layout={pdfLayout} logoUrl={co.logoUrl} />
 
           <Section
             {...sectionProps('tax')}

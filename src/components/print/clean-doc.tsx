@@ -1,5 +1,6 @@
 import { gstStateCode } from '@/lib/gst-state-codes';
 import { cn } from '@/lib/utils';
+import { LOGO_BASE_PX, logoPx } from '@/lib/pdf-layout';
 import { rupeesInWords } from './format';
 
 // Building blocks for printed documents in the owner's "Clean" style — the
@@ -36,6 +37,8 @@ export type LetterheadCompany = {
   logoUrl: string | null;
   signatoryName: string | null;
   signatureUrl: string | null;
+  /** Company → PDF layout logo size, percent (100 = 88px). */
+  logoScale?: number;
 };
 
 export type BuyerInfo = {
@@ -105,10 +108,10 @@ export function Letterhead({ company, right }: { company: LetterheadCompany; rig
   ].filter((l): l is string => !!l);
   return (
     <div className={cn('grid grid-cols-[minmax(0,1fr)_50%_minmax(0,1fr)] items-center gap-[18px] border-b px-4 py-3.5', RULE)}>
-      <div className="h-[88px] w-[88px] justify-self-start">
+      <div className="max-w-full justify-self-start" style={{ width: logoPx(LOGO_BASE_PX.CLEAN, { logoScale: company.logoScale ?? 100 }), height: logoPx(LOGO_BASE_PX.CLEAN, { logoScale: company.logoScale ?? 100 }) }}>
         {company.logoUrl && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={company.logoUrl} alt="" className="block h-[88px] w-[88px] object-contain" />
+          <img src={company.logoUrl} alt="" className="block h-full w-full object-contain" />
         )}
       </div>
       <div className="grid min-w-0 gap-0.5 text-center">

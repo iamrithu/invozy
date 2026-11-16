@@ -1,5 +1,6 @@
 'use client';
 
+import { LOGO_BASE_PX, logoPx, type PdfLayout } from '@/lib/pdf-layout';
 import { fmtInr, formatInvoiceDate } from '@/lib/gst';
 import { gstStateCode } from '@/lib/gst-state-codes';
 
@@ -63,6 +64,8 @@ export type CleanHeaderProps = {
     altPhone?: string | null;
     email?: string | null;
     logoUrl?: string | null;
+    /** Company → PDF layout; only the logo size is read here. */
+    pdfLayout?: Pick<PdfLayout, 'logoScale'>;
   };
   /** Document title in the top row. */
   title?: string;
@@ -146,7 +149,9 @@ export function CleanHeader({
           <img
             src={company.logoUrl}
             alt=""
-            className="block h-[88px] w-[88px] justify-self-start object-contain"
+            // Never wider than its column — a large logo just stays inside it.
+            className="block max-w-full justify-self-start object-contain"
+            style={{ width: logoPx(LOGO_BASE_PX.CLEAN, company.pdfLayout), height: logoPx(LOGO_BASE_PX.CLEAN, company.pdfLayout) }}
             // visibility, not display — keeps the row's height either way.
             onError={(e) => {
               e.currentTarget.style.visibility = 'hidden';

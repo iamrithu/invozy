@@ -5,7 +5,7 @@ import { computeTotals, fmtInr, formatInvoiceDate, formatUnit, type TotalsResult
 import { numberToWords } from '@/lib/number-to-words';
 import { gstStateCode } from '@/lib/gst-state-codes';
 import { mmToPx, pageBudgets, planOptions, planPages, useMeasuredLayout } from './print-pagination';
-import { normalizePdfLayout, type PdfLayout } from '@/lib/pdf-layout';
+import { LOGO_BASE_PX, logoPx, normalizePdfLayout, type PdfLayout } from '@/lib/pdf-layout';
 
 export type InvoiceSheetCompany = {
   name: string;
@@ -331,7 +331,8 @@ function ModernHeader({ company, date, due, invoiceNumber, editable }: SharedPro
           <img
             src={company.logoUrl}
             alt=""
-            className="h-[52px] w-[52px] flex-shrink-0 rounded-sm2 border border-line object-cover"
+            className="flex-shrink-0 rounded-sm2 border border-line object-cover"
+            style={{ width: logoPx(LOGO_BASE_PX.MODERN, normalizePdfLayout(company.pdfLayout)), height: logoPx(LOGO_BASE_PX.MODERN, normalizePdfLayout(company.pdfLayout)) }}
             onError={(e) => {
               e.currentTarget.style.display = 'none';
             }}

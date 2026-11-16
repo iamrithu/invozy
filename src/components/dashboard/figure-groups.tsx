@@ -330,32 +330,21 @@ export function totalsGroups(data: BusinessOverview, stock: InventorySummary | n
   const avgDays = collection.avgDaysToPay === null ? null : Math.round(collection.avgDaysToPay);
 
   return [
-    {
-      title: 'Catalogue & customers',
-      figures: [
-        {
-          icon: Package,
-          label: 'Products',
-          value: num(p.active),
-          sub: p.active + p.inactive === 0 ? 'None added yet' : `${plural(p.categories, 'category', 'categories')}${p.inactive > 0 ? ` · ${num(p.inactive)} inactive` : ''}`,
-          href: '/products',
-        },
-        {
-          icon: Users,
-          label: 'Customers',
-          value: num(c.active),
-          sub: c.withDues > 0 ? `${num(c.withDues)} with dues` : c.active > 0 ? 'No dues pending' : 'None added yet',
-          href: '/customers',
-        },
-        {
-          icon: Truck,
-          label: 'Suppliers',
-          value: num(s.active),
-          sub: s.active + s.inactive === 0 ? 'None added yet' : s.inactive > 0 ? `${num(s.inactive)} inactive` : 'All active',
-          href: '/suppliers',
-        },
-      ],
-    },
+    paymentsGroup({
+      currency,
+      includeDrafts,
+      issued: m.billed,
+      issuedCount: i.issued,
+      drafts: i.byStatus.DRAFT.total,
+      draftCount: drafts,
+      owed: m.unpaid,
+      owedCount: m.openCount,
+      overdue: m.overdue,
+      overdueCount: m.overdueCount,
+      oldestOverdueDays: m.oldestOverdueDays,
+      creditSettled: m.creditAdjusted,
+      paidNote: avgDays === null ? undefined : avgDays === 0 ? 'paid same day on avg' : `paid in ~${plural(avgDays, 'day')}`,
+    }),
     {
       title: 'Invoices & billing',
       figures: [
@@ -384,21 +373,32 @@ export function totalsGroups(data: BusinessOverview, stock: InventorySummary | n
         },
       ],
     },
-    paymentsGroup({
-      currency,
-      includeDrafts,
-      issued: m.billed,
-      issuedCount: i.issued,
-      drafts: i.byStatus.DRAFT.total,
-      draftCount: drafts,
-      owed: m.unpaid,
-      owedCount: m.openCount,
-      overdue: m.overdue,
-      overdueCount: m.overdueCount,
-      oldestOverdueDays: m.oldestOverdueDays,
-      creditSettled: m.creditAdjusted,
-      paidNote: avgDays === null ? undefined : avgDays === 0 ? 'paid same day on avg' : `paid in ~${plural(avgDays, 'day')}`,
-    }),
+    {
+      title: 'Catalogue & customers',
+      figures: [
+        {
+          icon: Package,
+          label: 'Products',
+          value: num(p.active),
+          sub: p.active + p.inactive === 0 ? 'None added yet' : `${plural(p.categories, 'category', 'categories')}${p.inactive > 0 ? ` · ${num(p.inactive)} inactive` : ''}`,
+          href: '/products',
+        },
+        {
+          icon: Users,
+          label: 'Customers',
+          value: num(c.active),
+          sub: c.withDues > 0 ? `${num(c.withDues)} with dues` : c.active > 0 ? 'No dues pending' : 'None added yet',
+          href: '/customers',
+        },
+        {
+          icon: Truck,
+          label: 'Suppliers',
+          value: num(s.active),
+          sub: s.active + s.inactive === 0 ? 'None added yet' : s.inactive > 0 ? `${num(s.inactive)} inactive` : 'All active',
+          href: '/suppliers',
+        },
+      ],
+    },
     {
       title: 'Buying & margin',
       figures: [
@@ -450,35 +450,23 @@ export function periodGroups(
   const count = (n: number) => num(n);
 
   return [
-    {
-      title: 'Catalogue & customers',
-      figures: [
-        {
-          icon: Package,
-          label: 'Products sold',
-          value: num(c.productsSold),
-          delta: change(c.productsSold, p.productsSold, 'up', previous, count),
-          sub: c.productsSold === 0 ? 'Nothing sold on these dates' : opts.topProduct ? `Best seller: ${opts.topProduct}` : `${plural(c.lines, 'invoice line')}`,
-          href: '/reports?tab=sales',
-        },
-        {
-          icon: Users,
-          label: 'Customers billed',
-          value: num(c.customers),
-          delta: change(c.customers, p.customers, 'up', previous, count),
-          sub: c.customers === 0 ? 'No one billed on these dates' : c.newCustomers > 0 ? `${num(c.newCustomers)} new, billed for the first time` : 'All repeat customers',
-          href: '/reports?tab=sales',
-        },
-        {
-          icon: Truck,
-          label: 'Suppliers',
-          value: num(c.suppliers),
-          delta: change(c.suppliers, p.suppliers, 'neutral', previous, count),
-          sub: c.purchaseCount === 0 ? 'Nothing bought on these dates' : `Bought from · ${plural(c.purchaseCount, 'purchase bill')}`,
-          href: '/purchases',
-        },
-      ],
-    },
+    paymentsGroup({
+      currency,
+      includeDrafts: !!opts.includeDrafts,
+      issued: c.sales,
+      issuedCount: c.invoices,
+      drafts: c.draftsValue,
+      draftCount: c.drafts,
+      owed: c.unpaid,
+      owedCount: c.openCount,
+      overdue: c.overdue,
+      overdueCount: c.overdueCount,
+      deltas: {
+        total: opts.includeDrafts ? change(c.sales + c.draftsValue, p.sales + p.draftsValue, 'up', previous, exact) : change(c.sales, p.sales, 'up', previous, exact),
+        paid: change(c.sales - c.unpaid, p.sales - p.unpaid, 'up', previous, exact),
+      },
+      spark: opts.spark ? { values: opts.spark.sales, color: 'hsl(var(--chart-sales))' } : undefined,
+    }),
     {
       title: 'Invoices & billing',
       footer: opts.targetFooter,
@@ -518,23 +506,35 @@ export function periodGroups(
         },
       ],
     },
-    paymentsGroup({
-      currency,
-      includeDrafts: !!opts.includeDrafts,
-      issued: c.sales,
-      issuedCount: c.invoices,
-      drafts: c.draftsValue,
-      draftCount: c.drafts,
-      owed: c.unpaid,
-      owedCount: c.openCount,
-      overdue: c.overdue,
-      overdueCount: c.overdueCount,
-      deltas: {
-        total: opts.includeDrafts ? change(c.sales + c.draftsValue, p.sales + p.draftsValue, 'up', previous, exact) : change(c.sales, p.sales, 'up', previous, exact),
-        paid: change(c.sales - c.unpaid, p.sales - p.unpaid, 'up', previous, exact),
-      },
-      spark: opts.spark ? { values: opts.spark.sales, color: 'hsl(var(--chart-sales))' } : undefined,
-    }),
+    {
+      title: 'Catalogue & customers',
+      figures: [
+        {
+          icon: Package,
+          label: 'Products sold',
+          value: num(c.productsSold),
+          delta: change(c.productsSold, p.productsSold, 'up', previous, count),
+          sub: c.productsSold === 0 ? 'Nothing sold on these dates' : opts.topProduct ? `Best seller: ${opts.topProduct}` : `${plural(c.lines, 'invoice line')}`,
+          href: '/reports?tab=sales',
+        },
+        {
+          icon: Users,
+          label: 'Customers billed',
+          value: num(c.customers),
+          delta: change(c.customers, p.customers, 'up', previous, count),
+          sub: c.customers === 0 ? 'No one billed on these dates' : c.newCustomers > 0 ? `${num(c.newCustomers)} new, billed for the first time` : 'All repeat customers',
+          href: '/reports?tab=sales',
+        },
+        {
+          icon: Truck,
+          label: 'Suppliers',
+          value: num(c.suppliers),
+          delta: change(c.suppliers, p.suppliers, 'neutral', previous, count),
+          sub: c.purchaseCount === 0 ? 'Nothing bought on these dates' : `Bought from · ${plural(c.purchaseCount, 'purchase bill')}`,
+          href: '/purchases',
+        },
+      ],
+    },
     {
       title: 'Buying & margin',
       figures: [

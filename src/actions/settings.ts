@@ -52,7 +52,7 @@ export async function savePdfSettings(input: {
       userId: user.id,
       action: 'company.pdf-layout',
       entityType: 'company',
-      summary: `Invoice PDF: ${input.invoiceTemplate.charAt(0) + input.invoiceTemplate.slice(1).toLowerCase()} template, ${ROW_STYLE_LABEL[input.pdfItemRows]}, margins ${l.marginTop}/${l.marginRight}/${l.marginBottom}/${l.marginLeft} mm, ${l.rowSpacing} rows, up to ${l.maxRowsPerPage} rows a page (${l.maxRowsWithTotals} with totals)`,
+      summary: `Invoice PDF: ${input.invoiceTemplate.charAt(0) + input.invoiceTemplate.slice(1).toLowerCase()} template, ${ROW_STYLE_LABEL[input.pdfItemRows]}, margins ${l.marginTop}/${l.marginRight}/${l.marginBottom}/${l.marginLeft} mm, ${l.rowSpacing} rows, up to ${l.maxRowsPerPage} rows a page (${l.maxRowsWithTotals} with totals), logo ${l.logoScale}%`,
     });
     revalidatePath('/company');
     revalidatePath('/invoices', 'layout');

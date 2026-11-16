@@ -26,6 +26,9 @@ export type PdfLayout = {
   fillColumns: boolean;
   /** The footer line on every page: "computer-generated" note and Page x of y. */
   pageFooter: boolean;
+  /** Logo size as a percentage of each template's standard size (Clean
+   * 88px, Modern 52px, Classic 44px — see logoPx). */
+  logoScale: number;
 };
 
 export const DEFAULT_PDF_LAYOUT: PdfLayout = {
@@ -40,6 +43,7 @@ export const DEFAULT_PDF_LAYOUT: PdfLayout = {
   carryForward: true,
   fillColumns: true,
   pageFooter: true,
+  logoScale: 100,
 };
 
 export const PDF_LIMITS = {
@@ -47,6 +51,8 @@ export const PDF_LIMITS = {
   rows: { min: 5, max: 40 },
   rowsWithTotals: { min: 1, max: 40 },
   keep: { min: 0, max: 5 },
+  /** Percent of the template's standard logo size, in steps of 5. */
+  logoScale: { min: 50, max: 175 },
 } as const;
 
 export const A4 = { widthMm: 210, heightMm: 297 } as const;
@@ -77,8 +83,17 @@ export function normalizePdfLayout(v: unknown): PdfLayout {
     carryForward: bool(o.carryForward, d.carryForward),
     fillColumns: bool(o.fillColumns, d.fillColumns),
     pageFooter: bool(o.pageFooter, d.pageFooter),
+    logoScale: Math.round(clamp(o.logoScale, PDF_LIMITS.logoScale.min, PDF_LIMITS.logoScale.max, d.logoScale) / 5) * 5,
   };
 }
+
+/** A template's logo edge in CSS px at the company's logo size. */
+export function logoPx(basePx: number, layout: Pick<PdfLayout, 'logoScale'> | null | undefined): number {
+  return Math.round((basePx * (layout?.logoScale ?? DEFAULT_PDF_LAYOUT.logoScale)) / 100);
+}
+
+/** Each template's standard (100%) logo edge, px. */
+export const LOGO_BASE_PX = { CLEAN: 88, MODERN: 52, CLASSIC: 44 } as const;
 
 /** Width of the printable content box in mm — what print pages lay out at
  * and the PDF renderer's viewport is sized to. */
