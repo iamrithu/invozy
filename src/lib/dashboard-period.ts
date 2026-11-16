@@ -19,7 +19,8 @@ export const DASHBOARD_PRESETS = [
 export type DashboardPreset = (typeof DASHBOARD_PRESETS)[number]['id'] | 'custom';
 
 export type DashboardRange = {
-  preset: DashboardPreset;
+  /** 'all': every date from the first invoice, purchase or payment to today. */
+  preset: DashboardPreset | 'all';
   /** First and last IST date of the period, inclusive. */
   from: string;
   to: string;
@@ -36,6 +37,10 @@ export type DashboardRange = {
   word: string;
   /** Days of the month gone and in total — the sales-target pace. This-month only. */
   monthDays: { elapsed: number; total: number } | null;
+  /** False for All time — there's nothing before it to compare with, so
+   * no change badges and no previous-period line. (prevFrom > prevTo then:
+   * an empty range every query reads as nothing.) */
+  compare: boolean;
 };
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -131,13 +136,36 @@ function sameDaysBefore(from: string, today: string, months: number) {
  * periods run to today and are compared with the same days of the one
  * before; a custom range is compared with the same number of days just
  * before it. */
-export function resolveDashboardRange(params: { period?: string; from?: string; to?: string }, today = todayIst()): DashboardRange {
+export function resolveDashboardRange(
+  params: { period?: string; from?: string; to?: string },
+  today = todayIst(),
+  /** The first day with any invoice, purchase or payment — where All time
+   * starts. Only read for `period=all`. */
+  firstDate?: string | null
+): DashboardRange {
+  if (params.period === 'all') {
+    const from = isIsoDate(firstDate) && firstDate < today ? firstDate : today;
+    return {
+      preset: 'all',
+      from,
+      to: today,
+      prevFrom: from,
+      prevTo: addDays(from, -1),
+      name: `All time · since ${dayText(from, true)}`,
+      dates: spanText(from, today),
+      previousLabel: '',
+      word: 'All time',
+      monthDays: null,
+      compare: false,
+    };
+  }
   const known = DASHBOARD_PRESETS.some((p) => p.id === params.period) || params.period === 'custom';
   const preset = (known ? params.period : 'month') as DashboardPreset;
-  const make = (r: Omit<DashboardRange, 'preset' | 'monthDays' | 'dates'> & { preset?: DashboardPreset; monthDays?: DashboardRange['monthDays'] }): DashboardRange => ({
+  const make = (r: Omit<DashboardRange, 'preset' | 'monthDays' | 'dates' | 'compare'> & { preset?: DashboardPreset; monthDays?: DashboardRange['monthDays'] }): DashboardRange => ({
     preset: r.preset ?? preset,
     monthDays: r.monthDays ?? null,
     dates: spanText(r.from, r.to),
+    compare: true,
     ...r,
   });
 

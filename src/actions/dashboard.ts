@@ -275,6 +275,19 @@ export async function getRunningTotals(range: { from: string; to: string; prevFr
   return { current: run(range.from, range.to), previous: run(range.prevFrom, range.prevTo) };
 }
 
+/** The first IST day with any invoice (drafts included), purchase bill or
+ * payment — where the dashboard's All time starts. Null with no data yet. */
+export async function getFirstActivityDate(): Promise<string | null> {
+  await requireUser();
+  const [row] = await prisma.$queryRaw<{ d: string | null }[]>`
+    SELECT to_char(LEAST(
+      (SELECT MIN(date) FROM "Invoice"),
+      (SELECT MIN(date) FROM "Purchase"),
+      (SELECT MIN(date) FROM "Payment")
+    ) + interval '330 minutes', 'YYYY-MM-DD') AS d`;
+  return row?.d ?? null;
+}
+
 export type PaymentModeShare = { mode: string; amount: number; count: number; largest: number };
 
 /** Cash received in the period by how it was paid (Cash, UPI, Bank

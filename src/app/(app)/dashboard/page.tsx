@@ -4,6 +4,7 @@ import {
   getBusinessOverview,
   getDashboardKpis,
   getDueSoon,
+  getFirstActivityDate,
   getOpenInvoices,
   getPaymentModes,
   getRecentInvoices,
@@ -22,7 +23,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { SalesCollectionsChart } from '@/components/dashboard/sales-collections-chart';
 import { SalesTarget } from '@/components/dashboard/sales-target';
 import { DueSoonCard } from '@/components/dashboard/due-soon-card';
-import { FigureGroups, periodGroups, totalsGroups } from '@/components/dashboard/figure-groups';
+import { FigureGroups, periodGroups, totalsGroup } from '@/components/dashboard/figure-groups';
 import { DashboardDateFilter } from '@/components/dashboard/date-filter';
 import { RecordPaymentLauncher } from '@/components/dashboard/record-payment-launcher';
 import { DraftsToggle } from '@/components/dashboard/drafts-toggle';
@@ -35,15 +36,15 @@ import { cn } from '@/lib/utils';
 export const dynamic = 'force-dynamic';
 
 // The dashboard reads top to bottom, each thing shown once:
-//   1. Business totals — all time, up to today: twelve figures in four
-//      groups (catalogue & customers, invoices & billing, payments, buying
-//      & margin). The date filter doesn't change these.
-//   2. Date-wise summary — a date filter (today, week, month, quarter, half
-//      year, full year, or any custom range) and the same twelve figures for
-//      those dates against the period before, then charts that explain
-//      them: the running total against the period before, how customers
-//      paid, sales & collections over time, the busiest weekdays, and the
-//      top customers, products and routes.
+//   1. Date-wise summary — a date filter (today, week, month, quarter, half
+//      year, full year, all time, or any custom range) and twelve figures
+//      for those dates against the period before (not for all time), in four groups (payments, invoices
+//      & billing, products & customers, buying & margin), then the charts
+//      that explain them: the running total against the period before, how
+//      customers paid, sales & collections over time, the busiest weekdays,
+//      and the top customers, products and routes.
+//   2. Business totals — all time, up to today: products, customers,
+//      suppliers and invoices (with what's still owed). Not date-filtered.
 //   3. Day to day — due this week, recent invoices, stock.
 // Things that need doing (overdue, unsent drafts, stock alerts) are in the
 // top bar's notifications.
@@ -54,7 +55,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   // Reports counts). On adds drafts into the Payments flow.
   const includeDrafts = params.drafts === '1';
   const today = todayIst();
-  const range = resolveDashboardRange(params, today);
+  // All time starts at the first invoice, purchase or payment.
+  const firstDate = params.period === 'all' ? await getFirstActivityDate() : null;
+  const range = resolveDashboardRange(params, today, firstDate);
   const filter = { dateFrom: range.from, dateTo: range.to };
   // A weekday pattern needs a couple of weeks to mean anything; shorter
   // periods show the last 12 weeks instead (and say so).
@@ -123,13 +126,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
       {isBrandNew && <GettingStarted />}
 
-      <Section title="Business totals" subtitle="All time, up to today. The date filter below doesn't change these.">
-        <FigureGroups groups={totalsGroups(overview, stock, cur, includeDrafts)} />
-      </Section>
-
       <Section
         title="Date-wise summary"
-        subtitle={`${range.dates} · ${range.name} — compared with ${range.previousLabel}`}
+        subtitle={range.compare ? `${range.dates} · ${range.name} — compared with ${range.previousLabel}` : `${range.dates} · All time — every invoice, purchase and payment so far`}
         action={<DashboardDateFilter key={`${range.preset}:${range.from}:${range.to}`} range={range} today={today} />}
       >
         <FigureGroups
@@ -138,6 +137,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             previous: range.previousLabel,
             topProduct: topProducts.byValue[0]?.name ?? null,
             includeDrafts,
+            compare: range.compare,
             targetFooter: range.monthDays ? (
               <SalesTarget target={settings.monthlySalesTarget} netSales={kpis.current.netSales} days={range.monthDays} currency={cur} />
             ) : undefined,
@@ -148,7 +148,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <Card title="Sales so far" subtitle={`Running total · ${range.word}`} action={{ href: '/reports', label: 'Reports' }}>
             <div className="px-4 pb-3 pt-1">
-              <RunningTotalChart current={running.current} previous={running.previous} currency={cur} previousName={range.previousLabel.replace(/ \(.*\)$/, '')} />
+              <RunningTotalChart current={running.current} previous={running.previous} currency={cur} previousName={range.previousLabel.replace(/ \(.*\)$/, '')} compare={range.compare} />
             </div>
           </Card>
           <Card title="How customers paid" subtitle={range.word} action={{ href: '/reports?tab=collections', label: 'Collections' }}>
@@ -235,6 +235,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             )}
           </Card>
         </div>
+      </Section>
+
+      <Section title="Business totals" subtitle="All time, up to today — the date filter doesn't change these.">
+        <FigureGroups groups={[totalsGroup(overview, cur)]} />
       </Section>
 
       <Section title="Day to day" subtitle="What's due this week, the latest invoices, and stock to reorder.">

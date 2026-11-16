@@ -39,12 +39,15 @@ export function RunningTotalChart({
   previous,
   currency,
   previousName,
+  compare = true,
 }: {
   current: Point[];
   previous: Point[];
   currency: string;
   /** "the same days of October" — what the dashed line is. */
   previousName: string;
+  /** False (All time): just this period's line — no badge, no dashed line. */
+  compare?: boolean;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -60,6 +63,7 @@ export function RunningTotalChart({
   const headline = (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
       <span className="font-mono text-[22px] font-bold leading-tight text-ink">{money(now)}</span>
+      {compare && (
       <span
         className={cn(
           'flex items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] font-bold',
@@ -70,6 +74,7 @@ export function RunningTotalChart({
         {dir === 'flat' ? 'Level with' : `${money(Math.abs(diff))} ${dir === 'up' ? 'ahead of' : 'behind'}`} {previousName}
         {pct !== null && dir !== 'flat' && <span className="font-mono">({pct > 0 ? '+' : ''}{pct.toFixed(0)}%)</span>}
       </span>
+      )}
     </div>
   );
 
@@ -82,7 +87,7 @@ export function RunningTotalChart({
         <ul className="mt-4 space-y-3">
           {[
             { label: current[0] ? dm(current[0].date) : 'This period', value: now, color: CURRENT },
-            { label: previous[0] ? dm(previous[0].date) : 'Before', value: then, color: PREVIOUS },
+            ...(compare ? [{ label: previous[0] ? dm(previous[0].date) : 'Before', value: then, color: PREVIOUS }] : []),
           ].map((r) => (
             <li key={r.label} className="text-[12px]">
               <div className="mb-1 flex justify-between gap-2">
@@ -139,9 +144,11 @@ export function RunningTotalChart({
         <span className="flex items-center gap-1.5">
           <span className="h-0.5 w-4 rounded-full" style={{ background: CURRENT }} /> This period
         </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-4 border-t-2 border-dashed" style={{ borderColor: PREVIOUS }} /> {previousName.replace(/^the /, 'The ')}
-        </span>
+        {compare && (
+          <span className="flex items-center gap-1.5">
+            <span className="w-4 border-t-2 border-dashed" style={{ borderColor: PREVIOUS }} /> {previousName.replace(/^the /, 'The ')}
+          </span>
+        )}
       </div>
       {!hasData ? (
         <div className="mt-2 flex h-[160px] items-center justify-center rounded-lg2 border border-dashed border-line text-[12px] text-ink-faint">

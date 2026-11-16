@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock,
-  Layers,
   Minus,
   Package,
   Receipt,
@@ -20,7 +19,6 @@ import {
   Users,
 } from 'lucide-react';
 import type { BusinessOverview, DashboardKpis } from '@/actions/dashboard';
-import type { InventorySummary } from '@/actions/inventory';
 import { fmtInr } from '@/lib/gst';
 import { Sparkline } from '@/components/ui/sparkline';
 import { cn } from '@/lib/utils';
@@ -69,19 +67,29 @@ export type Figure = {
   badge?: { text: string; title: string };
 };
 
-export type FigureGroup = { title: string; figures: Figure[]; footer?: React.ReactNode };
+export type FigureGroup = { title: string; figures: Figure[]; footer?: React.ReactNode; /** Full width, four figures across. */ wide?: boolean };
 
 export function FigureGroups({ groups }: { groups: FigureGroup[] }) {
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
       {groups.map((g) => (
-        <div key={g.title} className="flex min-w-0 flex-col rounded-xl2 border border-line bg-surface p-4 shadow-card">
+        <div key={g.title} className={cn('flex min-w-0 flex-col rounded-xl2 border border-line bg-surface p-4 shadow-card', g.wide && 'lg:col-span-2')}>
           <h3 className="mb-2.5 text-[13.5px] font-extrabold text-ink">{g.title}</h3>
-          <div className="grid grid-cols-1 divide-y divide-line sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-            {g.figures.map((f) => (
-              <FigureCell key={f.label} {...f} />
-            ))}
-          </div>
+          {g.wide ? (
+            // Two by two until there's room for four across (then divided
+            // like the other groups) — four narrow columns cut the labels.
+            <div className="grid grid-cols-2 gap-x-5 gap-y-4 xl:grid-cols-4 xl:gap-x-0 xl:divide-x xl:divide-line">
+              {g.figures.map((f) => (
+                <FigureCell key={f.label} {...f} className="xl:px-3.5 xl:first:pl-0 xl:last:pr-0" />
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 divide-y divide-line sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+              {g.figures.map((f) => (
+                <FigureCell key={f.label} {...f} />
+              ))}
+            </div>
+          )}
           {g.footer && <div className="mt-3 border-t border-line pt-3">{g.footer}</div>}
         </div>
       ))}
@@ -89,9 +97,9 @@ export function FigureGroups({ groups }: { groups: FigureGroup[] }) {
   );
 }
 
-function FigureCell({ icon: Icon, tone, label, value, title, sub, href, delta, spark, badge }: Figure) {
+function FigureCell({ icon: Icon, tone, label, value, title, sub, href, delta, spark, badge, className }: Figure & { className?: string }) {
   return (
-    <Link href={href} className="group flex min-w-0 flex-col py-2.5 first:pt-0 last:pb-0 sm:px-3.5 sm:py-0 sm:first:pl-0 sm:last:pr-0">
+    <Link href={href} className={cn('group flex min-w-0 flex-col', className ?? 'py-2.5 first:pt-0 last:pb-0 sm:px-3.5 sm:py-0 sm:first:pl-0 sm:last:pr-0')}>
       <span className="flex min-w-0 items-center gap-1.5 text-[12px] font-semibold text-ink-soft">
         <span className={cn('hidden h-6 w-6 flex-shrink-0 items-center justify-center rounded-sm2 sm:flex', TONE_CHIP[tone ?? 'none'])}>
           <Icon size={13} />
@@ -323,116 +331,50 @@ function change(now: number, before: number, good: 'up' | 'down' | 'neutral', pr
 // All-time totals
 // ---------------------------------------------------------------------------
 
-export function totalsGroups(data: BusinessOverview, stock: InventorySummary | null, currency: string, includeDrafts = false): FigureGroup[] {
-  const { products: p, customers: c, suppliers: s, invoices: i, money: m, creditNotes: cn, purchases: buy, profit, collection } = data;
-  const money = (n: number) => fmtInr(n, currency);
+/** One wide row under the date-wise summary: what the business has, all
+ * time — products, customers, suppliers and invoices (with what's still
+ * owed). Everything money-by-dates is in the summary above it. */
+export function totalsGroup(data: BusinessOverview, currency: string): FigureGroup {
+  const { products: p, customers: c, suppliers: s, invoices: i, money: m } = data;
   const drafts = i.byStatus.DRAFT.count;
-  const avgDays = collection.avgDaysToPay === null ? null : Math.round(collection.avgDaysToPay);
-
-  return [
-    paymentsGroup({
-      currency,
-      includeDrafts,
-      issued: m.billed,
-      issuedCount: i.issued,
-      drafts: i.byStatus.DRAFT.total,
-      draftCount: drafts,
-      owed: m.unpaid,
-      owedCount: m.openCount,
-      overdue: m.overdue,
-      overdueCount: m.overdueCount,
-      oldestOverdueDays: m.oldestOverdueDays,
-      creditSettled: m.creditAdjusted,
-      paidNote: avgDays === null ? undefined : avgDays === 0 ? 'paid same day on avg' : `paid in ~${plural(avgDays, 'day')}`,
-    }),
-    {
-      title: 'Invoices & billing',
-      figures: [
-        {
-          icon: Receipt,
-          label: 'Invoices',
-          value: num(i.total),
-          sub: i.total === 0 ? 'None created yet' : `${num(i.issued)} issued${drafts > 0 ? ` · ${plural(drafts, 'draft')}` : ''}`,
-          href: '/invoices',
-        },
-        {
-          icon: Calculator,
-          label: 'Average invoice',
-          value: i.issued > 0 ? money(m.billed / i.issued) : '—',
-          title: i.issued > 0 ? fmtInr(m.billed / i.issued, currency) : undefined,
-          sub: i.issued > 0 ? `Across ${plural(i.issued, 'issued invoice')}` : 'Nothing issued yet',
-          href: '/reports',
-        },
-        {
-          icon: Undo2,
-          label: 'Credit notes',
-          value: money(cn.total),
-          title: fmtInr(cn.total, currency),
-          sub: cn.count === 0 ? 'None raised' : `${plural(cn.count, 'note')}${m.billed > 0.004 ? ` · ${((cn.total / m.billed) * 100).toFixed(1)}% of billed` : ''}`,
-          href: '/credit-notes',
-        },
-      ],
-    },
-    {
-      title: 'Catalogue & customers',
-      figures: [
-        {
-          icon: Package,
-          label: 'Products',
-          value: num(p.active),
-          sub: p.active + p.inactive === 0 ? 'None added yet' : `${plural(p.categories, 'category', 'categories')}${p.inactive > 0 ? ` · ${num(p.inactive)} inactive` : ''}`,
-          href: '/products',
-        },
-        {
-          icon: Users,
-          label: 'Customers',
-          value: num(c.active),
-          sub: c.withDues > 0 ? `${num(c.withDues)} with dues` : c.active > 0 ? 'No dues pending' : 'None added yet',
-          href: '/customers',
-        },
-        {
-          icon: Truck,
-          label: 'Suppliers',
-          value: num(s.active),
-          sub: s.active + s.inactive === 0 ? 'None added yet' : s.inactive > 0 ? `${num(s.inactive)} inactive` : 'All active',
-          href: '/suppliers',
-        },
-      ],
-    },
-    {
-      title: 'Buying & margin',
-      figures: [
-        {
-          icon: ShoppingCart,
-          label: 'Purchases',
-          value: money(buy.total),
-          title: fmtInr(buy.total, currency),
-          sub: buy.count === 0 ? 'No bills entered yet' : `${plural(buy.count, 'bill')} from ${plural(buy.suppliers, 'supplier')}`,
-          href: '/purchases',
-        },
-        {
-          icon: Layers,
-          label: 'Stock value',
-          value: stock ? money(stock.stockValue) : '—',
-          title: stock ? fmtInr(stock.stockValue, currency) : undefined,
-          sub: !stock ? 'Unavailable right now' : stock.tracked === 0 ? 'No stock tracked yet' : `${plural(stock.tracked, 'product')} tracked`,
-          href: '/inventory',
-        },
-        {
-          icon: TrendingUp,
-          tone: profit.margin !== null && profit.profit > 0 ? 'green' : undefined,
-          label: 'Gross profit',
-          value: profit.margin === null ? '—' : money(profit.profit),
-          title: profit.margin === null ? undefined : fmtInr(profit.profit, currency),
-          sub:
-            profit.margin === null
-              ? 'Enter purchase bills to see it'
-              : `${(profit.margin * 100).toFixed(1)}% margin${profit.unknownShare > 0.005 ? ` · ${Math.round(profit.unknownShare * 100)}% of sales uncosted` : ''}`,
-          href: '/reports',
-        },
-      ],
-    },
-  ];
+  return {
+    title: 'Products, customers & invoices',
+    wide: true,
+    figures: [
+      {
+        icon: Package,
+        label: 'Products',
+        value: num(p.active),
+        sub: p.active + p.inactive === 0 ? 'None added yet' : `${plural(p.categories, 'category', 'categories')}${p.inactive > 0 ? ` · ${num(p.inactive)} inactive` : ''}`,
+        href: '/products',
+      },
+      {
+        icon: Users,
+        label: 'Customers',
+        value: num(c.active),
+        sub: c.withDues > 0 ? `${num(c.withDues)} with dues` : c.active > 0 ? 'No dues pending' : 'None added yet',
+        href: '/customers',
+      },
+      {
+        icon: Truck,
+        label: 'Suppliers',
+        value: num(s.active),
+        sub: s.active + s.inactive === 0 ? 'None added yet' : s.inactive > 0 ? `${num(s.inactive)} inactive` : 'All active',
+        href: '/suppliers',
+      },
+      {
+        icon: Receipt,
+        label: 'Invoices',
+        value: num(i.total),
+        sub:
+          i.total === 0
+            ? 'None created yet'
+            : `${num(i.issued)} issued${drafts > 0 ? ` · ${plural(drafts, 'draft')}` : ''}${m.unpaid > 0.004 ? ` · ${fmtInr(m.unpaid, currency)} still owed` : ' · all paid'}`,
+        badge: m.overdue > 0.004 ? { text: `${fmtInr(m.overdue, currency)} overdue`, title: `${plural(m.overdueCount, 'invoice')} past due` } : undefined,
+        href: '/invoices',
+      },
+    ],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -441,9 +383,19 @@ export function totalsGroups(data: BusinessOverview, stock: InventorySummary | n
 
 export function periodGroups(
   k: DashboardKpis,
-  opts: { currency: string; previous: string; topProduct: string | null; includeDrafts?: boolean; targetFooter?: React.ReactNode; spark?: { sales: number[]; collected: number[] } }
+  opts: {
+    currency: string;
+    previous: string;
+    topProduct: string | null;
+    includeDrafts?: boolean;
+    targetFooter?: React.ReactNode;
+    spark?: { sales: number[]; collected: number[] };
+    /** False (All time): nothing to compare with — no change badges. */
+    compare?: boolean;
+  }
 ): FigureGroup[] {
   const { current: c, previous: p, profit, previousProfit } = k;
+  const chg: typeof change = opts.compare === false ? () => undefined : change;
   const { currency, previous } = opts;
   const money = (n: number) => fmtInr(n, currency);
   const exact = (n: number) => fmtInr(n, currency);
@@ -462,8 +414,8 @@ export function periodGroups(
       overdue: c.overdue,
       overdueCount: c.overdueCount,
       deltas: {
-        total: opts.includeDrafts ? change(c.sales + c.draftsValue, p.sales + p.draftsValue, 'up', previous, exact) : change(c.sales, p.sales, 'up', previous, exact),
-        paid: change(c.sales - c.unpaid, p.sales - p.unpaid, 'up', previous, exact),
+        total: opts.includeDrafts ? chg(c.sales + c.draftsValue, p.sales + p.draftsValue, 'up', previous, exact) : chg(c.sales, p.sales, 'up', previous, exact),
+        paid: chg(c.sales - c.unpaid, p.sales - p.unpaid, 'up', previous, exact),
       },
       spark: opts.spark ? { values: opts.spark.sales, color: 'hsl(var(--chart-sales))' } : undefined,
     }),
@@ -475,7 +427,7 @@ export function periodGroups(
           icon: Receipt,
           label: 'Invoices issued',
           value: num(c.invoices),
-          delta: change(c.invoices, p.invoices, 'up', previous, count),
+          delta: chg(c.invoices, p.invoices, 'up', previous, count),
           sub:
             c.invoices === 0
               ? c.drafts > 0
@@ -491,7 +443,7 @@ export function periodGroups(
           label: 'Average invoice',
           value: c.invoices > 0 ? money(c.sales / c.invoices) : '—',
           title: c.invoices > 0 ? exact(c.sales / c.invoices) : undefined,
-          delta: c.invoices > 0 && p.invoices > 0 ? change(c.sales / c.invoices, p.sales / p.invoices, 'up', previous, exact) : undefined,
+          delta: c.invoices > 0 && p.invoices > 0 ? chg(c.sales / c.invoices, p.sales / p.invoices, 'up', previous, exact) : undefined,
           sub: c.invoices > 0 ? `Across ${plural(c.invoices, 'issued invoice')}` : 'Nothing issued on these dates',
           href: '/reports',
         },
@@ -500,20 +452,20 @@ export function periodGroups(
           label: 'Credit notes',
           value: money(c.credits),
           title: exact(c.credits),
-          delta: change(c.credits, p.credits, 'down', previous, exact),
+          delta: chg(c.credits, p.credits, 'down', previous, exact),
           sub: c.creditCount === 0 ? 'None raised on these dates' : plural(c.creditCount, 'note'),
           href: '/credit-notes',
         },
       ],
     },
     {
-      title: 'Catalogue & customers',
+      title: 'Products & customers',
       figures: [
         {
           icon: Package,
           label: 'Products sold',
           value: num(c.productsSold),
-          delta: change(c.productsSold, p.productsSold, 'up', previous, count),
+          delta: chg(c.productsSold, p.productsSold, 'up', previous, count),
           sub: c.productsSold === 0 ? 'Nothing sold on these dates' : opts.topProduct ? `Best seller: ${opts.topProduct}` : `${plural(c.lines, 'invoice line')}`,
           href: '/reports?tab=sales',
         },
@@ -521,7 +473,7 @@ export function periodGroups(
           icon: Users,
           label: 'Customers billed',
           value: num(c.customers),
-          delta: change(c.customers, p.customers, 'up', previous, count),
+          delta: chg(c.customers, p.customers, 'up', previous, count),
           sub: c.customers === 0 ? 'No one billed on these dates' : c.newCustomers > 0 ? `${num(c.newCustomers)} new, billed for the first time` : 'All repeat customers',
           href: '/reports?tab=sales',
         },
@@ -529,7 +481,7 @@ export function periodGroups(
           icon: Truck,
           label: 'Suppliers',
           value: num(c.suppliers),
-          delta: change(c.suppliers, p.suppliers, 'neutral', previous, count),
+          delta: chg(c.suppliers, p.suppliers, 'neutral', previous, count),
           sub: c.purchaseCount === 0 ? 'Nothing bought on these dates' : `Bought from · ${plural(c.purchaseCount, 'purchase bill')}`,
           href: '/purchases',
         },
@@ -543,7 +495,7 @@ export function periodGroups(
           label: 'Purchases',
           value: money(c.purchases),
           title: exact(c.purchases),
-          delta: change(c.purchases, p.purchases, 'neutral', previous, exact),
+          delta: chg(c.purchases, p.purchases, 'neutral', previous, exact),
           sub: c.purchaseCount === 0 ? 'No bills on these dates' : `${plural(c.purchaseCount, 'bill')} from ${plural(c.suppliers, 'supplier')}`,
           href: '/purchases',
         },
@@ -552,7 +504,7 @@ export function periodGroups(
           label: 'Net sales',
           value: money(c.netSales),
           title: exact(c.netSales),
-          delta: change(c.netSales, p.netSales, 'up', previous, exact),
+          delta: chg(c.netSales, p.netSales, 'up', previous, exact),
           sub: c.credits > 0.004 ? `Billed − ${money(c.credits)} credit notes` : 'Billed, less credit notes',
           href: '/reports',
         },
@@ -562,7 +514,7 @@ export function periodGroups(
           label: 'Gross profit',
           value: profit.margin === null ? '—' : money(profit.profit),
           title: profit.margin === null ? undefined : exact(profit.profit),
-          delta: profit.margin !== null && previousProfit.margin !== null ? change(profit.profit, previousProfit.profit, 'up', previous, exact) : undefined,
+          delta: profit.margin !== null && previousProfit.margin !== null ? chg(profit.profit, previousProfit.profit, 'up', previous, exact) : undefined,
           sub:
             profit.margin === null
               ? c.sales > 0.004

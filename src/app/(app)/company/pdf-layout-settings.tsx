@@ -41,12 +41,14 @@ export function PdfSettingsSection({
   rows,
   layout: value,
   logoUrl,
+  companyName,
 }: {
   id: string;
   template: InvoiceTemplateName;
   rows: PdfItemRows;
   layout: PdfLayout;
   logoUrl?: string | null;
+  companyName: string;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
@@ -109,7 +111,7 @@ export function PdfSettingsSection({
           }}
           className="px-4 py-4 sm:px-5"
         >
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-[minmax(0,1fr)_150px]">
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-[minmax(0,1fr)_236px]">
             <div className="space-y-5">
               <Group title="Invoice template" note="Applies to every invoice PDF, including saved ones — each is redrawn the next time it's opened.">
                 <div role="radiogroup" aria-label="Invoice template" className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
@@ -172,7 +174,12 @@ export function PdfSettingsSection({
                       On the {TEMPLATES.find((t) => t.id === draftTemplate)?.name ?? 'invoice'} template: {fmtMm(pxMm(logoPx(LOGO_BASE_PX[draftTemplate], draft)))} mm square. Receipts, statements and credit notes use the Clean size.
                     </p>
                   </div>
-                  <LogoPreview logoUrl={logoUrl} px={logoPx(LOGO_BASE_PX[draftTemplate], draft)} />
+                  <div className="hidden sm:block">
+                    <LogoPreview logoUrl={logoUrl} px={logoPx(LOGO_BASE_PX[draftTemplate], draft)} />
+                  </div>
+                </div>
+                <div className="flex justify-center md:hidden">
+                  <InvoiceSketch width={220} layout={normalizePdfLayout(draft)} template={draftTemplate} rows={draftRows} logoUrl={logoUrl} companyName={companyName} />
                 </div>
               </Group>
 
@@ -294,8 +301,8 @@ export function PdfSettingsSection({
 
             <div className="hidden md:block">
               <div className="sticky top-[90px]">
-                <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-faint">Preview</div>
-                <PaperPreview layout={normalizePdfLayout(draft)} />
+                <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-faint">Live preview</div>
+                <InvoiceSketch width={236} layout={normalizePdfLayout(draft)} template={draftTemplate} rows={draftRows} logoUrl={logoUrl} companyName={companyName} />
               </div>
             </div>
           </div>
@@ -323,7 +330,7 @@ export function PdfSettingsSection({
           </div>
         </form>
       ) : (
-        <div className="grid grid-cols-1 gap-4 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_110px] sm:px-5">
+        <div className="grid grid-cols-1 gap-4 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_160px] sm:px-5">
           <div className="space-y-4">
             <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
               <TemplateThumb id={current.id} />
@@ -349,7 +356,7 @@ export function PdfSettingsSection({
             </div>
           </div>
           <div className="hidden sm:block">
-            <PaperPreview layout={value} />
+            <InvoiceSketch width={160} layout={value} template={template} rows={rows} logoUrl={logoUrl} companyName={companyName} caption={false} />
           </div>
         </div>
       )}
@@ -500,31 +507,206 @@ function SpacingThumb({ gap }: { gap: number }) {
   );
 }
 
-/** A to-scale A4 sheet: the margins as the white border, the printable area
- * with a header, item rows (spacing follows the setting) and the totals. */
-function PaperPreview({ layout }: { layout: PdfLayout }) {
-  const pct = (mm: number, of: number) => `${(mm / of) * 100}%`;
-  const gap = layout.rowSpacing === 'compact' ? 3 : layout.rowSpacing === 'relaxed' ? 6 : 4.5;
+// Typical section heights of a one-page invoice per template, in mm, as
+// measured on printed invoices (print-pagination.tsx, data-layout-mm) —
+// enough for a to-scale sketch. Real pages are measured when they print.
+const SKETCH: Record<InvoiceTemplateName, { header: number; textBlock: number; buyer: number; thead: number; row: number; closing: number }> = {
+  CLEAN: { header: 60, textBlock: 31, buyer: 31, thead: 7, row: 7.2, closing: 57 },
+  CLASSIC: { header: 41, textBlock: 24, buyer: 26, thead: 12, row: 6.7, closing: 81 },
+  MODERN: { header: 37, textBlock: 26, buyer: 33, thead: 12, row: 8.2, closing: 89 },
+};
+/** Row height change per spacing step, mm (2px / 5px / 9px cell padding). */
+const SPACING_MM: Record<RowSpacing, number> = { compact: -1.6, normal: 0, relaxed: 2.1 };
+const INK = '#111827';
+const RULE = '#9ca3af';
+const BAR = '#d1d5db';
+const FILL = '#f3f4f6';
+
+/** A to-scale sketch of a one-page invoice with these settings, redrawn as
+ * anything changes: the margins, the chosen template's letterhead with the
+ * real logo at its chosen size, as many item rows as the totals page allows
+ * (spacing and row style as set), the totals (at the foot when that's on)
+ * and the page footer. Paper colours, like the PDF, in either app theme. */
+function InvoiceSketch({
+  width,
+  layout,
+  template,
+  rows,
+  logoUrl,
+  companyName,
+  caption = true,
+}: {
+  width: number;
+  layout: PdfLayout;
+  template: InvoiceTemplateName;
+  rows: PdfItemRows;
+  logoUrl?: string | null;
+  companyName: string;
+  caption?: boolean;
+}) {
+  const k = width / A4.widthMm; // px per mm
+  const mm = (v: number) => v * k;
+  const s = SKETCH[template];
+  const logoMm = pxMm(logoPx(LOGO_BASE_PX[template], layout));
+  // The letterhead only grows once the logo is taller than its text block.
+  const headerMm = s.header + Math.max(0, logoMm - s.textBlock);
+  const rowMm = s.row + SPACING_MM[layout.rowSpacing];
+  const room = contentHeightMm(layout) - 7 - headerMm - s.buyer - s.thead - s.closing;
+  const count = Math.max(0, Math.min(layout.maxRowsWithTotals, Math.floor(room / rowMm)));
+  const framed = template !== 'MODERN';
+  const bar = (w: number | string, h = 1.5, c = BAR) => <span className="block flex-none rounded-full" style={{ width: w, height: Math.max(1, mm(h)), background: c }} />;
+  const name = (
+    <span className="block max-w-full truncate font-bold" style={{ color: INK, fontSize: Math.max(4.5, mm(template === 'CLEAN' ? 5.2 : 4.6)), lineHeight: 1.2 }}>
+      {companyName}
+    </span>
+  );
+  const logo = logoUrl ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={logoUrl} alt="" className={cn('block flex-none object-contain', template === 'MODERN' && 'rounded-[2px] border border-[#e5e7eb]')} style={{ width: mm(logoMm), height: mm(logoMm) }} />
+  ) : (
+    <span className="block flex-none rounded-[2px] border border-dashed" style={{ width: mm(logoMm), height: mm(logoMm), borderColor: RULE, background: FILL }} />
+  );
+
   return (
-    <div aria-hidden className="relative w-full overflow-hidden rounded-[3px] border border-[#9ca3af] bg-white shadow-sm" style={{ aspectRatio: `${A4.widthMm} / ${A4.heightMm}` }}>
-      <div
-        className="absolute flex flex-col border border-dashed border-[#93c5fd] p-[3px]"
-        style={{
-          top: pct(layout.marginTop, A4.heightMm),
-          bottom: pct(layout.marginBottom, A4.heightMm),
-          left: pct(layout.marginLeft, A4.widthMm),
-          right: pct(layout.marginRight, A4.widthMm),
-        }}
-      >
-        <span className="block h-[14%] rounded-[2px] bg-[#e5e7eb]" />
-        <span className="mt-[4%] flex flex-1 flex-col overflow-hidden" style={{ gap }}>
-          {Array.from({ length: 16 }, (_, i) => (
-            <span key={i} className="block h-[2px] flex-none rounded-full bg-[#d1d5db]" />
-          ))}
-        </span>
-        <span className="mt-[4%] block h-[16%] rounded-[2px] bg-[#e5e7eb]" />
+    <div aria-hidden="true" className="grid justify-items-center gap-1.5">
+      <div className="relative overflow-hidden rounded-[3px] border border-[#9ca3af] bg-white shadow-sm" style={{ width, height: mm(A4.heightMm) }}>
+        <div
+          className="absolute flex flex-col overflow-hidden"
+          style={{ top: mm(layout.marginTop), bottom: mm(layout.marginBottom), left: mm(layout.marginLeft), right: mm(layout.marginRight), border: framed ? `1px solid ${RULE}` : undefined }}
+        >
+          {/* Letterhead */}
+          {template === 'CLEAN' && (
+            <div className="flex flex-none flex-col" style={{ height: mm(headerMm) }}>
+              <div className="flex flex-none items-center justify-center" style={{ height: mm(7) }}>
+                {bar('30%', 1.4, '#6b7280')}
+              </div>
+              <div className="grid min-h-0 flex-1 items-center border-t" style={{ borderColor: RULE, gridTemplateColumns: 'minmax(0,1fr) 50% minmax(0,1fr)', gap: mm(3), padding: `0 ${mm(3)}px` }}>
+                <div className="justify-self-start">{logo}</div>
+                <div className="grid min-w-0 justify-items-center" style={{ gap: mm(1.3) }}>
+                  {name}
+                  {bar('92%')}
+                  {bar('70%')}
+                  {bar('52%')}
+                  {bar('60%')}
+                </div>
+                <span
+                  className="block justify-self-end"
+                  style={{ width: mm(23.3), height: mm(23.3), background: `repeating-conic-gradient(#4b5563 0 25%, #ffffff 0 50%) 0 0 / ${mm(3.3)}px ${mm(3.3)}px` }}
+                />
+              </div>
+              <div className="grid flex-none grid-cols-4 border-t" style={{ height: mm(9), borderColor: RULE }}>
+                {[0, 1, 2, 3].map((i) => (
+                  <span key={i} className="grid content-center" style={{ gap: mm(1), paddingLeft: mm(2), borderLeft: i > 0 ? `1px solid ${RULE}` : undefined }}>
+                    {bar('45%', 1.1, BAR)}
+                    {bar('62%', 1.5, '#6b7280')}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {template === 'CLASSIC' && (
+            <div className="flex flex-none flex-col border-b" style={{ height: mm(headerMm), borderColor: RULE }}>
+              <div className="flex flex-none items-center justify-center border-b" style={{ height: mm(8), background: FILL, borderColor: RULE }}>
+                {bar('28%', 1.6, '#4b5563')}
+              </div>
+              <div className="flex min-h-0 flex-1 items-start justify-between" style={{ padding: mm(2.5), gap: mm(3) }}>
+                <div className="flex min-w-0 items-start" style={{ gap: mm(2.5) }}>
+                  {logo}
+                  <div className="grid min-w-0" style={{ gap: mm(1.3), width: mm(70) }}>
+                    {name}
+                    {bar('90%')}
+                    {bar('75%')}
+                    {bar('60%')}
+                  </div>
+                </div>
+                <div className="grid flex-none justify-items-end" style={{ gap: mm(1.3) }}>
+                  {bar(mm(16))}
+                  {bar(mm(26), 2.4, '#374151')}
+                  {bar(mm(18))}
+                </div>
+              </div>
+            </div>
+          )}
+          {template === 'MODERN' && (
+            <div className="flex flex-none items-start justify-between" style={{ height: mm(headerMm), borderBottom: `2px solid ${INK}`, gap: mm(3) }}>
+              <div className="flex min-w-0 items-start" style={{ gap: mm(3) }}>
+                {logo}
+                <div className="grid min-w-0" style={{ gap: mm(1.3), width: mm(70) }}>
+                  {name}
+                  {bar('85%')}
+                  {bar('70%')}
+                  {bar('55%')}
+                </div>
+              </div>
+              <div className="grid flex-none content-start justify-items-end rounded-[2px] border" style={{ borderColor: INK, padding: mm(2), gap: mm(1.3) }}>
+                {bar(mm(14))}
+                {bar(mm(24), 2.4, INK)}
+                {bar(mm(18))}
+              </div>
+            </div>
+          )}
+
+          {/* Buyer */}
+          <div className={cn('grid flex-none content-start', framed && 'border-b')} style={{ height: mm(s.buyer), borderColor: RULE, padding: mm(2.5), gap: mm(1.4) }}>
+            {bar('16%', 1.1)}
+            {bar('34%', 1.8, '#6b7280')}
+            {bar('50%')}
+            {bar('30%')}
+          </div>
+
+          {/* Items: header, rows, and — with "totals at the bottom" — the column lines run on down to the totals */}
+          <div className={cn('relative flex flex-col', layout.fillColumns ? 'min-h-0 flex-1' : 'flex-none')} style={{ border: framed ? undefined : `1px solid ${INK}` }}>
+            <div className="flex-none" style={{ height: mm(s.thead), background: FILL, borderBottom: `1px solid ${RULE}` }} />
+            {Array.from({ length: count }, (_, i) => (
+              <div
+                key={i}
+                className="flex flex-none items-center"
+                style={{
+                  height: mm(rowMm),
+                  background: template === 'CLEAN' && rows === 'zebra' && i % 2 === 1 ? '#eceef1' : undefined,
+                  borderTop: i > 0 && (template !== 'CLEAN' || rows === 'lines') ? `1px solid ${template === 'CLEAN' ? RULE : BAR}` : undefined,
+                }}
+              >
+                <span className="block rounded-full" style={{ marginLeft: '11%', width: `${28 + ((i * 37) % 22)}%`, height: Math.max(1, mm(1.3)), background: BAR }} />
+              </div>
+            ))}
+            {[9, 57, 71, 85].map((x) => (
+              <span key={x} className="absolute bottom-0 top-0 w-px" style={{ left: `${x}%`, background: template === 'MODERN' ? INK : RULE }} />
+            ))}
+          </div>
+
+          {/* Totals */}
+          <div className={cn('grid flex-none grid-cols-[minmax(0,1fr)_40%]', framed && 'border-t')} style={{ height: mm(s.closing), borderColor: RULE, marginTop: framed ? 0 : mm(3) }}>
+            <div className="grid content-start" style={{ padding: mm(2.5), gap: mm(1.6) }}>
+              {bar('40%', 1.1)}
+              {bar('70%')}
+              {bar('55%')}
+              {bar('62%')}
+            </div>
+            <div className="grid content-start border-l" style={{ borderColor: RULE, padding: mm(2.5), gap: mm(1.8) }}>
+              {bar('80%')}
+              {bar('80%')}
+              {bar('80%')}
+              <span className="block border-t" style={{ borderColor: RULE, paddingTop: mm(1.5) }}>
+                {bar('90%', 2.4, INK)}
+              </span>
+            </div>
+          </div>
+          {!layout.fillColumns && <div className="flex-1" />}
+        </div>
+
+        {layout.pageFooter && (
+          <div className="absolute flex items-center justify-between" style={{ left: mm(layout.marginLeft), right: mm(layout.marginRight), bottom: mm(layout.marginBottom / 2 - 0.8) }}>
+            {bar('34%', 1.1)}
+            {bar('14%', 1.1)}
+          </div>
+        )}
       </div>
-      {layout.pageFooter && <span className="absolute inset-x-[10%] bottom-[2%] block h-[2px] rounded-full bg-[#d1d5db]" />}
+      {caption && (
+        <span className="max-w-full text-center text-[10.5px] leading-snug text-ink-faint">
+          A one-page invoice: {count} item{count === 1 ? '' : 's'} + totals. Real pages are measured when they print.
+        </span>
+      )}
     </div>
   );
 }
