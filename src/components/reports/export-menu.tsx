@@ -9,6 +9,7 @@ import {
   FileCode2,
   FileSpreadsheet,
   FileText,
+  Landmark,
   ListOrdered,
   Package,
   Printer,
@@ -25,6 +26,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { useCurrentUser } from '@/components/current-user';
 import { downloadFile, rangeQuery } from './download-file';
 import { TallyDialog } from './tally-dialog';
+import { Gstr1Dialog } from './gstr1-dialog';
+import { MonthlyReportDialog } from './monthly-report-dialog';
 
 const CSV_EXPORTS: { kind: string; label: string; icon: LucideIcon; snapshot?: boolean }[] = [
   { kind: 'invoices', label: 'Invoices', icon: FileText },
@@ -38,13 +41,15 @@ const CSV_EXPORTS: { kind: string; label: string; icon: LucideIcon; snapshot?: b
 ];
 
 /** The Reports page's one "Export" button. Everything that leaves the app
- * lives behind it — Excel (CSV) sheets for the selected date range, Tally
- * XML, a full backup, and printing the page — so the header stays one
- * button wide. The data exports are owner-only (the routes check again);
+ * lives behind it — Excel (CSV) sheets for the selected date range, GSTR-1
+ * files for the GST portal, the monthly report PDF, Tally XML, a full
+ * backup, and printing the page — so the header stays one button wide. The data exports are owner-only (the routes check again);
  * staff just get Print. */
 export function ExportMenu({ range, rangeLabel }: { range: { from?: string; to?: string }; rangeLabel: string }) {
   const { isOwner } = useCurrentUser();
   const [tallyOpen, setTallyOpen] = useState(false);
+  const [gstr1Open, setGstr1Open] = useState(false);
+  const [monthlyOpen, setMonthlyOpen] = useState(false);
 
   function run(url: string, fallbackName: string, what: string) {
     toast.promise(downloadFile(url, fallbackName), {
@@ -86,6 +91,15 @@ export function ExportMenu({ range, rangeLabel }: { range: { from?: string; to?:
           ))}
 
           <DropdownMenuSeparator />
+          <DropdownMenuLabel>GST &amp; reports</DropdownMenuLabel>
+          <DropdownMenuItem onSelect={() => setGstr1Open(true)}>
+            <Landmark size={14} className="text-ink-faint" /> GSTR-1 for the GST portal…
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setMonthlyOpen(true)}>
+            <FileText size={14} className="text-ink-faint" /> Monthly report PDF…
+          </DropdownMenuItem>
+
+          <DropdownMenuSeparator />
           <DropdownMenuLabel>Tally · {rangeLabel}</DropdownMenuLabel>
           <DropdownMenuItem onSelect={() => run(`/api/export/tally${rangeQuery(range)}`, 'asb-tally-vouchers.xml', 'Tally vouchers')}>
             <FileCode2 size={14} className="text-ink-faint" /> Tally vouchers (XML)
@@ -104,6 +118,8 @@ export function ExportMenu({ range, rangeLabel }: { range: { from?: string; to?:
         </DropdownMenuContent>
       </DropdownMenu>
       <TallyDialog open={tallyOpen} onOpenChange={setTallyOpen} range={range} />
+      <Gstr1Dialog open={gstr1Open} onOpenChange={setGstr1Open} range={range} rangeLabel={rangeLabel} />
+      <MonthlyReportDialog open={monthlyOpen} onOpenChange={setMonthlyOpen} />
     </>
   );
 }

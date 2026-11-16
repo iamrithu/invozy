@@ -9,7 +9,13 @@ import {
   getGstSummary,
   getProfitEstimate,
   getLoadingSheet,
+  getSalesAnalysis,
+  getSalesByWeekday,
+  getReceivables,
+  getCollections,
+  getInventoryInsights,
   type ReportFilters,
+  type SalesDimension,
 } from '@/actions/reports';
 import { getTallyLedgers, updateTallyLedgers } from '@/actions/exports';
 import { unwrap } from '@/lib/action-result';
@@ -31,6 +37,11 @@ export const reportKeys = {
   topProducts: (filters: ReportFilters) => [...reportKeys.all, 'top-products', filters] as const,
   gst: (filters: ReportFilters) => [...reportKeys.all, 'gst', filters] as const,
   profit: (filters: ReportFilters) => [...reportKeys.all, 'profit', filters] as const,
+  salesAnalysis: (filters: ReportFilters, by: SalesDimension) => [...reportKeys.all, 'sales-analysis', by, filters] as const,
+  salesByWeekday: (filters: ReportFilters) => [...reportKeys.all, 'sales-by-weekday', filters] as const,
+  receivables: (filters: ReportFilters) => [...reportKeys.all, 'receivables', filters] as const,
+  collections: (filters: ReportFilters) => [...reportKeys.all, 'collections', filters] as const,
+  inventoryInsights: (filters: ReportFilters) => [...reportKeys.all, 'inventory-insights', filters] as const,
   loadingSheet: (params: LoadingSheetParams) => [...reportKeys.all, 'loading-sheet', params] as const,
   tallyLedgers: () => [...reportKeys.all, 'tally-ledgers'] as const,
 };
@@ -106,6 +117,51 @@ export function useProfitEstimate(filters: ReportFilters, seed?: Awaited<ReturnT
     queryFn: () => getProfitEstimate(filters),
     placeholderData: (prev) => prev,
     ...(seed ? { initialData: seed } : {}),
+  });
+}
+
+// The analysis tabs below load client-side only, when their tab is opened
+// (an inactive tab's content isn't mounted). `placeholderData` keeps the
+// previous filter's result on screen while the next one loads, so changing
+// the date range dims the tab instead of flashing skeletons.
+
+export function useSalesAnalysis(filters: ReportFilters, by: SalesDimension) {
+  return useQuery({
+    queryKey: reportKeys.salesAnalysis(filters, by),
+    queryFn: () => getSalesAnalysis(filters, by),
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useSalesByWeekday(filters: ReportFilters) {
+  return useQuery({
+    queryKey: reportKeys.salesByWeekday(filters),
+    queryFn: () => getSalesByWeekday(filters),
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useReceivables(filters: ReportFilters) {
+  return useQuery({
+    queryKey: reportKeys.receivables(filters),
+    queryFn: () => getReceivables(filters),
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useCollections(filters: ReportFilters) {
+  return useQuery({
+    queryKey: reportKeys.collections(filters),
+    queryFn: () => getCollections(filters),
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useInventoryInsights(filters: ReportFilters) {
+  return useQuery({
+    queryKey: reportKeys.inventoryInsights(filters),
+    queryFn: () => getInventoryInsights(filters),
+    placeholderData: (prev) => prev,
   });
 }
 

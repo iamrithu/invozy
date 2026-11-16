@@ -1,33 +1,40 @@
 import { Skeleton } from '@/components/ui/skeleton';
 
 // Next.js wraps this in a Suspense boundary at the route level automatically
-// — no client-side Suspense/query changes needed. Mirrors page.tsx's layout
-// (5 stat cards, two two-column card rows, a top-customers table) so there's
-// no layout shift once the real data replaces it.
+// — no client-side Suspense/query changes needed. Mirrors the page's frame
+// (header, filter bar, tab strip) and the Overview tab it opens on (5 stat
+// cards, two two-column card rows) so there's no layout shift once the
+// real data replaces it.
 export default function ReportsLoading() {
   return (
     <div>
       <Skeleton className="mb-1 h-6 w-32" />
       <Skeleton className="mb-4 h-3 w-64" />
 
-      <div className="mb-4 grid grid-cols-2 gap-2.5 md:grid-cols-5">
+      <div className="mb-3 flex gap-2 rounded-xl2 border border-line bg-surface p-3 shadow-card">
+        <Skeleton className="h-8 w-[130px]" />
+        <Skeleton className="h-8 w-[190px]" />
+      </div>
+      <Skeleton className="mb-3 h-9 w-full max-w-[560px]" />
+
+      <div className="mb-3.5 grid grid-cols-2 gap-2 md:grid-cols-5">
         {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="rounded-xl2 border border-line bg-surface p-3 shadow-card">
-            <Skeleton className="h-7 w-7 rounded-sm2" />
+          <div key={i} className="rounded-lg2 border border-line bg-surface p-2.5 shadow-card">
+            <Skeleton className="h-6 w-6 rounded-sm2" />
             <Skeleton className="mt-2 h-4 w-16" />
             <Skeleton className="mt-1.5 h-2.5 w-20" />
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[7fr_5fr]">
-        <div className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[7fr_5fr]">
+        <div className="rounded-xl2 border border-line bg-surface p-3 shadow-card">
           <Skeleton className="mb-3 h-3.5 w-40" />
-          <Skeleton className="h-[180px] w-full" />
+          <Skeleton className="h-[176px] w-full" />
         </div>
-        <div className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
+        <div className="rounded-xl2 border border-line bg-surface p-3 shadow-card">
           <Skeleton className="mb-3 h-3.5 w-32" />
-          <div className="flex items-center gap-5">
+          <div className="flex items-center gap-4">
             {/* Mimics the real donut chart's actual round shape, unlike every other boxy skeleton on this page. */}
             <Skeleton className="h-[120px] w-[120px] flex-shrink-0 rounded-full" />
             <div className="flex-1 space-y-2">
@@ -41,7 +48,7 @@ export default function ReportsLoading() {
 
       {/* GST summary + profit estimate row. */}
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[7fr_5fr]">
-        <div className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
+        <div className="rounded-xl2 border border-line bg-surface p-3 shadow-card">
           <Skeleton className="mb-3 h-3.5 w-32" />
           <Skeleton className="mb-3 h-9 w-full" />
           <div className="space-y-2">
@@ -50,7 +57,7 @@ export default function ReportsLoading() {
             ))}
           </div>
         </div>
-        <div className="rounded-xl2 border border-line bg-surface p-3.5 shadow-card">
+        <div className="rounded-xl2 border border-line bg-surface p-3 shadow-card">
           <Skeleton className="mb-3 h-3.5 w-32" />
           <div className="grid grid-cols-3 gap-2">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -62,21 +69,6 @@ export default function ReportsLoading() {
               <Skeleton key={i} className="h-4 w-full" />
             ))}
           </div>
-        </div>
-      </div>
-
-      <div className="mt-4">
-        <Skeleton className="mb-2 h-3.5 w-48" />
-        <div className="overflow-hidden rounded-xl2 border border-line bg-surface shadow-card">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-4 border-b border-line p-3 last:border-0">
-              <Skeleton className="h-3 flex-1" />
-              <Skeleton className="h-3 w-16" />
-              <Skeleton className="h-3 w-14" />
-              <Skeleton className="h-3 w-20" />
-              <Skeleton className="h-3 w-20" />
-            </div>
-          ))}
         </div>
       </div>
     </div>

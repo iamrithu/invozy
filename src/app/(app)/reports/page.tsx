@@ -1,16 +1,25 @@
 import { getBillingTrend, getReportStats, getTopCustomers, getStatusBreakdown, getTopProducts, getGstSummary } from '@/actions/reports';
 import { getCompany } from '@/lib/get-company';
 import { ReportsClient } from './reports-client';
+import { parseReportTab } from './report-tabs';
 
 export const dynamic = 'force-dynamic';
 
-export default async function ReportsPage() {
-  // Seeds the client's react-query hooks with an all-time, unfiltered
-  // fetch (the default filter state in reports-client.tsx) so the page
-  // renders with real data immediately instead of a loading flash, exactly
+export default async function ReportsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+  const { tab } = await searchParams;
+  // Opening on the Overview (the default), the page renders with its
+  // all-time, unfiltered figures already in place — the client's default
+  // filter state — so it paints with real data instead of a loading flash,
   // mirroring the Invoices list's SSR-seed pattern (see invoices/page.tsx).
-  // The profit estimate is the one card left to load client-side (see
-  // reports-client.tsx) — it's the heaviest query and sits below the fold.
+  // The profit estimate is left to load client-side (heaviest query, below
+  // the fold). A link straight to another tab skips all of this: those
+  // tabs load their own data with skeletons, and nothing here would be
+  // shown.
+  if (parseReportTab(tab) !== 'overview') {
+    const company = await getCompany();
+    return <ReportsClient currency={company.currency} />;
+  }
+
   const [company, stats, trend, topCustomers, statusBreakdown, topProducts, gst] = await Promise.all([
     getCompany(),
     getReportStats(),
@@ -20,15 +29,5 @@ export default async function ReportsPage() {
     getTopProducts(),
     getGstSummary(),
   ]);
-  return (
-    <ReportsClient
-      initialStats={stats}
-      initialTrend={trend}
-      initialTopCustomers={topCustomers}
-      initialStatusBreakdown={statusBreakdown}
-      initialTopProducts={topProducts}
-      initialGst={gst}
-      currency={company.currency}
-    />
-  );
+  return <ReportsClient seed={{ stats, trend, topCustomers, statusBreakdown, topProducts, gst }} currency={company.currency} />;
 }
