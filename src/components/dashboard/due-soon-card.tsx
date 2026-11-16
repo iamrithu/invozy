@@ -15,7 +15,8 @@ function dueText(daysLeft: number) {
 }
 
 /** Invoices falling due in the next 7 days — a friendly nudge now beats a
- * reminder after the date has passed. */
+ * reminder after the date has passed. "Remind all" walks through them one
+ * click at a time: a browser only lets a click open one WhatsApp window. */
 export function DueSoonCard({ data, currency }: { data: { items: DueSoon[]; count: number; total: number }; currency: string }) {
   const whatsApp = useWhatsAppShare();
   const [nudged, setNudged] = useState<Set<string>>(new Set());
@@ -37,10 +38,14 @@ export function DueSoonCard({ data, currency }: { data: { items: DueSoon[]; coun
     );
   }
 
+  const reachable = data.items.filter((d) => d.phone);
+  const pending = reachable.filter((d) => !nudged.has(d.id));
+  const done = reachable.length - pending.length;
+
   return (
-    <section className="flex min-w-0 flex-col rounded-xl2 border border-line bg-surface shadow-card">
+    <section id="due-this-week" className="flex min-w-0 scroll-mt-20 flex-col rounded-xl2 border border-line bg-surface shadow-card">
       <header className="flex items-baseline gap-2 px-4 pb-2 pt-3.5">
-        <h2 className="text-[13.5px] font-extrabold text-ink">Due this week</h2>
+        <h3 className="text-[13.5px] font-extrabold text-ink">Due this week</h3>
         {data.count > 0 && (
           <span className="truncate text-[11.5px] text-ink-faint">
             {data.count} invoice{data.count === 1 ? '' : 's'} · {fmtInr(data.total, currency)}
@@ -81,6 +86,27 @@ export function DueSoonCard({ data, currency }: { data: { items: DueSoon[]; coun
             </li>
           ))}
         </ul>
+      )}
+      {reachable.length >= 2 && (
+        <div className="mt-auto border-t border-line px-4 py-2.5">
+          {pending.length === 0 ? (
+            <div className="flex items-center justify-center gap-1.5 py-1 text-[12px] font-bold text-green">
+              <Check size={13} /> All {reachable.length} reminders sent
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => nudge(pending[0])}
+              disabled={whatsApp.isPending}
+              className="flex w-full items-center justify-center gap-1.5 rounded-sm2 border border-line px-3 py-2 text-[12px] font-bold text-ink-body transition-colors hover:border-green hover:text-green disabled:opacity-50"
+            >
+              <MessageCircle size={13} className="flex-shrink-0" />
+              <span className="truncate">
+                {done === 0 ? `Remind all ${reachable.length} on WhatsApp` : `Send next reminder (${done + 1} of ${reachable.length}): ${pending[0].customer}`}
+              </span>
+            </button>
+          )}
+        </div>
       )}
     </section>
   );

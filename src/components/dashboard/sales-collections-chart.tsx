@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { fmtInr } from '@/lib/gst';
-import type { MonthPoint } from '@/actions/dashboard';
+import type { TrendPoint } from '@/actions/dashboard';
 
 const W = 640;
 const H = 220;
@@ -10,7 +10,7 @@ const PAD_L = 44;
 const PAD_R = 8;
 const PAD_T = 12;
 const PAD_B = 26;
-const BAR = 22; // ≤ 24px per the chart spec — the band's leftover is air
+const MAX_BAR = 22; // ≤ 24px per the chart spec — the band's leftover is air
 const GAP = 2; // surface gap between a month's two columns
 
 const SALES = 'hsl(var(--chart-sales))';
@@ -39,9 +39,10 @@ function roundedTop(x: number, y: number, w: number, h: number, r = 4) {
   return `M${x},${y + h} V${y + rr} Q${x},${y} ${x + rr},${y} H${x + w - rr} Q${x + w},${y} ${x + w},${y + rr} V${y + h} Z`;
 }
 
-/** Issued sales vs cash collected per month — paired columns on one
- * baseline, one axis, a hover tooltip per month. */
-export function SalesCollectionsChart({ data, currency }: { data: MonthPoint[]; currency: string }) {
+/** Issued sales vs cash collected per day or month — paired columns on
+ * one baseline, one axis, a hover tooltip per bucket. Bars narrow to fit a
+ * month of days; labels thin out so at most about eight show. */
+export function SalesCollectionsChart({ data, currency, granularity = 'month' }: { data: TrendPoint[]; currency: string; granularity?: 'day' | 'month' }) {
   const [hover, setHover] = useState<number | null>(null);
   const max = Math.max(0, ...data.flatMap((d) => [d.sales, d.collected]));
   const ticks = niceTicks(max);
@@ -49,6 +50,9 @@ export function SalesCollectionsChart({ data, currency }: { data: MonthPoint[]; 
   const plotW = W - PAD_L - PAD_R;
   const plotH = H - PAD_T - PAD_B;
   const band = plotW / Math.max(data.length, 1);
+  const BAR = Math.max(3, Math.min(MAX_BAR, (band - GAP - 8) / 2));
+  const labelStep = Math.ceil(data.length / 8);
+  const unit = granularity === 'day' ? 'day' : 'month';
   const y = (v: number) => PAD_T + plotH - (v / top) * plotH;
   const hasData = max > 0;
 
@@ -64,11 +68,11 @@ export function SalesCollectionsChart({ data, currency }: { data: MonthPoint[]; 
       </div>
       {!hasData ? (
         <div className="flex h-[180px] items-center justify-center rounded-lg2 border border-dashed border-line text-[12px] text-ink-faint">
-          No issued invoices or payments in the last {data.length} months yet.
+          No issued invoices or payments in this period yet.
         </div>
       ) : (
         <div className="relative">
-          <svg viewBox={`0 0 ${W} ${H}`} className="block h-auto w-full" role="img" aria-label="Monthly sales and collections">
+          <svg viewBox={`0 0 ${W} ${H}`} className="block h-auto w-full" role="img" aria-label={`Sales and collections by ${unit}`}>
             {ticks.map((t) => (
               <g key={t}>
                 <line x1={PAD_L} x2={W - PAD_R} y1={y(t)} y2={y(t)} stroke="hsl(var(--line))" strokeWidth={1} />
@@ -86,10 +90,12 @@ export function SalesCollectionsChart({ data, currency }: { data: MonthPoint[]; 
                   {hover === i && <rect x={PAD_L + band * i + 2} y={PAD_T} width={band - 4} height={plotH} rx={6} fill="hsl(var(--surface-alt))" />}
                   <path d={roundedTop(x1, y(d.sales), BAR, PAD_T + plotH - y(d.sales))} fill={SALES} />
                   <path d={roundedTop(x2, y(d.collected), BAR, PAD_T + plotH - y(d.collected))} fill={COLLECTED} />
-                  <text x={cx} y={H - 8} textAnchor="middle" className={i === data.length - 1 ? 'fill-ink text-[10.5px] font-bold' : 'fill-ink-faint text-[10.5px]'}>
-                    {d.label}
-                  </text>
-                  {/* Hit target: the whole month band, bigger than the marks. */}
+                  {(data.length - 1 - i) % labelStep === 0 && (
+                    <text x={cx} y={H - 8} textAnchor="middle" className={i === data.length - 1 ? 'fill-ink text-[10.5px] font-bold' : 'fill-ink-faint text-[10.5px]'}>
+                      {d.label}
+                    </text>
+                  )}
+                  {/* Hit target: the whole band, bigger than the marks. */}
                   <rect
                     x={PAD_L + band * i}
                     y={PAD_T}
@@ -119,10 +125,10 @@ export function SalesCollectionsChart({ data, currency }: { data: MonthPoint[]; 
             </div>
           )}
           <table className="sr-only">
-            <caption>Monthly sales and collections</caption>
+            <caption>Sales and collections by {unit}</caption>
             <thead>
               <tr>
-                <th>Month</th>
+                <th>{granularity === 'day' ? 'Day' : 'Month'}</th>
                 <th>Sales</th>
                 <th>Collected</th>
               </tr>
