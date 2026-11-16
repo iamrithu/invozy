@@ -22,6 +22,7 @@ import {
   type SalesDimension,
 } from '@/app/(app)/reports/report-queries';
 import { loadLoadingSheet, normalizeLoadingParams, type LoadingSheet } from '@/app/(app)/reports/loading-sheet/loading-sheet-data';
+import { requireModule } from '@/lib/require-module';
 
 // The Reports endpoints — each checks the session, then runs its query from
 // src/app/(app)/reports/report-queries.ts, where the SQL and the rules
@@ -60,6 +61,7 @@ export type {
 
 /** Taxable value, tax heads, total and outstanding for the filtered invoices. */
 export async function getReportStats(filters?: ReportFilters) {
+  await requireModule('reports');
   await requireUser();
   return queryReportStats(filters);
 }
@@ -67,17 +69,20 @@ export async function getReportStats(filters?: ReportFilters) {
 /** The same stats for the previous equal-length period — null for an
  * open-ended range ("All time"). */
 export async function getPreviousPeriodStats(filters?: ReportFilters) {
+  await requireModule('reports');
   await requireUser();
   return queryPreviousPeriodStats(filters);
 }
 
 /** Billed vs collected per day or month (the dashboard calls it bare). */
 export async function getBillingTrend(filters?: ReportFilters) {
+  await requireModule('reports');
   await requireUser();
   return queryBillingTrend(filters);
 }
 
 export async function getStatusBreakdown(filters?: ReportFilters) {
+  await requireModule('reports');
   await requireUser();
   return queryStatusBreakdown(filters);
 }
@@ -90,11 +95,13 @@ export async function getTopProducts(filters?: ReportFilters, limit?: number) {
 
 /** Payments per calendar month for the last `months` months. */
 export async function getCollectedTrend(months?: number) {
+  await requireModule('reports');
   await requireUser();
   return queryCollectedTrend(months);
 }
 
 export async function getMonthOverMonth() {
+  await requireModule('reports');
   await requireUser();
   return queryMonthOverMonth();
 }
@@ -106,11 +113,13 @@ export async function getTopCustomers(filters?: ReportFilters, limit?: number) {
 }
 
 export async function getGstSummary(filters?: ReportFilters) {
+  await requireModule('reports');
   await requireUser();
   return queryGstSummary(filters);
 }
 
 export async function getProfitEstimate(filters?: ReportFilters, limit?: number) {
+  await requireModule('reports');
   await requireUser();
   return queryProfitEstimate(filters, limit);
 }
@@ -118,6 +127,7 @@ export async function getProfitEstimate(filters?: ReportFilters, limit?: number)
 /** Sales by customer, product or category vs the previous period, with cost
  * and profit (Sales analysis tab). */
 export async function getSalesAnalysis(filters: ReportFilters | undefined, by: SalesDimension) {
+  await requireModule('reports');
   await requireUser();
   return querySalesAnalysis(filters, by);
 }
@@ -129,18 +139,21 @@ export async function getSalesByWeekday(filters?: ReportFilters) {
 
 /** Ageing of what customers owe, DSO and collection rate (Receivables tab). */
 export async function getReceivables(filters?: ReportFilters) {
+  await requireModule('reports');
   await requireUser();
   return queryReceivables(filters);
 }
 
 /** Money received in the period by mode and over time (Collections tab). */
 export async function getCollections(filters?: ReportFilters) {
+  await requireModule('reports');
   await requireUser();
   return queryCollections(filters);
 }
 
 /** Stock value, fast/slow movers and what's running low (Inventory tab). */
 export async function getInventoryInsights(filters?: ReportFilters) {
+  await requireModule('reports');
   await requireUser();
   return queryInventoryInsights(filters);
 }
@@ -153,6 +166,7 @@ export async function getInventoryInsights(filters?: ReportFilters) {
  * see src/app/(app)/reports/loading-sheet/loading-sheet-data.ts. Input is
  * normalised there, so a hand-edited URL can't break the query. */
 export async function getLoadingSheet(input: { date?: string; group?: string; includeDrafts?: boolean }): Promise<LoadingSheet> {
+  await requireModule('reports');
   await requireUser();
   return loadLoadingSheet(normalizeLoadingParams({ date: input.date, group: input.group, drafts: input.includeDrafts ?? false }, todayIst()));
 }

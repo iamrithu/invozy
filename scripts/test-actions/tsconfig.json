@@ -6,6 +6,7 @@
     "baseUrl": ".",
     "paths": {
       "@/lib/session": ["stubs/session.ts"],
+      "@/auth": ["stubs/auth.ts"],
       "@/lib/get-company": ["stubs/get-company.ts"],
       "@/lib/invoice-pdf": ["stubs/invoice-pdf.ts"],
       "next/cache": ["stubs/next-cache.ts"],

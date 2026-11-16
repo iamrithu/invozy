@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { put, del, list } from '@vercel/blob';
+import { currentCompanyId } from './tenant';
 
 const UPLOAD_ROOT = path.join(process.cwd(), 'public', 'uploads');
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -43,17 +44,26 @@ export async function saveUploadedDocument(file: File, kind: UploadKind): Promis
   return store(file, kind, ext);
 }
 
-/** Whether `url` is a file this app stored under `kind` — URLs that come
- * back from the client are checked with this before they're saved or
- * deleted, so a record can only ever point at our own uploads. */
-export function isOwnUpload(url: string, kind: UploadKind): boolean {
+/** Where `companyId`'s files of one kind live: `<companyId>/<kind>/` — the
+ * layout the original multi-company Invozy already used for logos and
+ * product images, so those existing files keep resolving. */
+export function uploadPrefix(companyId: string, kind: UploadKind): string {
+  return `${companyId}/${kind}/`;
+}
+
+/** Whether `url` is a file this app stored under `kind` for `companyId` —
+ * URLs that come back from the client are checked with this before they're
+ * saved or deleted, so a record can only ever point at (and a delete can
+ * only ever remove) the company's own uploads. */
+export function isOwnUpload(url: string, kind: UploadKind, companyId: string): boolean {
+  if (!companyId) return false;
   if (url.startsWith('/uploads/')) {
     const resolved = path.join(process.cwd(), 'public', url);
-    return resolved.startsWith(path.join(UPLOAD_ROOT, kind) + path.sep);
+    return resolved.startsWith(path.join(UPLOAD_ROOT, companyId, kind) + path.sep);
   }
   try {
     const u = new URL(url);
-    return u.protocol === 'https:' && u.hostname.endsWith('.blob.vercel-storage.com') && u.pathname.startsWith(`/${kind}/`);
+    return u.protocol === 'https:' && u.hostname.endsWith('.blob.vercel-storage.com') && u.pathname.startsWith(`/${uploadPrefix(companyId, kind)}`);
   } catch {
     return false;
   }
@@ -61,9 +71,10 @@ export function isOwnUpload(url: string, kind: UploadKind): boolean {
 
 async function store(file: File, kind: UploadKind, ext: string): Promise<string> {
   const filename = `${randomUUID()}.${ext}`;
+  const companyId = await currentCompanyId();
 
   if (useBlob) {
-    const blob = await put(`${kind}/${filename}`, file, { access: 'public', contentType: file.type });
+    const blob = await put(`${uploadPrefix(companyId, kind)}${filename}`, file, { access: 'public', contentType: file.type });
     return blob.url;
   }
 
@@ -77,11 +88,11 @@ async function store(file: File, kind: UploadKind, ext: string): Promise<string>
     throw new Error('Uploads need a Vercel Blob store connected to this project — connect one under Storage in the Vercel dashboard.');
   }
 
-  const dir = path.join(UPLOAD_ROOT, kind);
+  const dir = path.join(UPLOAD_ROOT, companyId, kind);
   await fs.mkdir(dir, { recursive: true });
   const buffer = Buffer.from(await file.arrayBuffer());
   await fs.writeFile(path.join(dir, filename), buffer);
-  return `/uploads/${kind}/${filename}`;
+  return `/uploads/${companyId}/${kind}/${filename}`;
 }
 
 /** Best-effort delete — never throws, since the file may already be gone
@@ -109,17 +120,17 @@ export async function deleteUploadedImage(url: string): Promise<void> {
   }
 }
 
-/** Deletes Blob files under `kind/` older than `minAgeMs` that `keep`
- * doesn't list — uploads that never made it onto a record (the browser
- * closed between uploading and saving). Blob storage only; local files are
- * left alone. Returns how many were deleted. */
-export async function sweepOrphanUploads(kind: UploadKind, keep: Set<string>, minAgeMs: number): Promise<number> {
-  if (!useBlob) return 0;
+/** Deletes Blob files under `<companyId>/<kind>/` older than `minAgeMs`
+ * that `keep` doesn't list — uploads that never made it onto a record (the
+ * browser closed between uploading and saving). Blob storage only; local
+ * files are left alone. Returns how many were deleted. */
+export async function sweepOrphanUploads(companyId: string, kind: UploadKind, keep: Set<string>, minAgeMs: number): Promise<number> {
+  if (!useBlob || !companyId) return 0;
   const cutoff = Date.now() - minAgeMs;
   const stale: string[] = [];
   let cursor: string | undefined;
   do {
-    const page = await list({ prefix: `${kind}/`, cursor, limit: 1000 });
+    const page = await list({ prefix: uploadPrefix(companyId, kind), cursor, limit: 1000 });
     for (const b of page.blobs) if (!keep.has(b.url) && b.uploadedAt.getTime() < cutoff) stale.push(b.url);
     cursor = page.hasMore ? page.cursor : undefined;
   } while (cursor);

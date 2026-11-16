@@ -1,5 +1,5 @@
 import { prisma } from './prisma';
-import { COMPANY_ID } from './company-id';
+import { currentCompanyId } from './tenant';
 import { istDayRangeUtc, todayIst } from './dates';
 import { fmtInr } from './gst';
 import { getAppSettings } from './settings';
@@ -39,16 +39,16 @@ export async function buildDailyDigest(): Promise<DailyDigest> {
   const week = istDayRangeUtc(addDays(today, 8)).gte;
 
   const [company, settings, [ySales], [yPaid], [mSales], [mCredits], overdue, [due], drafts, [stock]] = await Promise.all([
-    prisma.company.findUnique({ where: { id: COMPANY_ID }, select: { name: true, currency: true } }),
+    prisma.company.findUnique({ where: { id: await currentCompanyId() }, select: { name: true, currency: true } }),
     getAppSettings(),
     prisma.$queryRaw<{ total: number; n: number }[]>`
-      SELECT COALESCE(SUM(total), 0)::float8 AS total, COUNT(*)::int AS n FROM "Invoice" WHERE status <> 'DRAFT' AND date >= ${y0} AND date < ${t0}`,
+      SELECT COALESCE(SUM(total), 0)::float8 AS total, COUNT(*)::int AS n FROM "Invoice" WHERE "companyId" = ${await currentCompanyId()} AND status <> 'DRAFT' AND date >= ${y0} AND date < ${t0}`,
     prisma.$queryRaw<{ total: number }[]>`
-      SELECT COALESCE(SUM(amount), 0)::float8 AS total FROM "Payment" WHERE "creditNoteId" IS NULL AND date >= ${y0} AND date < ${t0}`,
+      SELECT COALESCE(SUM(amount), 0)::float8 AS total FROM "Payment" WHERE "companyId" = ${await currentCompanyId()} AND "creditNoteId" IS NULL AND date >= ${y0} AND date < ${t0}`,
     prisma.$queryRaw<{ total: number }[]>`
-      SELECT COALESCE(SUM(total), 0)::float8 AS total FROM "Invoice" WHERE status <> 'DRAFT' AND date >= ${m0} AND date < ${istDayRangeUtc(addDays(today, 1)).gte}`,
+      SELECT COALESCE(SUM(total), 0)::float8 AS total FROM "Invoice" WHERE "companyId" = ${await currentCompanyId()} AND status <> 'DRAFT' AND date >= ${m0} AND date < ${istDayRangeUtc(addDays(today, 1)).gte}`,
     prisma.$queryRaw<{ total: number }[]>`
-      SELECT COALESCE(SUM(total), 0)::float8 AS total FROM "CreditNote" WHERE date >= ${m0} AND date < ${istDayRangeUtc(addDays(today, 1)).gte}`,
+      SELECT COALESCE(SUM(total), 0)::float8 AS total FROM "CreditNote" WHERE "companyId" = ${await currentCompanyId()} AND date >= ${m0} AND date < ${istDayRangeUtc(addDays(today, 1)).gte}`,
     prisma.invoice.findMany({
       where: { status: { in: ['SENT', 'PARTIALLY_PAID'] }, due: { lt: t0 } },
       orderBy: [{ due: 'asc' }],
@@ -56,13 +56,13 @@ export async function buildDailyDigest(): Promise<DailyDigest> {
     }),
     prisma.$queryRaw<{ n: number; total: number }[]>`
       SELECT COUNT(*)::int AS n, COALESCE(SUM(total - "amountPaid"), 0)::float8 AS total
-      FROM "Invoice" WHERE status IN ('SENT', 'PARTIALLY_PAID') AND due >= ${t0} AND due < ${week} AND total - "amountPaid" > 0.004`,
+      FROM "Invoice" WHERE "companyId" = ${await currentCompanyId()} AND status IN ('SENT', 'PARTIALLY_PAID') AND due >= ${t0} AND due < ${week} AND total - "amountPaid" > 0.004`,
     prisma.invoice.count({ where: { status: 'DRAFT', stockTaken: true } }),
     prisma.$queryRaw<{ out: number; low: number }[]>`
       SELECT
         (COUNT(*) FILTER (WHERE "stockQty" <= 0.000001))::int AS out,
         (COUNT(*) FILTER (WHERE "stockQty" > 0.000001 AND "lowStockAt" IS NOT NULL AND "stockQty" <= "lowStockAt"))::int AS low
-      FROM "Product" WHERE "trackStock" AND active`,
+      FROM "Product" WHERE "companyId" = ${await currentCompanyId()} AND "trackStock" AND active`,
   ]);
 
   const owing = overdue

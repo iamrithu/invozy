@@ -22,8 +22,21 @@ import {
 import { useGlobalSearch } from '@/hooks/use-global-search';
 import { fmtInr } from '@/lib/gst';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useModules } from '@/components/modules/modules-provider';
 
 type Action = { key: string; name: string; hint: string; icon: React.ReactNode; run: () => void };
+
+/** Command keys that open a module's page — hidden when the module is off. */
+const MODULE_PATH_BY_ACTION: Record<string, string> = {
+  inventory: '/inventory',
+  purchases: '/purchases',
+  suppliers: '/suppliers',
+  'credit-notes': '/credit-notes',
+  reports: '/reports',
+  'loading-sheet': '/reports',
+  team: '/team',
+  'new-purchase': '/purchases',
+};
 
 export function CommandPalette({
   onOpenQuickAddProduct,
@@ -69,6 +82,7 @@ export function CommandPalette({
 
   useEffect(() => setActiveIndex(0), [query]);
 
+  const modules = useModules();
   const actions: Action[] = useMemo(
     () => [
       { key: 'dashboard', name: 'Go to Dashboard', hint: 'Page', icon: <LayoutDashboard size={15} />, run: () => router.push('/dashboard') },
@@ -88,8 +102,12 @@ export function CommandPalette({
       { key: 'new-purchase', name: 'New purchase', hint: 'Action', icon: <ShoppingCart size={15} />, run: () => router.push('/purchases/new') },
       { key: 'add-product', name: 'Add product', hint: 'Action', icon: <Package size={15} />, run: onOpenQuickAddProduct },
       { key: 'add-customer', name: 'Add customer', hint: 'Action', icon: <Users size={15} />, run: onOpenQuickAddCustomer },
-    ],
-    [router, onOpenQuickAddProduct, onOpenQuickAddCustomer]
+    ].filter((a) => {
+      // Hide pages of modules switched off for this company (src/lib/modules.ts).
+      const path = MODULE_PATH_BY_ACTION[a.key];
+      return !path || modules.pathEnabled(path);
+    }),
+    [router, onOpenQuickAddProduct, onOpenQuickAddCustomer, modules]
   );
 
   const q = query.trim().toLowerCase();

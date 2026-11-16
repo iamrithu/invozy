@@ -11,6 +11,8 @@ import { logActivity } from '@/lib/activity';
 import { applyMovement } from '@/lib/stock';
 import { istDayRangeUtc, todayIst } from '@/lib/dates';
 import { formatStock, needsPackSize, round6, stockStatus, stockUnits, unitFactor, type StockStatus } from '@/lib/stock-units';
+import { currentCompanyId } from '@/lib/tenant';
+import { requireModule } from '@/lib/require-module';
 
 // The Inventory screens' data layer: the stock list with its status chips,
 // one product's ledger, counts/stock-ins/write-offs, batches on hand, and the
@@ -294,7 +296,7 @@ async function averageCosts(productIds: string[]): Promise<Map<string, number>> 
   const rows = await prisma.$queryRaw<{ productId: string; avg: unknown }[]>(Prisma.sql`
     SELECT "productId", SUM("qty" * "unitCost") / NULLIF(SUM("qty"), 0) AS avg
     FROM "StockMovement"
-    WHERE "type" = 'PURCHASE' AND "qty" > 0 AND "unitCost" IS NOT NULL AND "productId" IN (${Prisma.join(productIds)})
+    WHERE "companyId" = ${await currentCompanyId()} AND "type" = 'PURCHASE' AND "qty" > 0 AND "unitCost" IS NOT NULL AND "productId" IN (${Prisma.join(productIds)})
     GROUP BY "productId"`);
   return new Map(rows.filter((r) => r.avg != null).map((r) => [r.productId, Number(r.avg)]));
 }
@@ -341,6 +343,7 @@ export async function listInventoryPage(opts?: {
   page?: number;
   pageSize?: number;
 }): Promise<InventoryPage> {
+  await requireModule('inventory');
   const page = Math.max(opts?.page ?? 1, 1);
   const pageSize = opts?.pageSize ?? 20;
   const status = opts?.status ?? 'all';
@@ -396,7 +399,7 @@ export async function listInventoryPage(opts?: {
     ? await prisma.$queryRaw<{ productId: string; type: StockMovementType; date: Date; reversal: boolean }[]>(Prisma.sql`
         SELECT DISTINCT ON ("productId") "productId", "type"::text AS "type", "date",
           ("type" = 'SALE_RETURN' AND "creditNoteId" IS NULL AND "invoiceNumber" IS NOT NULL) AS "reversal"
-        FROM "StockMovement" WHERE "productId" IN (${Prisma.join(ids)})
+        FROM "StockMovement" WHERE "companyId" = ${await currentCompanyId()} AND "productId" IN (${Prisma.join(ids)})
         ORDER BY "productId", "createdAt" DESC, "id" DESC`)
     : [];
   const lastById = new Map(last.map((l) => [l.productId, l]));
@@ -437,7 +440,7 @@ export async function listStockProducts(includeIds?: string[]): Promise<StockPro
  * count sets the balance *relative* to what's there, so a sale committing
  * between the read and the write would otherwise make the count wrong. */
 async function lockProduct(tx: Tx, productId: string) {
-  await tx.$queryRaw`SELECT id FROM "Product" WHERE id = ${productId} FOR UPDATE`;
+  await tx.$queryRaw`SELECT id FROM "Product" WHERE id = ${productId} AND "companyId" = ${await currentCompanyId()} FOR UPDATE`;
   const row = await tx.product.findUnique({ where: { id: productId }, select: productSelect });
   if (!row) throw new Error('This product no longer exists.');
   return toStockProduct(row);
@@ -459,6 +462,7 @@ export async function setStockCount(
   note?: string | null
 ): Promise<ActionResult<{ balance: number; previous: number; startedTracking: boolean; changed: boolean }>> {
   try {
+    await requireModule('inventory');
     const user = await requireUser();
     const value = round6(Number(counted));
     if (!Number.isFinite(value) || value < 0) return { error: 'Stock can’t be below zero. To write off damaged stock, use Adjust → Damaged / expired.' };
@@ -513,6 +517,7 @@ export async function undoStockCount(
   undo: { previous: number; counted: number; startedTracking: boolean }
 ): Promise<ActionResult<{ balance: number }>> {
   try {
+    await requireModule('inventory');
     const user = await requireUser();
     const delta = round6(Number(undo.previous) - Number(undo.counted));
     if (!Number.isFinite(delta)) return { error: 'Nothing to undo.' };
@@ -567,6 +572,7 @@ const MOVEMENT_VERB: Record<string, string> = { PURCHASE: 'Stock in', DAMAGE: 'W
  * what a count correction is for. */
 export async function addStockMovement(productId: string, input: StockMovementInput): Promise<ActionResult<{ balance: number }>> {
   try {
+    await requireModule('inventory');
     const user = await requireUser();
     const parsed = MovementInputSchema.safeParse(input);
     if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Check the form.' };
@@ -657,6 +663,7 @@ export async function setTrackStock(productId: string, on: boolean): Promise<Act
 /** The "alert me at" level, in main units — null turns the low-stock alert off. */
 export async function setLowStockLevel(productId: string, level: number | null): Promise<ActionResult> {
   try {
+    await requireModule('inventory');
     const user = await requireUser();
     const value = level == null ? null : round6(Number(level));
     if (value != null && (!Number.isFinite(value) || value < 0)) return { error: 'The alert level can’t be below zero.' };
@@ -831,6 +838,7 @@ export async function getStockLedger(
   productId: string,
   opts?: { type?: LedgerTypeGroup; dateFrom?: string; dateTo?: string; page?: number }
 ): Promise<StockLedger | null> {
+  await requireModule('inventory');
   const page = Math.max(opts?.page ?? 1, 1);
   const group = opts?.type ?? 'all';
   const from = opts?.dateFrom ? istDayRangeUtc(opts.dateFrom).gte : undefined;

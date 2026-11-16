@@ -25,6 +25,9 @@ export const config = {
     '/credit-notes/:path*',
     '/activity/:path*',
     '/team/:path*',
+    // The platform admin panel (role-checked in src/auth.config.ts; the
+    // admin layout and every admin action re-check it).
+    '/admin/:path*',
     // Not /print/* — the headless PDF renderer reaches those with a signed
     // token instead of a session cookie (src/lib/signed-token.ts).
   ],

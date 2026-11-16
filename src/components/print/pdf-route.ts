@@ -9,6 +9,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requireUser } from '@/lib/session';
 import { createSignedToken } from '@/lib/signed-token';
 import { renderPrintPage } from '@/lib/invoice-pdf';
+import { configuredSiteOrigin } from '@/lib/site-origin';
 
 /** Long enough for a cold Chromium launch plus the page load; short
  * enough that a leaked print URL is useless almost at once. */
@@ -27,11 +28,11 @@ export async function renderDocumentPdf(
   req: NextRequest,
   doc: { kind: string; printPath: string; id: string; extraQuery?: Record<string, string>; fileName: string; footerLeft: string; footerRight?: string }
 ) {
-  const token = createSignedToken(doc.kind, doc.id, PRINT_TOKEN_TTL_S);
+  const token = await createSignedToken(doc.kind, doc.id, PRINT_TOKEN_TTL_S);
   const query = new URLSearchParams({ t: token, ...doc.extraQuery });
   try {
     const pdf = await renderPrintPage(`${doc.printPath}/${encodeURIComponent(doc.id)}?${query}`, {
-      origin: req.nextUrl.origin,
+      origin: (configuredSiteOrigin() ?? req.nextUrl.origin),
       footerLeft: doc.footerLeft,
       footerRight: doc.footerRight,
     });

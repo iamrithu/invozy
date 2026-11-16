@@ -1,7 +1,7 @@
 import { Download } from 'lucide-react';
 import { Button, type ButtonProps } from '@/components/ui/button';
 
-/** "ASB/26-27/1020" → "ASB-26-27-1020.pdf" — the same name the PDF route
+/** "INV/26-27/1020" → "INV-26-27-1020.pdf" — the same name the PDF route
  * sends (src/lib/invoice-pdf.ts's invoicePdfFileName, kept in step by hand:
  * that module is server-only). */
 export function invoicePdfFileName(invoiceNumber: string): string {

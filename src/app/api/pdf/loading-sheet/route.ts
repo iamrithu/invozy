@@ -4,6 +4,8 @@ import { createSignedToken } from '@/lib/signed-token';
 import { todayIst } from '@/lib/dates';
 import { renderPrintPage } from '@/lib/invoice-pdf';
 import { loadingSheetQuery, loadingSheetTokenId, normalizeLoadingParams } from '@/app/(app)/reports/loading-sheet/loading-sheet-data';
+import { requireModule } from '@/lib/require-module';
+import { configuredSiteOrigin } from '@/lib/site-origin';
 
 export const dynamic = 'force-dynamic';
 // Same budget as the invoice PDF route: a cold Chromium launch plus the
@@ -23,14 +25,16 @@ export const maxDuration = 60;
 export async function GET(req: NextRequest) {
   const user = await requireUser().catch(() => null);
   if (!user) return Response.json({ error: 'Not signed in' }, { status: 401 });
+  const moduleOff = await requireModule('reports').then(() => null, (e: Error) => e.message);
+  if (moduleOff) return Response.json({ error: moduleOff }, { status: 403 });
 
   const sp = req.nextUrl.searchParams;
   const params = normalizeLoadingParams({ date: sp.get('date'), group: sp.get('group'), drafts: sp.get('drafts') }, todayIst());
-  const token = createSignedToken('print-loading-sheet', loadingSheetTokenId(params), 120);
+  const token = await createSignedToken('print-loading-sheet', loadingSheetTokenId(params), 120);
 
   try {
     const pdf = await renderPrintPage(`/print/loading-sheet?${loadingSheetQuery(params)}&t=${encodeURIComponent(token)}`, {
-      origin: req.nextUrl.origin,
+      origin: (configuredSiteOrigin() ?? req.nextUrl.origin),
       footerLeft: `Loading sheet - ${params.date}`,
       footerRight: params.group === 'vehicle' ? 'By vehicle' : 'By route',
     });

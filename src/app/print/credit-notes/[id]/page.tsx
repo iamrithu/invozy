@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getAppSettings } from '@/lib/settings';
-import { verifySignedToken } from '@/lib/signed-token';
+import { authorizeSignedPage } from '@/lib/signed-request';
 import { loadPrintLetterhead } from '@/components/print/print-data';
 import { PrintPageShell } from '@/components/print/print-page-shell';
 import { loadCreditNoteDocument } from '@/components/credit-notes/credit-note-data';
@@ -19,7 +19,7 @@ export const metadata: Metadata = { title: 'Credit note', robots: { index: false
  */
 export default async function PrintCreditNotePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ t?: string | string[] }> }) {
   const [{ id }, { t }] = await Promise.all([params, searchParams]);
-  if (verifySignedToken('print-credit-note', typeof t === 'string' ? t : null) !== id) notFound();
+  if (!(await authorizeSignedPage('print-credit-note', typeof t === 'string' ? t : null, id))) notFound();
 
   const [note, company, settings] = await Promise.all([loadCreditNoteDocument(id), loadPrintLetterhead(), getAppSettings()]);
   if (!note || !company) notFound();

@@ -1,8 +1,9 @@
 import { prisma } from '@/lib/prisma';
-import { COMPANY_ID } from '@/lib/company-id';
+import { requireUser } from '@/lib/session';
 
 export async function getCompany() {
-  const company = await prisma.company.findUnique({ where: { id: COMPANY_ID } });
+  const user = await requireUser();
+  const company = await prisma.company.findUnique({ where: { id: user.companyId } });
   if (!company) throw new Error('Company profile not found.');
   return company;
 }

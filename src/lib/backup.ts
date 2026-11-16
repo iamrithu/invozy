@@ -4,12 +4,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { put, list, del } from '@vercel/blob';
 import { prisma } from './prisma';
+import { currentCompanyId } from './tenant';
 
-// Full data backups — every business table as JSON, gzipped. Two ways in:
-// the owner's "Download backup" (src/app/api/export/backup) and the nightly
-// cron (src/app/api/cron/backup), which keeps 30 days of copies in Vercel
-// Blob, or under ./.backups when there's no Blob store (local dev; that
-// folder is git-ignored).
+// Per-company data backups — every business table as JSON, gzipped, for the
+// company in scope only (every read goes through the tenant-scoped client).
+// Two ways in: the owner's "Download backup" (src/app/api/export/backup) and
+// the nightly cron (src/app/api/cron/backup), which runs this once per
+// company and keeps 30 days of copies per company in Vercel Blob under
+// backups/<companyId>/, or under ./.backups/<companyId>/ when there's no
+// Blob store (local dev; that folder is git-ignored).
 //
 // What's left out, on purpose: the company's two encrypted NIC secrets and
 // every login's password hash (a backup file gets emailed, copied to pen
@@ -22,7 +25,7 @@ import { prisma } from './prisma';
 
 const gzip = promisify(gzipCb);
 
-export const BACKUP_FORMAT = 'asb-backup';
+export const BACKUP_FORMAT = 'invozy-backup';
 export const BACKUP_VERSION = 1;
 export const BACKUP_RETENTION_DAYS = 30;
 
@@ -101,8 +104,9 @@ export async function buildBackup(): Promise<{ gz: Buffer; counts: Record<string
   return { gz, counts, createdAt };
 }
 
-/** `asb-backup-2026-10-31.json.gz` for downloads; the stored nightly copy
- * is `backups/asb-2026-10-31.json.gz` (see storeBackup). Dated in IST. */
+/** `invozy-backup-2026-10-31.json.gz` for downloads; the stored nightly
+ * copy is `backups/<companyId>/invozy-2026-10-31.json.gz` (see storeBackup).
+ * Dated in IST. */
 export function backupDate(d: Date): string {
   return new Date(d.getTime() + 5.5 * 3600_000).toISOString().slice(0, 10);
 }
@@ -121,10 +125,11 @@ export type StoredBackup = { where: 'blob' | 'local'; location: string; bytes: n
  * file goes to ./.backups — which only works where the disk is writable,
  * i.e. not on a serverless host. */
 export async function storeBackup(gz: Buffer, createdAt: Date): Promise<StoredBackup> {
-  const name = `asb-${backupDate(createdAt)}.json.gz`;
+  const companyId = await currentCompanyId();
+  const name = `invozy-${backupDate(createdAt)}.json.gz`;
 
   if (process.env.BLOB_READ_WRITE_TOKEN) {
-    const pathname = `backups/${name}`;
+    const pathname = `backups/${companyId}/${name}`;
     let url: string;
     try {
       ({ url } = await put(pathname, gz, { access: 'private', contentType: 'application/gzip', allowOverwrite: true, addRandomSuffix: false }));
@@ -132,17 +137,18 @@ export async function storeBackup(gz: Buffer, createdAt: Date): Promise<StoredBa
       console.warn('Private Blob upload refused — falling back to an unlisted public blob.', e instanceof Error ? e.message : e);
       ({ url } = await put(pathname, gz, { access: 'public', contentType: 'application/gzip', addRandomSuffix: true }));
     }
-    const pruned = await pruneBlobBackups(createdAt);
+    const pruned = await pruneBlobBackups(companyId, createdAt);
     return { where: 'blob', location: url, bytes: gz.length, pruned };
   }
 
   if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
     throw new Error('Nightly backups need a Vercel Blob store connected to this project (Storage tab) — the server disk is read-only.');
   }
-  await fs.mkdir(LOCAL_DIR, { recursive: true });
-  const file = path.join(LOCAL_DIR, name);
+  const dir = path.join(LOCAL_DIR, companyId);
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, name);
   await fs.writeFile(file, gz);
-  const pruned = await pruneLocalBackups(createdAt);
+  const pruned = await pruneLocalBackups(dir, createdAt);
   return { where: 'local', location: file, bytes: gz.length, pruned };
 }
 
@@ -150,11 +156,11 @@ function cutoff(now: Date): number {
   return now.getTime() - BACKUP_RETENTION_DAYS * 86_400_000;
 }
 
-async function pruneBlobBackups(now: Date): Promise<number> {
+async function pruneBlobBackups(companyId: string, now: Date): Promise<number> {
   const stale: string[] = [];
   let cursor: string | undefined;
   do {
-    const page = await list({ prefix: 'backups/', cursor, limit: 1000 });
+    const page = await list({ prefix: `backups/${companyId}/`, cursor, limit: 1000 });
     for (const b of page.blobs) if (new Date(b.uploadedAt).getTime() < cutoff(now)) stale.push(b.url);
     cursor = page.hasMore ? page.cursor : undefined;
   } while (cursor);
@@ -162,11 +168,11 @@ async function pruneBlobBackups(now: Date): Promise<number> {
   return stale.length;
 }
 
-async function pruneLocalBackups(now: Date): Promise<number> {
+async function pruneLocalBackups(dir: string, now: Date): Promise<number> {
   let pruned = 0;
-  for (const entry of await fs.readdir(LOCAL_DIR).catch(() => [] as string[])) {
-    if (!/^asb-\d{4}-\d{2}-\d{2}\.json\.gz$/.test(entry)) continue;
-    const file = path.join(LOCAL_DIR, entry);
+  for (const entry of await fs.readdir(dir).catch(() => [] as string[])) {
+    if (!/^invozy-\d{4}-\d{2}-\d{2}\.json\.gz$/.test(entry)) continue;
+    const file = path.join(dir, entry);
     const stat = await fs.stat(file).catch(() => null);
     if (stat && stat.mtimeMs < cutoff(now)) {
       await fs.unlink(file).catch(() => {});

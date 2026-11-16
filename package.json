@@ -1,5 +1,5 @@
 {
-  "name": "asb",
+  "name": "invozy",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -12,7 +12,8 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "setup": "tsx scripts/setup-company.ts",
+    "create-company": "tsx scripts/create-company.ts",
+    "db:seed": "tsx prisma/seed.ts",
     "test:actions": "tsx --tsconfig scripts/test-actions/tsconfig.json scripts/test-actions/run.ts"
   },
   "dependencies": {

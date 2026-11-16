@@ -6,15 +6,16 @@ const SERVER_MAX_BYTES = 4 * 1024 * 1024;
 const EXT: Record<string, string> = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
 
 /** Uploads one bill attachment and returns it, ready for savePurchase.
- * With Blob storage connected (`direct`), the browser sends it straight
- * there (see /api/uploads/purchases) — any size up to the cap. Otherwise,
- * or if that fails for a file small enough, it goes through the server
- * action, one file per request. */
-export async function uploadAttachment(file: File, direct: boolean): Promise<PurchaseAttachmentInfo> {
+ * With Blob storage connected, `directPrefix` is the company's folder
+ * (`<companyId>/purchases/`) and the browser sends the file straight there
+ * (see /api/uploads/purchases) — any size up to the cap. Otherwise, or if
+ * that fails for a file small enough, it goes through the server action, one
+ * file per request. */
+export async function uploadAttachment(file: File, directPrefix: string | null): Promise<PurchaseAttachmentInfo> {
   const name = file.name.slice(0, 200) || 'Attachment';
-  if (direct) {
+  if (directPrefix) {
     try {
-      const blob = await upload(`purchases/${crypto.randomUUID()}.${EXT[file.type] ?? 'bin'}`, file, {
+      const blob = await upload(`${directPrefix}${crypto.randomUUID()}.${EXT[file.type] ?? 'bin'}`, file, {
         access: 'public',
         handleUploadUrl: '/api/uploads/purchases',
         contentType: file.type,

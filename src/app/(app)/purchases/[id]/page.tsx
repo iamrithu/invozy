@@ -4,6 +4,8 @@ import { getLastPurchaseRates, getPurchase } from '@/actions/purchases';
 import { listSupplierOptions } from '@/actions/suppliers';
 import { getCompany } from '@/lib/get-company';
 import { PurchaseForm } from '@/components/purchases/purchase-form';
+import { uploadPrefix } from '@/lib/uploads';
+import { currentCompanyId } from '@/lib/tenant';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +30,7 @@ export default async function EditPurchasePage({ params }: { params: Promise<{ i
       suppliers={suppliers}
       lastRates={lastRates}
       company={{ state: company.state, currency: company.currency, defaultGstRate: Number(company.cgstRate) + Number(company.sgstRate) }}
-      directUploads={!!process.env.BLOB_READ_WRITE_TOKEN}
+      directUploads={process.env.BLOB_READ_WRITE_TOKEN ? uploadPrefix(await currentCompanyId(), 'purchases') : null}
     />
   );
 }

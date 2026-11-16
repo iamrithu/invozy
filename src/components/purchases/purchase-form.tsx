@@ -68,7 +68,8 @@ export function PurchaseForm({
   lastRates: LastRates;
   company: { state: string; currency: string; defaultGstRate: number };
   /** Blob storage is connected — attachments upload straight to it. */
-  directUploads: boolean;
+  /** The company's Blob folder for bill attachments, or null without Blob storage. */
+  directUploads: string | null;
 }) {
   const router = useRouter();
   const { isOwner } = useCurrentUser();

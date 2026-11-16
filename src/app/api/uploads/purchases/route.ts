@@ -1,6 +1,8 @@
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { requireUser } from '@/lib/session';
+import { uploadPrefix } from '@/lib/uploads';
 import { PURCHASE_ATTACHMENT_MAX_BYTES, PURCHASE_ATTACHMENT_TYPES } from '@/components/purchases/purchase-math';
+import { requireModule } from '@/lib/require-module';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,8 +22,11 @@ export async function POST(request: Request) {
       body,
       request,
       onBeforeGenerateToken: async (pathname) => {
-        await requireUser();
-        if (!/^purchases\/[\w-]+\.(pdf|jpg|png|webp)$/.test(pathname)) throw new Error('That isn’t a bill attachment.');
+        const user = await requireUser();
+        await requireModule('purchases');
+        // Only into this company's own folder (src/lib/uploads.ts uploadPrefix).
+        const prefix = uploadPrefix(user.companyId, 'purchases');
+        if (!pathname.startsWith(prefix) || !/^[\w-]+\.(pdf|jpg|png|webp)$/.test(pathname.slice(prefix.length))) throw new Error('That isn’t a bill attachment.');
         return { allowedContentTypes: PURCHASE_ATTACHMENT_TYPES, maximumSizeInBytes: PURCHASE_ATTACHMENT_MAX_BYTES, addRandomSuffix: false };
       },
     });

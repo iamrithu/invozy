@@ -1,4 +1,6 @@
 import { requireOwner } from '@/lib/session';
+import { getCompany } from '@/lib/get-company';
+import { isModuleEnabled, type ModuleKey } from '@/lib/modules';
 import { istDayRangeUtc } from '@/lib/dates';
 
 // Shared by every /api/export/* route handler. Exports are owner-only: a
@@ -11,9 +13,14 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 /** `null` when allowed, otherwise the error response to return. Route
  * handlers are reached directly (not through the proxy), so the session
  * check has to happen here. */
-export async function ownerGate(): Promise<Response | null> {
+export async function ownerGate(module: ModuleKey | null = 'reports'): Promise<Response | null> {
   try {
     await requireOwner();
+    // CSV / GSTR-1 / Tally exports belong to the Reports module; the full
+    // backup (module = null) is the company's own data and always available.
+    if (module && !isModuleEnabled((await getCompany()).disabledModules, module)) {
+      return Response.json({ error: 'Reports & exports aren’t enabled for this company.' }, { status: 403, headers: { 'Cache-Control': 'no-store' } });
+    }
     return null;
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Not signed in.';

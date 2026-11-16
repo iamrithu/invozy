@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
-import { COMPANY_ID } from '@/lib/company-id';
-import { verifySignedToken } from '@/lib/signed-token';
+import { currentCompanyId } from '@/lib/tenant';
+import { authorizeSignedPage } from '@/lib/signed-request';
 import { todayIst } from '@/lib/dates';
 import { fmtInr } from '@/lib/gst';
 import { PAPER_STYLE } from '@/lib/paper-theme';
@@ -27,11 +27,11 @@ export default async function PrintLoadingSheetPage({ searchParams }: { searchPa
   const sp = await searchParams;
   const str = (v: string | string[] | undefined) => (typeof v === 'string' ? v : null);
   const params = normalizeLoadingParams({ date: str(sp.date), group: str(sp.group), drafts: str(sp.drafts) }, todayIst());
-  if (verifySignedToken('print-loading-sheet', str(sp.t)) !== loadingSheetTokenId(params)) notFound();
+  if (!(await authorizeSignedPage('print-loading-sheet', str(sp.t), loadingSheetTokenId(params)))) notFound();
 
   const [sheet, company] = await Promise.all([
     loadLoadingSheet(params),
-    prisma.company.findUnique({ where: { id: COMPANY_ID }, select: { name: true, phone: true, currency: true } }),
+    prisma.company.findUnique({ where: { id: await currentCompanyId() }, select: { name: true, phone: true, currency: true } }),
   ]);
   const currency = company?.currency ?? 'INR';
   const money = (n: number) => fmtInr(n, currency);

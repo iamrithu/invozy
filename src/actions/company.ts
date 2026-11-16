@@ -9,6 +9,7 @@ import { saveUploadedImage, deleteUploadedImage } from '@/lib/uploads';
 import { isValidThemeColor } from '@/lib/theme-presets';
 import { encryptSecret } from '@/lib/secret';
 import { recomputeStoredTotals } from '@/lib/invoice-totals';
+import { requireOwner } from '@/lib/session';
 
 const CompanySchema = z.object({
   name: z.string().min(1),
@@ -99,7 +100,21 @@ const SWITCHES = [
 
 type CompanyField = keyof typeof CompanySchema.shape;
 
+/** null for an owner; otherwise the message to show. */
+async function ownerOnly(): Promise<string | null> {
+  try {
+    await requireOwner();
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message : 'Not signed in.';
+  }
+}
+
 export async function updateCompany(_prev: CompanyFormState, formData: FormData): Promise<CompanyFormState> {
+  // Company settings are the owner's — bank/UPI details print on every
+  // invoice, and the NIC credentials file GST returns. Staff get a readable no.
+  const ownerError = await ownerOnly();
+  if (ownerError) return { error: ownerError };
   const raw: Record<string, unknown> = Object.fromEntries(formData);
   // The Company page saves one section at a time and lists the fields that
   // section owns in `_fields` — only those are validated and written, so
@@ -201,6 +216,8 @@ const GstDefaultsSchema = z.object({
  * clobbering compliance settings the builder never even loads.
  */
 export async function updateCompanyGstDefaults(input: z.infer<typeof GstDefaultsSchema>): Promise<{ error?: string }> {
+  const ownerError = await ownerOnly();
+  if (ownerError) return { error: ownerError };
   const parsed = GstDefaultsSchema.safeParse(input);
   if (!parsed.success) return { error: 'Invalid settings' };
   const company = await getCompany();

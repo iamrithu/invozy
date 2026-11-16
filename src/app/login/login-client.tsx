@@ -4,14 +4,19 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { signIn } from 'next-auth/react';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/shell/theme-toggle';
 import { BrandMark } from '@/components/shell/brand-mark';
+import { APP_NAME } from '@/lib/brand';
 
 export function LoginClient() {
   const router = useRouter();
+  // Cached queries aren't keyed by company — drop them all on every sign-in
+  // so nothing from a previous login on this browser can be shown.
+  const queryClient = useQueryClient();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
@@ -27,7 +32,12 @@ export function LoginClient() {
     });
     if (result?.error) {
       setPending(false);
-      const message = result.code === 'too-many-attempts' ? 'Too many failed attempts. Try again in a few minutes.' : 'Incorrect email/phone or password.';
+      const message =
+        result.code === 'too-many-attempts'
+          ? 'Too many failed attempts. Try again in a few minutes.'
+          : result.code === 'company-suspended'
+            ? 'This company account is suspended. Contact support to restore access.'
+            : 'Incorrect email/phone or password.';
       setError(message);
       toast.error(message);
       return;
@@ -39,6 +49,7 @@ export function LoginClient() {
     // route actually swapped in. Staying in the loading state through the
     // navigation removes that dead zone; there's nothing left to reset it
     // since this component unmounts once the new route lands.
+    queryClient.clear();
     router.push('/dashboard');
     router.refresh();
   }
@@ -68,6 +79,13 @@ export function LoginClient() {
             {pending ? 'Logging in…' : 'Log in'}
           </Button>
         </form>
+
+        <p className="mt-5 text-center text-[12px] text-ink-faint">
+          New to {APP_NAME}?{' '}
+          <Link href="/signup" className="font-bold text-brand">
+            Create a company account
+          </Link>
+        </p>
       </div>
     </div>
   );

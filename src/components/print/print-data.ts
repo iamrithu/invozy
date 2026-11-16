@@ -5,7 +5,7 @@
 // Never import this from a client component.
 
 import { prisma } from '@/lib/prisma';
-import { COMPANY_ID } from '@/lib/company-id';
+import { currentCompanyId } from '@/lib/tenant';
 import { inlineImage } from '@/app/print/inline-image';
 import { customerDisplayName } from '@/lib/customer';
 import { addressLine, type BuyerInfo, type LetterheadCompany } from './clean-doc';
@@ -18,7 +18,7 @@ import { getAppSettings } from '@/lib/settings';
 export async function loadLetterheadCompany(): Promise<LetterheadCompany | null> {
   const [company, settings] = await Promise.all([
     prisma.company.findUnique({
-      where: { id: COMPANY_ID },
+      where: { id: await currentCompanyId() },
       select: {
         name: true,
         address: true,

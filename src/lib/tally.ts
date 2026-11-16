@@ -6,7 +6,7 @@
 //
 // Vouchers are written in Accounting Voucher View (ISINVOICE No): one party
 // line and one line per sales/tax ledger, no stock items — the accountant's
-// Tally doesn't need ASB's product list to take the GST figures in.
+// Tally doesn't need our product list to take the GST figures in.
 //
 // Tally's sign convention for ALLLEDGERENTRIES.LIST: a DEBIT is a negative
 // AMOUNT with ISDEEMEDPOSITIVE Yes; a CREDIT is a positive AMOUNT with
@@ -165,7 +165,7 @@ function voucher(kind: 'Sales' | 'Credit Note', doc: TallyDoc, ledgers: TallyLed
     roundOff ? ledgerEntry(ledgers.roundOff, s * roundOff) : '',
   ].join('');
 
-  // REMOTEID is a stable id per ASB document, which Tally keeps against the
+  // REMOTEID is a stable id per document, which Tally keeps against the
   // voucher it creates.
   return `
   <TALLYMESSAGE xmlns:UDF="TallyUDF">

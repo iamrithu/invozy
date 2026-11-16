@@ -2,6 +2,7 @@
 
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { currentCompanyId } from '@/lib/tenant';
 import { requireUser } from '@/lib/session';
 import { istDayRangeUtc, todayIst } from '@/lib/dates';
 import { customerDisplayName } from '@/lib/customer';
@@ -62,30 +63,30 @@ async function figures(r: { gte: Date; lt: Date }, todayStart: Date): Promise<Pe
         (COUNT(*) FILTER (WHERE status IN ('SENT', 'PARTIALLY_PAID') AND total - "amountPaid" > 0.004))::int AS open,
         COALESCE(SUM(GREATEST(total - "amountPaid", 0)) FILTER (WHERE status IN ('SENT', 'PARTIALLY_PAID') AND due < ${todayStart}), 0)::float8 AS overdue,
         (COUNT(*) FILTER (WHERE status IN ('SENT', 'PARTIALLY_PAID') AND total - "amountPaid" > 0.004 AND due < ${todayStart}))::int AS "overdueCount"
-      FROM "Invoice" WHERE status <> 'DRAFT' AND date >= ${r.gte} AND date < ${r.lt}`,
+      FROM "Invoice" WHERE "companyId" = ${await currentCompanyId()} AND status <> 'DRAFT' AND date >= ${r.gte} AND date < ${r.lt}`,
     prisma.$queryRaw<{ n: number; total: number }[]>`
       SELECT COUNT(*)::int AS n, COALESCE(SUM(total), 0)::float8 AS total
-      FROM "Invoice" WHERE status = 'DRAFT' AND date >= ${r.gte} AND date < ${r.lt}`,
+      FROM "Invoice" WHERE "companyId" = ${await currentCompanyId()} AND status = 'DRAFT' AND date >= ${r.gte} AND date < ${r.lt}`,
     prisma.$queryRaw<{ total: number; n: number }[]>`
-      SELECT COALESCE(SUM(total), 0)::float8 AS total, COUNT(*)::int AS n FROM "CreditNote" WHERE date >= ${r.gte} AND date < ${r.lt}`,
+      SELECT COALESCE(SUM(total), 0)::float8 AS total, COUNT(*)::int AS n FROM "CreditNote" WHERE "companyId" = ${await currentCompanyId()} AND date >= ${r.gte} AND date < ${r.lt}`,
     // Cash actually received — a credit note settles an invoice without any
     // money changing hands, so its payment row isn't a collection.
     prisma.$queryRaw<{ total: number }[]>`
-      SELECT COALESCE(SUM(amount), 0)::float8 AS total FROM "Payment" WHERE "creditNoteId" IS NULL AND date >= ${r.gte} AND date < ${r.lt}`,
+      SELECT COALESCE(SUM(amount), 0)::float8 AS total FROM "Payment" WHERE "companyId" = ${await currentCompanyId()} AND "creditNoteId" IS NULL AND date >= ${r.gte} AND date < ${r.lt}`,
     // A customer is new in the period when their first-ever issued invoice
     // falls inside it.
     prisma.$queryRaw<{ n: number }[]>`
       SELECT COUNT(*)::int AS n FROM (
-        SELECT "customerId" FROM "Invoice" WHERE status <> 'DRAFT'
+        SELECT "customerId" FROM "Invoice" WHERE "companyId" = ${await currentCompanyId()} AND status <> 'DRAFT'
         GROUP BY "customerId" HAVING MIN(date) >= ${r.gte} AND MIN(date) < ${r.lt}
       ) t`,
     prisma.$queryRaw<{ products: number; lines: number }[]>`
       SELECT COUNT(DISTINCT it."productId")::int AS products, COUNT(*)::int AS lines
       FROM "InvoiceItem" it JOIN "Invoice" i ON i.id = it."invoiceId"
-      WHERE i.status <> 'DRAFT' AND i.date >= ${r.gte} AND i.date < ${r.lt}`,
+      WHERE i."companyId" = ${await currentCompanyId()} AND i.status <> 'DRAFT' AND i.date >= ${r.gte} AND i.date < ${r.lt}`,
     prisma.$queryRaw<{ total: number; n: number; suppliers: number }[]>`
       SELECT COALESCE(SUM(total), 0)::float8 AS total, COUNT(*)::int AS n, COUNT(DISTINCT "supplierId")::int AS suppliers
-      FROM "Purchase" WHERE date >= ${r.gte} AND date < ${r.lt}`,
+      FROM "Purchase" WHERE "companyId" = ${await currentCompanyId()} AND date >= ${r.gte} AND date < ${r.lt}`,
   ]);
   return {
     invoices: inv.n,
@@ -231,11 +232,11 @@ export async function getSalesCollectionsTrend(from: string, to: string): Promis
   const [sales, collected] = await Promise.all([
     prisma.$queryRaw<{ k: string; total: number }[]>`
       SELECT ${bucket} AS k, SUM(total)::float8 AS total
-      FROM "Invoice" WHERE status <> 'DRAFT' AND date >= ${r.gte} AND date < ${r.lt}
+      FROM "Invoice" WHERE "companyId" = ${await currentCompanyId()} AND status <> 'DRAFT' AND date >= ${r.gte} AND date < ${r.lt}
       GROUP BY 1`,
     prisma.$queryRaw<{ k: string; total: number }[]>`
       SELECT ${bucket} AS k, SUM(amount)::float8 AS total
-      FROM "Payment" WHERE "creditNoteId" IS NULL AND date >= ${r.gte} AND date < ${r.lt}
+      FROM "Payment" WHERE "companyId" = ${await currentCompanyId()} AND "creditNoteId" IS NULL AND date >= ${r.gte} AND date < ${r.lt}
       GROUP BY 1`,
   ]);
   const s = new Map(sales.map((x) => [x.k, x.total]));
@@ -260,7 +261,7 @@ export async function getRunningTotals(range: { from: string; to: string; prevFr
   const r = span(lo, hi);
   const rows = await prisma.$queryRaw<{ k: string; total: number }[]>`
     SELECT to_char(date + interval '330 minutes', 'YYYY-MM-DD') AS k, SUM(total)::float8 AS total
-    FROM "Invoice" WHERE status <> 'DRAFT' AND date >= ${r.gte} AND date < ${r.lt}
+    FROM "Invoice" WHERE "companyId" = ${await currentCompanyId()} AND status <> 'DRAFT' AND date >= ${r.gte} AND date < ${r.lt}
     GROUP BY 1`;
   const byDay = new Map(rows.map((x) => [x.k, x.total]));
   const run = (from: string, to: string) => {
@@ -281,9 +282,9 @@ export async function getFirstActivityDate(): Promise<string | null> {
   await requireUser();
   const [row] = await prisma.$queryRaw<{ d: string | null }[]>`
     SELECT to_char(LEAST(
-      (SELECT MIN(date) FROM "Invoice"),
-      (SELECT MIN(date) FROM "Purchase"),
-      (SELECT MIN(date) FROM "Payment")
+      (SELECT MIN(date) FROM "Invoice" WHERE "companyId" = ${await currentCompanyId()}),
+      (SELECT MIN(date) FROM "Purchase" WHERE "companyId" = ${await currentCompanyId()}),
+      (SELECT MIN(date) FROM "Payment" WHERE "companyId" = ${await currentCompanyId()})
     ) + interval '330 minutes', 'YYYY-MM-DD') AS d`;
   return row?.d ?? null;
 }
@@ -298,7 +299,7 @@ export async function getPaymentModes(from: string, to: string): Promise<Payment
   const r = span(from, to);
   return prisma.$queryRaw<PaymentModeShare[]>`
     SELECT COALESCE(NULLIF(btrim(mode), ''), 'Not recorded') AS mode, SUM(amount)::float8 AS amount, COUNT(*)::int AS count, MAX(amount)::float8 AS largest
-    FROM "Payment" WHERE "creditNoteId" IS NULL AND date >= ${r.gte} AND date < ${r.lt}
+    FROM "Payment" WHERE "companyId" = ${await currentCompanyId()} AND "creditNoteId" IS NULL AND date >= ${r.gte} AND date < ${r.lt}
     GROUP BY 1
     ORDER BY 2 DESC`;
 }
@@ -318,7 +319,7 @@ export async function getSalesByRoute(from: string, to: string): Promise<{ rows:
       SUM(i.total)::float8 AS total,
       COUNT(DISTINCT i."customerId")::int AS shops
     FROM "Invoice" i JOIN "Customer" c ON c.id = i."customerId"
-    WHERE i.status <> 'DRAFT' AND i.date >= ${r.gte} AND i.date < ${r.lt}
+    WHERE i."companyId" = ${await currentCompanyId()} AND i.status <> 'DRAFT' AND i.date >= ${r.gte} AND i.date < ${r.lt}
     GROUP BY 1`;
   const total = rows.reduce((s, x) => s + x.total, 0);
   const named = rows.filter((x) => x.route !== null).sort((a, b) => b.total - a.total);
@@ -366,7 +367,7 @@ export async function getOpenInvoices(limit = 300): Promise<OpenInvoice[]> {
   const rows = await prisma.$queryRaw<{ id: string; number: string; name: string; shopName: string | null; phone: string | null; balance: number; due: Date }[]>`
     SELECT i.id, i.number, c.name, c."shopName", c.phone, (i.total - i."amountPaid")::float8 AS balance, i.due
     FROM "Invoice" i JOIN "Customer" c ON c.id = i."customerId"
-    WHERE i.status IN ('SENT', 'PARTIALLY_PAID') AND i.total - i."amountPaid" > 0.004
+    WHERE i."companyId" = ${await currentCompanyId()} AND i.status IN ('SENT', 'PARTIALLY_PAID') AND i.total - i."amountPaid" > 0.004
     ORDER BY i.due ASC, i.number ASC
     LIMIT ${limit}`;
   return rows.map((r) => ({
@@ -440,16 +441,16 @@ export async function getBusinessOverview(): Promise<BusinessOverview> {
         (COUNT(*) FILTER (WHERE active))::int AS active,
         (COUNT(*) FILTER (WHERE NOT active))::int AS inactive,
         (COUNT(DISTINCT category) FILTER (WHERE active))::int AS categories
-      FROM "Product"`,
+      FROM "Product" WHERE "companyId" = ${await currentCompanyId()}`,
     prisma.$queryRaw<{ active: number; inactive: number }[]>`
       SELECT (COUNT(*) FILTER (WHERE active))::int AS active, (COUNT(*) FILTER (WHERE NOT active))::int AS inactive
-      FROM "Customer" WHERE NOT guest`,
+      FROM "Customer" WHERE "companyId" = ${await currentCompanyId()} AND NOT guest`,
     prisma.$queryRaw<{ active: number; inactive: number }[]>`
       SELECT (COUNT(*) FILTER (WHERE active))::int AS active, (COUNT(*) FILTER (WHERE NOT active))::int AS inactive
-      FROM "Supplier"`,
+      FROM "Supplier" WHERE "companyId" = ${await currentCompanyId()}`,
     prisma.$queryRaw<{ n: number }[]>`
       SELECT COUNT(DISTINCT "customerId")::int AS n FROM "Invoice"
-      WHERE status IN ('SENT', 'PARTIALLY_PAID') AND total - "amountPaid" > 0.004`,
+      WHERE "companyId" = ${await currentCompanyId()} AND status IN ('SENT', 'PARTIALLY_PAID') AND total - "amountPaid" > 0.004`,
     // Overdue only means something for sent / part-paid invoices (drafts are
     // never overdue, paid ones owe nothing) — read from those below.
     prisma.$queryRaw<{ status: StatusKey; n: number; total: number; balance: number; open: number; overdueCount: number; overdue: number; }[]>`
@@ -461,27 +462,27 @@ export async function getBusinessOverview(): Promise<BusinessOverview> {
         (COUNT(*) FILTER (WHERE total - "amountPaid" > 0.004))::int AS open,
         (COUNT(*) FILTER (WHERE due < ${todayStart} AND total - "amountPaid" > 0.004))::int AS "overdueCount",
         COALESCE(SUM(GREATEST(total - "amountPaid", 0)) FILTER (WHERE due < ${todayStart}), 0)::float8 AS overdue
-      FROM "Invoice" GROUP BY status`,
+      FROM "Invoice" WHERE "companyId" = ${await currentCompanyId()} GROUP BY status`,
     prisma.$queryRaw<{ cash: number; credit: number }[]>`
       SELECT
         COALESCE(SUM(p.amount) FILTER (WHERE p."creditNoteId" IS NULL), 0)::float8 AS cash,
         COALESCE(SUM(p.amount) FILTER (WHERE p."creditNoteId" IS NOT NULL), 0)::float8 AS credit
       FROM "Payment" p JOIN "Invoice" i ON i.id = p."invoiceId"
-      WHERE i.status <> 'DRAFT'`,
+      WHERE i."companyId" = ${await currentCompanyId()} AND i.status <> 'DRAFT'`,
     prisma.$queryRaw<{ total: number; n: number }[]>`
-      SELECT COALESCE(SUM(total), 0)::float8 AS total, COUNT(*)::int AS n FROM "CreditNote"`,
+      SELECT COALESCE(SUM(total), 0)::float8 AS total, COUNT(*)::int AS n FROM "CreditNote" WHERE "companyId" = ${await currentCompanyId()}`,
     prisma.$queryRaw<{ total: number; n: number; suppliers: number }[]>`
-      SELECT COALESCE(SUM(total), 0)::float8 AS total, COUNT(*)::int AS n, COUNT(DISTINCT "supplierId")::int AS suppliers FROM "Purchase"`,
+      SELECT COALESCE(SUM(total), 0)::float8 AS total, COUNT(*)::int AS n, COUNT(DISTINCT "supplierId")::int AS suppliers FROM "Purchase" WHERE "companyId" = ${await currentCompanyId()}`,
     // Dates are stored at UTC midnight of their calendar date, so ::date is
     // that calendar date; today's IST date comes in as a string.
     prisma.$queryRaw<{ days: number | null }[]>`
       SELECT MAX(${today}::date - due::date)::int AS days FROM "Invoice"
-      WHERE status IN ('SENT', 'PARTIALLY_PAID') AND total - "amountPaid" > 0.004 AND due < ${todayStart}`,
+      WHERE "companyId" = ${await currentCompanyId()} AND status IN ('SENT', 'PARTIALLY_PAID') AND total - "amountPaid" > 0.004 AND due < ${todayStart}`,
     prisma.$queryRaw<{ avgDays: number | null; n: number; onTime: number }[]>`
       WITH f AS (
         SELECT i.date, i.due, MAX(p.date) AS "paidAt"
         FROM "Invoice" i JOIN "Payment" p ON p."invoiceId" = i.id
-        WHERE i.status = 'PAID'
+        WHERE i."companyId" = ${await currentCompanyId()} AND i.status = 'PAID'
         GROUP BY i.id
       )
       SELECT

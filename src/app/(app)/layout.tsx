@@ -9,10 +9,11 @@ import { CurrentUserProvider } from '@/components/current-user';
 import { getCompany } from '@/lib/get-company';
 import { requireUser } from '@/lib/session';
 import { themeStyleTag } from '@/lib/theme-presets';
+import { ModulesProvider } from '@/components/modules/modules-provider';
 
 // Installed-app look (see src/app/manifest.ts): the phone's status bar takes
 // the brand red, and iOS — which ignores most of the manifest — opens a
-// home-screen launch full screen under the short "ASB" name instead of as a
+// home-screen launch full screen under the short "Invozy" name instead of as a
 // Safari tab. Set here rather than in the root layout so it only applies
 // where the app is actually used (and installed from).
 export const viewport: Viewport = {
@@ -20,7 +21,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  appleWebApp: { capable: true, title: 'ASB', statusBarStyle: 'default' },
+  appleWebApp: { capable: true, title: 'Invozy', statusBarStyle: 'default' },
 };
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -41,6 +42,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     // Every client component below can read the signed-in login (name, role)
     // via useCurrentUser() — e.g. to hide owner-only buttons from staff.
     <CurrentUserProvider user={{ id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role }}>
+      {/* Modules the platform admin switched off for this company (src/lib/modules.ts). */}
+      <ModulesProvider disabled={company.disabledModules}>
       <div className="flex min-h-screen flex-col">
         {/* Per-company theme color override — see src/lib/theme-presets.ts */}
         <style dangerouslySetInnerHTML={{ __html: themeStyleTag(company.themeColor) }} />
@@ -60,6 +63,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </div>
         <BottomNav />
       </div>
+      </ModulesProvider>
     </CurrentUserProvider>
   );
 }

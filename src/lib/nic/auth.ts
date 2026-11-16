@@ -1,13 +1,26 @@
+import { createHash } from 'node:crypto';
 import { rsaEncrypt, aesDecrypt, randomAppKey } from './crypto';
 import type { NicResult, NicCompanyConfig } from './types';
+import { currentCompanyId } from '../tenant';
 
 type Session = { sek: string; authToken: string; expiresAt: number };
 
 // In-memory only — NIC sessions are valid for hours, and re-authenticating
 // on a cold start (server restart/redeploy) is cheap and always safe. Keyed
-// by `${baseUrl}:${gstin}` so e-Invoice and e-Way Bill (different base URLs,
-// separate auth) never collide.
+// by base URL (e-Invoice and e-Way Bill authenticate separately), the company
+// in scope, AND a hash of the full credential set. A GSTIN alone isn't a
+// safe key on a multi-company platform: it's free text any company can set
+// and it prints on every invoice, so keying on it would let one company ride
+// on another's authenticated session. Changing credentials also simply
+// starts a new session.
 const sessions = new Map<string, Session>();
+
+async function sessionKey(baseUrl: string, config: NicCompanyConfig): Promise<string> {
+  const creds = createHash('sha256')
+    .update([config.gstin, config.username, config.password, config.clientId, config.clientSecret].join('\u0000'))
+    .digest('base64url');
+  return `${baseUrl}:${await currentCompanyId()}:${creds}`;
+}
 
 /**
  * Shared NIC authenticate handshake — RSA-encrypt (password, a fresh AES
@@ -16,7 +29,7 @@ const sessions = new Map<string, Session>();
  * TODO(nic-sandbox) caveat on the exact padding/mode.
  */
 export async function authenticate(baseUrl: string, config: NicCompanyConfig): Promise<NicResult<Session>> {
-  const cacheKey = `${baseUrl}:${config.gstin}`;
+  const cacheKey = await sessionKey(baseUrl, config);
   const cached = sessions.get(cacheKey);
   if (cached && cached.expiresAt > Date.now() + 60_000) return { ok: true, data: cached };
 

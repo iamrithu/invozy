@@ -218,8 +218,12 @@ const CATEGORY_ICON: Record<string, React.ComponentType<{ size?: number }>> = {
 };
 
 // Recovery-only local draft for a brand-new invoice — survives an accidental
-// refresh/close of the tab until it's actually saved.
-const DRAFT_KEY = 'invozy_invoice_draft';
+// refresh/close of the tab until it's actually saved. Kept per login (a login
+// belongs to one company), so a shared browser never shows one company's
+// unsaved bill — customer details and all — to the next company that signs in.
+const DRAFT_KEY_PREFIX = 'invozy_invoice_draft';
+/** The pre-multi-company key, shared by everyone on the browser — removed on sight. */
+const LEGACY_DRAFT_KEY = 'invozy_invoice_draft';
 
 const sameUnit = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 const clampPct = (v: number) => Math.min(Math.max(Number.isFinite(v) ? v : 0, 0), 100);
@@ -248,7 +252,8 @@ export function BuilderClient({
   const router = useRouter();
   const queryClient = useQueryClient();
   // Deletes are owner-only on the server; staff don't see the buttons.
-  const { isOwner } = useCurrentUser();
+  const { isOwner, id: currentUserId } = useCurrentUser();
+  const DRAFT_KEY = `${DRAFT_KEY_PREFIX}:${currentUserId}`;
   const [mode, setMode] = useState<'edit' | 'preview'>(initialMode);
   const [customer, setCustomer] = useState<Customer | null>((editInvoice?.customer as Customer) ?? null);
   const [custQuery, setCustQuery] = useState('');
@@ -358,6 +363,7 @@ export function BuilderClient({
       return;
     }
     try {
+      localStorage.removeItem(LEGACY_DRAFT_KEY);
       const raw = localStorage.getItem(DRAFT_KEY);
       if (raw) {
         const draft = JSON.parse(raw);

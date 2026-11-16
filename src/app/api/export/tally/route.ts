@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { COMPANY_ID } from '@/lib/company-id';
+import { currentCompanyId } from '@/lib/tenant';
 import { exportFileName } from '@/lib/csv';
 import { customerDisplayName } from '@/lib/customer';
 import { buildTallyMastersXml, buildTallyVouchersXml, resolveTallyLedgers, type TallyDoc, type TallyParty } from '@/lib/tally';
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
   try {
     const customerSelect = { name: true, shopName: true, gstin: true, state: true, address: true, pincode: true } as const;
     const [company, invoices, creditNotes] = await Promise.all([
-      prisma.company.findUnique({ where: { id: COMPANY_ID }, select: { tallyLedgers: true } }),
+      prisma.company.findUnique({ where: { id: await currentCompanyId() }, select: { tallyLedgers: true } }),
       prisma.invoice.findMany({
         where: { status: { not: 'DRAFT' }, ...dateWhere },
         orderBy: [{ date: 'asc' }, { number: 'asc' }],

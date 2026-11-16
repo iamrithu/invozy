@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
-import { COMPANY_ID } from '@/lib/company-id';
+import { currentCompanyId } from '@/lib/tenant';
 import { getAppSettings } from '@/lib/settings';
-import { verifySignedToken } from '@/lib/signed-token';
+import { authorizeSignedPage } from '@/lib/signed-request';
 import { computeInvoiceTotals } from '@/lib/invoice-totals';
 import { isGstLayout } from '@/lib/invoice-template';
 import { qrDataUrl, upiQrDataUrl } from '@/lib/qr';
@@ -33,14 +33,14 @@ const isoDate = (d: Date) => d.toISOString().slice(0, 10);
  */
 export default async function PrintInvoicePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ t?: string | string[] }> }) {
   const [{ id }, { t }] = await Promise.all([params, searchParams]);
-  if (verifySignedToken('print-invoice', typeof t === 'string' ? t : null) !== id) notFound();
+  if (!(await authorizeSignedPage('print-invoice', typeof t === 'string' ? t : null, id))) notFound();
 
   const [invoice, company, settings] = await Promise.all([
     prisma.invoice.findUnique({
       where: { id },
       include: { customer: true, items: { include: { product: { select: { packQty: true } } } } },
     }),
-    prisma.company.findUnique({ where: { id: COMPANY_ID } }),
+    prisma.company.findUnique({ where: { id: await currentCompanyId() } }),
     getAppSettings(),
   ]);
   if (!invoice || !company) notFound();

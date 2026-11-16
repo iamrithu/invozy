@@ -19,7 +19,7 @@ const PRINT_TOKEN_TTL_S = 120;
  */
 export async function buildMonthlyReportPdf(month: string, opts: { origin?: string } = {}): Promise<Buffer> {
   if (!isReportMonth(month)) throw new Error(`Monthly report: "${month}" is not a YYYY-MM month.`);
-  const token = createSignedToken('print-monthly-report', month, PRINT_TOKEN_TTL_S);
+  const token = await createSignedToken('print-monthly-report', month, PRINT_TOKEN_TTL_S);
   return renderPrintPage(`/print/monthly-report?m=${month}&t=${encodeURIComponent(token)}`, {
     origin: opts.origin,
     footerLeft: `Monthly report - ${monthLabel(month)}`,

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma';
-import { COMPANY_ID } from '@/lib/company-id';
+import { currentCompanyId } from '@/lib/tenant';
 import type { Gstr1Data, Gstr1Doc } from '@/lib/gstr1';
 import type { ExportRange } from '../export-utils';
 
@@ -24,7 +24,7 @@ export async function loadGstr1Data(range: ExportRange): Promise<Gstr1Data> {
   const dateWhere = range.dateWhere ? { date: range.dateWhere } : {};
   const party = { select: { name: true, shopName: true, gstin: true, state: true } } as const;
   const [company, invoices, creditNotes, invoiceNumbers, creditNoteNumbers] = await Promise.all([
-    prisma.company.findUniqueOrThrow({ where: { id: COMPANY_ID }, select: { defaultHsn: true } }),
+    prisma.company.findUniqueOrThrow({ where: { id: await currentCompanyId() }, select: { defaultHsn: true } }),
     prisma.invoice.findMany({
       where: { status: { not: 'DRAFT' }, ...dateWhere },
       orderBy: [{ date: 'asc' }, { number: 'asc' }],

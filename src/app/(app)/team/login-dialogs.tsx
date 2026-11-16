@@ -11,6 +11,7 @@ import { FormField, FormGrid, FormSection, FormSheet, FormSheetFrame, Initials, 
 import { Button } from '@/components/ui/button';
 import { createLogin, updateLogin, resetLoginPassword, type TeamMember, type TeamRole } from '@/actions/team';
 import { userLabel } from '@/components/current-user';
+import { APP_NAME } from '@/lib/brand';
 
 // No 0/O, 1/l/I — this password gets read out over the phone or copied off
 // a WhatsApp message by someone who'll type it on a phone keyboard.
@@ -309,7 +310,7 @@ export function ResetPasswordDialog({
 }
 
 function credentialsMessage(c: Credentials) {
-  return `Your ASB login\nSign in with: ${c.signInWith}\nPassword: ${c.password}\n\nPlease change the password after you sign in (My account → Security).`;
+  return `Your ${APP_NAME} login\nSign in with: ${c.signInWith}\nPassword: ${c.password}\n\nPlease change the password after you sign in (My account → Security).`;
 }
 
 function useCopyCredentials(credentials: Credentials) {

@@ -14,6 +14,8 @@ import { InsufficientStockError, lineStockQuantities, postStockChanges, sumByPro
 import { round6 } from '@/lib/stock-units';
 import { deleteUploadedImage, isOwnUpload, saveUploadedDocument } from '@/lib/uploads';
 import { computePurchaseTotals, PURCHASE_ATTACHMENT_LIMIT } from '@/components/purchases/purchase-math';
+import { currentCompanyId } from '@/lib/tenant';
+import { requireModule } from '@/lib/require-module';
 
 // Supplier bills. Saving one adds its lines to stock (PURCHASE movements);
 // editing posts only the difference against what the bill added before
@@ -45,7 +47,8 @@ const PurchaseLineSchema = z.object({
 });
 
 const AttachmentSchema = z.object({
-  url: z.string().refine((u) => isOwnUpload(u, 'purchases'), 'An attachment didn’t upload properly. Remove it and add it again.'),
+  // Checked against the company's own upload folder in savePurchase.
+  url: z.string().min(1),
   name: z.string().trim().min(1).max(200),
   contentType: z.string().max(100),
   size: z.coerce.number().int().min(0),
@@ -115,6 +118,7 @@ export async function listPurchasesPage(opts?: {
   page?: number;
   pageSize?: number;
 }): Promise<{ items: PurchaseListItem[]; total: number }> {
+  await requireModule('purchases');
   await requireUser();
   const page = Math.max(opts?.page ?? 1, 1);
   const pageSize = opts?.pageSize ?? 20;
@@ -155,6 +159,7 @@ export async function listPurchasesPage(opts?: {
 /** This month's purchases (IST calendar month) — the header strip on the
  * Purchases list: how much was bought and how much input GST it carries. */
 export async function getPurchaseSummary(): Promise<{ monthLabel: string; total: number; inputGst: number; count: number }> {
+  await requireModule('purchases');
   await requireUser();
   const today = todayIst();
   const start = istDayRangeUtc(`${today.slice(0, 7)}-01`).gte;
@@ -173,6 +178,7 @@ export async function getPurchaseSummary(): Promise<{ monthLabel: string; total:
 
 /** One bill, shaped for the purchase form. */
 export async function getPurchase(id: string): Promise<PurchaseDetail | null> {
+  await requireModule('purchases');
   await requireUser();
   const p = await prisma.purchase.findUnique({
     where: { id },
@@ -204,6 +210,7 @@ export async function getPurchase(id: string): Promise<PurchaseDetail | null> {
  * never happens, the form hands it to discardPurchaseUploads. */
 export async function uploadPurchaseAttachment(formData: FormData): Promise<ActionResult<{ attachment: PurchaseAttachmentInfo }>> {
   try {
+    await requireModule('purchases');
     await requireUser();
     const file = formData.get('file');
     if (!(file instanceof File) || file.size === 0) return { error: 'Pick a file to attach.' };
@@ -219,8 +226,10 @@ export async function uploadPurchaseAttachment(formData: FormData): Promise<Acti
  * only go through savePurchase/deletePurchase. */
 export async function discardPurchaseUploads(urls: string[]): Promise<ActionResult> {
   try {
+    await requireModule('purchases');
     await requireUser();
-    const own = urls.filter((u) => isOwnUpload(u, 'purchases'));
+    const companyId = await currentCompanyId();
+    const own = urls.filter((u) => isOwnUpload(u, 'purchases', companyId));
     if (!own.length) return {};
     const onBills = await prisma.purchaseAttachment.findMany({ where: { url: { in: own } }, select: { url: true } });
     const keep = new Set(onBills.map((a) => a.url));
@@ -235,11 +244,12 @@ export async function discardPurchaseUploads(urls: string[]): Promise<ActionResu
  * purchase form pre-fills a new line with it, since supplier prices rarely
  * change bill to bill. Keyed productId → lower-cased unit. */
 export async function getLastPurchaseRates(): Promise<Record<string, Record<string, { rate: number; gstRate: number }>>> {
+  await requireModule('purchases');
   await requireUser();
   const rows = await prisma.$queryRaw<{ productId: string; unit: string; rate: unknown; gstRate: unknown }[]>(Prisma.sql`
     SELECT DISTINCT ON (pi."productId", lower(pi."unit")) pi."productId", lower(pi."unit") AS "unit", pi."rate", pi."gstRate"
     FROM "PurchaseItem" pi JOIN "Purchase" p ON p."id" = pi."purchaseId"
-    WHERE pi."productId" IS NOT NULL
+    WHERE p."companyId" = ${await currentCompanyId()} AND pi."productId" IS NOT NULL
     ORDER BY pi."productId", lower(pi."unit"), p."date" DESC, p."createdAt" DESC`);
   const out: Record<string, Record<string, { rate: number; gstRate: number }>> = {};
   for (const r of rows) (out[r.productId] ??= {})[r.unit] = { rate: Number(r.rate), gstRate: Number(r.gstRate) };
@@ -252,8 +262,13 @@ export async function getLastPurchaseRates(): Promise<Record<string, Record<stri
  * editing the same bill at once can't both post the same difference. */
 export async function savePurchase(id: string | null, input: PurchaseInput): Promise<ActionResult<{ purchaseId: string }>> {
   try {
+    await requireModule('purchases');
     const user = await requireUser();
     const parsed = PurchaseInputSchema.safeParse(input);
+    const companyId = await currentCompanyId();
+    if (parsed.success && parsed.data.attachments.some((a) => !isOwnUpload(a.url, 'purchases', companyId))) {
+      return { error: 'An attachment didn’t upload properly. Remove it and add it again.' };
+    }
     if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Check the bill.' };
     const data = parsed.data;
 
@@ -288,7 +303,7 @@ export async function savePurchase(id: string | null, input: PurchaseInput): Pro
     const purchaseId = await prisma.$transaction(async (tx) => {
       let before = new Map<string, number>();
       if (id) {
-        await tx.$queryRaw`SELECT id FROM "Purchase" WHERE id = ${id} FOR UPDATE`;
+        await tx.$queryRaw`SELECT id FROM "Purchase" WHERE id = ${id} AND "companyId" = ${await currentCompanyId()} FOR UPDATE`;
         const oldItems = await tx.purchaseItem.findMany({ where: { purchaseId: id }, select: { productId: true, stockQty: true } });
         before = sumByProduct(oldItems);
         await tx.purchaseItem.deleteMany({ where: { purchaseId: id } });
@@ -374,9 +389,10 @@ export async function savePurchase(id: string | null, input: PurchaseInput): Pro
  * bill number as the reference). Its attached files are deleted too. */
 export async function deletePurchase(id: string): Promise<ActionResult> {
   try {
+    await requireModule('purchases');
     const user = await requireOwner();
     const deleted = await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "Purchase" WHERE id = ${id} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM "Purchase" WHERE id = ${id} AND "companyId" = ${await currentCompanyId()} FOR UPDATE`;
       const p = await tx.purchase.findUnique({
         where: { id },
         include: { supplier: { select: { name: true } }, items: { select: { productId: true, stockQty: true } }, attachments: { select: { url: true } } },

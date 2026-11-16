@@ -1,8 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './prisma';
+import { currentCompanyId } from './tenant';
 import { DEFAULT_PDF_LAYOUT, normalizePdfLayout, type PdfLayout } from './pdf-layout';
 
-// Company-wide settings kept in the AppSetting key/value table rather than
+// Per-company settings kept in the AppSetting key/value table rather than
 // as Company columns. The point is deploy safety: code ships to Vercel the
 // moment `main` is pushed, but the migration that creates AppSetting only
 // lands when the owner runs `npm run db:deploy`. A missing *column* on
@@ -66,7 +67,10 @@ export async function getAppSettings(): Promise<AppSettings> {
 export async function setAppSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]): Promise<void> {
   try {
     if (value === null) await prisma.appSetting.deleteMany({ where: { key: KEYS[key] } });
-    else await prisma.appSetting.upsert({ where: { key: KEYS[key] }, create: { key: KEYS[key], value: value as Prisma.InputJsonValue }, update: { value: value as Prisma.InputJsonValue } });
+    else {
+      const id = { companyId: await currentCompanyId(), key: KEYS[key] };
+      await prisma.appSetting.upsert({ where: { companyId_key: id }, create: { key: KEYS[key], value: value as Prisma.InputJsonValue }, update: { value: value as Prisma.InputJsonValue } });
+    }
   } catch (err) {
     if (isMissingTable(err)) throw new Error('This setting needs the latest database update. Run `npm run db:deploy`, then try again.');
     throw err;
@@ -77,7 +81,7 @@ export async function setAppSetting<K extends keyof AppSettings>(key: K, value: 
  * opt-out). Defaulted, never throwing on reads. */
 export async function getUserFlag(userId: string, name: string, fallback: boolean): Promise<boolean> {
   try {
-    const row = await prisma.appSetting.findUnique({ where: { key: `user.${userId}.${name}` } });
+    const row = await prisma.appSetting.findUnique({ where: { companyId_key: { companyId: await currentCompanyId(), key: `user.${userId}.${name}` } } });
     return typeof row?.value === 'boolean' ? row.value : fallback;
   } catch (err) {
     warnMissing(err);
@@ -88,7 +92,7 @@ export async function getUserFlag(userId: string, name: string, fallback: boolea
 export async function setUserFlag(userId: string, name: string, value: boolean): Promise<void> {
   try {
     const key = `user.${userId}.${name}`;
-    await prisma.appSetting.upsert({ where: { key }, create: { key, value }, update: { value } });
+    await prisma.appSetting.upsert({ where: { companyId_key: { companyId: await currentCompanyId(), key } }, create: { key, value }, update: { value } });
   } catch (err) {
     if (isMissingTable(err)) throw new Error('This setting needs the latest database update. Run `npm run db:deploy`, then try again.');
     throw err;

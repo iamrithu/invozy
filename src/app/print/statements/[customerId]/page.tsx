@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getAppSettings } from '@/lib/settings';
-import { verifySignedToken } from '@/lib/signed-token';
+import { authorizeSignedPage } from '@/lib/signed-request';
 import { loadPrintLetterhead } from '@/components/print/print-data';
 import { buildCustomerStatement } from '@/components/print/statement-data';
 import { PrintPageShell } from '@/components/print/print-page-shell';
@@ -22,7 +22,7 @@ const one = (v: string | string[] | undefined) => (typeof v === 'string' ? v : n
  */
 export default async function PrintStatementPage({ params, searchParams }: { params: Promise<{ customerId: string }>; searchParams: Promise<Search> }) {
   const [{ customerId }, query] = await Promise.all([params, searchParams]);
-  if (verifySignedToken('print-statement', one(query.t)) !== customerId) notFound();
+  if (!(await authorizeSignedPage('print-statement', one(query.t), customerId))) notFound();
 
   const [statement, company, settings] = await Promise.all([buildCustomerStatement(customerId, one(query.from), one(query.to)), loadPrintLetterhead(), getAppSettings()]);
   if (!statement || !company) notFound();

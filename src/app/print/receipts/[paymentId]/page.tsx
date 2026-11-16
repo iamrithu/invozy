@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getAppSettings } from '@/lib/settings';
-import { verifySignedToken } from '@/lib/signed-token';
+import { authorizeSignedPage } from '@/lib/signed-request';
 import { loadPrintLetterhead, loadReceiptDocument } from '@/components/print/print-data';
 import { PrintPageShell } from '@/components/print/print-page-shell';
 import { ReceiptDocument } from '@/components/print/receipt-document';
@@ -18,7 +18,7 @@ export const metadata: Metadata = { title: 'Payment receipt', robots: { index: f
  */
 export default async function PrintReceiptPage({ params, searchParams }: { params: Promise<{ paymentId: string }>; searchParams: Promise<{ t?: string | string[] }> }) {
   const [{ paymentId }, { t }] = await Promise.all([params, searchParams]);
-  if (verifySignedToken('print-receipt', typeof t === 'string' ? t : null) !== paymentId) notFound();
+  if (!(await authorizeSignedPage('print-receipt', typeof t === 'string' ? t : null, paymentId))) notFound();
 
   const [receipt, company, settings] = await Promise.all([loadReceiptDocument(paymentId), loadPrintLetterhead(), getAppSettings()]);
   if (!receipt || receipt.creditNoteId || !company) notFound();

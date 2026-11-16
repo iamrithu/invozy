@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
 import { revalidatePath } from 'next/cache';
 import { prisma, type Tx } from '@/lib/prisma';
-import { COMPANY_ID } from '@/lib/company-id';
+import { currentCompanyId } from '@/lib/tenant';
 import { requireOwner, requireUser } from '@/lib/session';
 import { deriveStatus, fmtInr, formatInvoiceNumber, formatUnit } from '@/lib/gst';
 import { istDayRangeUtc } from '@/lib/dates';
@@ -24,6 +24,7 @@ import {
   type CreditReasonId,
 } from '@/components/credit-notes/credit-note-math';
 import { fmtQty, istDateString } from '@/components/print/format';
+import { requireModule } from '@/lib/require-module';
 
 // GST credit notes against an invoice — goods taken back, or a price
 // corrected after the fact. A credit note's value is set off against its
@@ -46,7 +47,7 @@ const TX_OPTIONS = { timeout: 20_000, maxWait: 10_000 };
  * transaction that inserts the credit note, so a failed save releases it. */
 async function claimCreditNoteNumber(tx: Pick<Tx, 'company'>) {
   const c = await tx.company.update({
-    where: { id: COMPANY_ID },
+    where: { id: await currentCompanyId() },
     data: { nextCreditNoteNo: { increment: 1 } },
     select: { creditNotePrefix: true, invoiceFY: true, nextCreditNoteNo: true },
   });
@@ -57,7 +58,7 @@ async function claimCreditNoteNumber(tx: Pick<Tx, 'company'>) {
  * credit notes (or a credit note and a payment) on the same invoice can't
  * both read the same "already credited" / "balance due" figures. */
 async function lockInvoice(tx: Tx, invoiceId: string) {
-  await tx.$queryRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
+  await tx.$queryRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} AND "companyId" = ${await currentCompanyId()} FOR UPDATE`;
 }
 
 /** Re-derives an invoice's amount paid and status from its payments — after
@@ -75,7 +76,7 @@ async function refreshInvoicePaid(tx: Tx, invoiceId: string) {
 /** A credit note's row lock plus what's still open on it: its total less
  * every "Credit note" payment it made and every refund paid out of it. */
 async function lockOpenCredit(tx: Tx, creditNoteId: string) {
-  await tx.$queryRaw`SELECT id FROM "CreditNote" WHERE id = ${creditNoteId} FOR UPDATE`;
+  await tx.$queryRaw`SELECT id FROM "CreditNote" WHERE id = ${creditNoteId} AND "companyId" = ${await currentCompanyId()} FOR UPDATE`;
   const cn = await tx.creditNote.findUnique({
     where: { id: creditNoteId },
     select: { number: true, total: true, customerId: true, invoiceId: true, customer: { select: { name: true, shopName: true } } },
@@ -206,6 +207,7 @@ function toSource(inv: SourceRow): CreditNoteSource {
  * so the draft itself should just be edited. */
 export async function getCreditNoteSource(invoiceId: string): Promise<{ error?: string; source?: CreditNoteSource }> {
   try {
+    await requireModule('returns');
     await requireUser();
     const inv = await prisma.invoice.findUnique({ where: { id: invoiceId }, select: SOURCE_SELECT });
     if (!inv) return { error: 'Invoice not found. It may have been deleted.' };
@@ -219,6 +221,7 @@ export async function getCreditNoteSource(invoiceId: string): Promise<{ error?: 
 /** Invoice picker for /credit-notes/new without `?invoice=` — sent, part-
  * paid and paid invoices matching the number or customer, newest first. */
 export async function searchInvoicesForCreditNote(term: string) {
+  await requireModule('returns');
   await requireUser();
   const q = term.trim();
   const rows = await prisma.invoice.findMany({
@@ -291,6 +294,7 @@ export type CreditNoteResult = { error?: string; creditNoteId?: string; number?:
  * what's still open on it. Totals and every limit are recomputed here; the
  * client's figures are only ever a preview. */
 export async function createCreditNote(input: CreditNoteInput): Promise<CreditNoteResult> {
+  await requireModule('returns');
   const parsed = CreditNoteInputSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Check the credit note and try again.' };
   const data = parsed.data;
@@ -455,6 +459,7 @@ export async function createCreditNote(input: CreditNoteInput): Promise<CreditNo
  * invoices' amount paid and status from the payments that remain. */
 export async function deleteCreditNote(id: string): Promise<{ error?: string }> {
   try {
+    await requireModule('returns');
     const user = await requireOwner();
     const cn = await prisma.creditNote.findUnique({
       where: { id },
@@ -557,6 +562,7 @@ export type CreditNoteListRow = {
 /** DB-level search/date filter/pagination for the Credit notes list —
  * search matches the note number, invoice number or customer. */
 export async function listCreditNotesPage(opts: CreditNoteListFilters = {}): Promise<{ items: CreditNoteListRow[]; total: number }> {
+  await requireModule('returns');
   await requireUser();
   const page = Math.max(opts.page ?? 1, 1);
   const pageSize = opts.pageSize ?? 20;
@@ -632,6 +638,7 @@ const RefundSchema = z.object({
 
 /** Pays a customer back out of a credit note's open credit. */
 export async function recordRefund(creditNoteId: string, input: z.input<typeof RefundSchema>): Promise<{ error?: string }> {
+  await requireModule('returns');
   const parsed = RefundSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Check the refund' };
   const { amount, date, mode, reference } = parsed.data;
@@ -656,6 +663,7 @@ export async function recordRefund(creditNoteId: string, input: z.input<typeof R
  * credit again. */
 export async function deleteRefund(refundId: string): Promise<{ error?: string }> {
   try {
+    await requireModule('returns');
     const user = await requireOwner();
     const r = await prisma.refund.findUnique({ where: { id: refundId }, select: { amount: true, mode: true, creditNoteId: true, creditNote: { select: { number: true } } } });
     if (!r) return { error: 'Refund not found. It may already have been deleted.' };
@@ -674,6 +682,7 @@ export type CreditTargetInvoice = { id: string; number: string; date: string; to
 /** The customer's other unpaid invoices a credit note's open credit can be
  * adjusted against, oldest first. */
 export async function listInvoicesForCredit(creditNoteId: string): Promise<CreditTargetInvoice[]> {
+  await requireModule('returns');
   await requireUser();
   const cn = await prisma.creditNote.findUnique({ where: { id: creditNoteId }, select: { customerId: true } });
   if (!cn) return [];
@@ -691,6 +700,7 @@ export async function listInvoicesForCredit(creditNoteId: string): Promise<Credi
  * of the same customer — recorded on that invoice as a "Credit note"
  * payment, exactly like the note's set-off against its own invoice. */
 export async function applyCreditToInvoice(creditNoteId: string, invoiceId: string, amount: number): Promise<{ error?: string }> {
+  await requireModule('returns');
   if (!(amount > 0)) return { error: 'Enter the amount to adjust' };
   try {
     const user = await requireUser();
@@ -725,6 +735,7 @@ export async function applyCreditToInvoice(creditNoteId: string, invoiceId: stri
  * against the note's own invoice goes only with the note itself). */
 export async function removeCreditAdjustment(paymentId: string): Promise<{ error?: string }> {
   try {
+    await requireModule('returns');
     const user = await requireOwner();
     const p = await prisma.payment.findUnique({
       where: { id: paymentId },

@@ -11,11 +11,11 @@ export const maxDuration = 60;
  * Content-Encoding) so the browser saves it as-is instead of unzipping it.
  */
 export async function GET() {
-  const denied = await ownerGate();
+  const denied = await ownerGate(null);
   if (denied) return denied;
   try {
     const { gz, createdAt } = await buildBackup();
-    const name = `asb-backup-${backupDate(createdAt)}.json.gz`;
+    const name = `invozy-backup-${backupDate(createdAt)}.json.gz`;
     return new Response(new Uint8Array(gz), {
       headers: {
         'Content-Type': 'application/gzip',

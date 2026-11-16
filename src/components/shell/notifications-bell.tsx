@@ -12,6 +12,7 @@ import { useSendDraft, useWhatsAppShare } from '@/hooks/use-invoices';
 import { Skeleton } from '@/components/ui/skeleton';
 import { fmtInr } from '@/lib/gst';
 import { cn } from '@/lib/utils';
+import { APP_NAME } from '@/lib/brand';
 
 // "Read" is stored per login on the server (so a phone and a laptop agree),
 // with this browser's localStorage as the fallback while the server table
@@ -196,7 +197,7 @@ function summaryText(items: NotificationItem[]): string {
     const top = n.entries.slice(0, 3).map((e) => `   • ${e.label}${e.value ? ` — ${e.value}` : ''}`);
     return [`▸ ${n.title}`, ...top].join('\n');
   });
-  return `ASB — needs attention (${new Date().toLocaleDateString('en-IN')})\n\n${lines.join('\n\n')}`;
+  return `${APP_NAME} — needs attention (${new Date().toLocaleDateString('en-IN')})\n\n${lines.join('\n\n')}`;
 }
 
 function PanelFooter({ items, dailyDigest, onDigestChange }: { items: NotificationItem[]; dailyDigest: boolean | null; onDigestChange: (v: boolean) => void }) {

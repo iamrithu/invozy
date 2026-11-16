@@ -17,6 +17,8 @@ import { formatStock } from '@/lib/stock-units';
 import { schedulePdfBuild } from '@/lib/invoice-pdf';
 import { invoiceShareToken } from '@/lib/signed-token';
 import { deleteUploadedImage } from '@/lib/uploads';
+import { currentCompanyId } from '@/lib/tenant';
+import { configuredSiteOrigin } from '@/lib/site-origin';
 
 const LineSchema = z.object({
   // Nullable — an ad-hoc/custom line item isn't backed by a catalog Product.
@@ -1011,6 +1013,8 @@ export async function listOverdueForReminders(): Promise<OverdueReminder[]> {
 }
 
 async function requestOrigin() {
+  const configured = configuredSiteOrigin();
+  if (configured) return configured;
   const h = await headers();
   const host = h.get('x-forwarded-host') ?? h.get('host');
   const proto = h.get('x-forwarded-proto') ?? (host?.startsWith('localhost') ? 'http' : 'https');
@@ -1025,7 +1029,7 @@ export async function getInvoiceShareLink(invoiceId: string): Promise<{ error?: 
     const exists = await prisma.invoice.findUnique({ where: { id: invoiceId }, select: { id: true } });
     if (!exists) return { error: 'Invoice not found' };
     schedulePdfBuild(invoiceId);
-    return { url: `${await requestOrigin()}/api/share/${invoiceShareToken(invoiceId)}` };
+    return { url: `${await requestOrigin()}/api/share/${await invoiceShareToken(invoiceId)}` };
   } catch (e) {
     return toActionError(e);
   }
@@ -1037,7 +1041,7 @@ export async function getInvoiceShareLink(invoiceId: string): Promise<{ error?: 
 export async function markReminded(invoiceId: string): Promise<{ error?: string }> {
   try {
     const user = await requireUser();
-    const n = await prisma.$executeRaw`UPDATE "Invoice" SET "lastRemindedAt" = NOW() WHERE id = ${invoiceId}`;
+    const n = await prisma.$executeRaw`UPDATE "Invoice" SET "lastRemindedAt" = NOW() WHERE id = ${invoiceId} AND "companyId" = ${await currentCompanyId()}`;
     if (!n) return { error: 'Invoice not found' };
     await logActivity({ userId: user.id, action: 'invoice.remind', entityType: 'invoice', entityId: invoiceId, summary: 'Sent a payment reminder on WhatsApp' });
     revalidatePath('/invoices');

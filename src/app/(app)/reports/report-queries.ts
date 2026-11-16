@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { COMPANY_ID } from '@/lib/company-id';
+import { currentCompanyId } from '@/lib/tenant';
 import { istDayRangeUtc, todayIst } from '@/lib/dates';
 import { customerDisplayName } from '@/lib/customer';
 import { STATUS_ORDER, STATUS_LABEL } from '@/lib/report-status';
@@ -39,8 +39,14 @@ export type ReportFilters = {
 };
 
 /** Conditions on `"Invoice" i` for the given filters. */
-function filterConds(filters: ReportFilters | undefined, { excludeDrafts }: { excludeDrafts: boolean }): Prisma.Sql[] {
-  const conds: Prisma.Sql[] = [];
+/** `<alias>."companyId" = <company in scope>` — first in every WHERE below.
+ * Raw SQL bypasses the scoped client's automatic filter (src/lib/tenant-scope.ts). */
+async function tenantCond(alias: string): Promise<Prisma.Sql> {
+  return Prisma.sql`${Prisma.raw(alias)}."companyId" = ${await currentCompanyId()}`;
+}
+
+async function filterConds(filters: ReportFilters | undefined, { excludeDrafts }: { excludeDrafts: boolean }): Promise<Prisma.Sql[]> {
+  const conds: Prisma.Sql[] = [await tenantCond('i')];
   if (excludeDrafts) conds.push(Prisma.sql`i.status <> 'DRAFT'`);
   if (filters?.customerId) conds.push(Prisma.sql`i."customerId" = ${filters.customerId}`);
   if (filters?.status && filters.status !== 'all') conds.push(Prisma.sql`i.status = ${filters.status}::"InvoiceStatus"`);
@@ -59,7 +65,7 @@ function whereSql(conds: Prisma.Sql[]): Prisma.Sql {
  * page can add them in only when asked ("Include drafts"). */
 export async function queryReportStats(filters?: ReportFilters) {
   const todayStart = istDayRangeUtc(todayIst()).gte;
-  const draftConds: Prisma.Sql[] = [Prisma.sql`i.status = 'DRAFT'`];
+  const draftConds: Prisma.Sql[] = [await tenantCond('i'), Prisma.sql`i.status = 'DRAFT'`];
   if (filters?.customerId) draftConds.push(Prisma.sql`i."customerId" = ${filters.customerId}`);
   if (filters?.dateFrom) draftConds.push(Prisma.sql`i.date >= ${istDayRangeUtc(filters.dateFrom).gte}`);
   if (filters?.dateTo) draftConds.push(Prisma.sql`i.date < ${istDayRangeUtc(filters.dateTo).lt}`);
@@ -78,7 +84,7 @@ export async function queryReportStats(filters?: ReportFilters) {
         (COUNT(*) FILTER (WHERE i.status IN ('SENT', 'PARTIALLY_PAID') AND i.due < ${todayStart} AND i.total - i."amountPaid" > 0.004))::int AS "overdueCount",
         COUNT(*)::int AS "invoiceCount"
       FROM "Invoice" i
-      ${whereSql(filterConds(filters, { excludeDrafts: true }))}
+      ${whereSql(await filterConds(filters, { excludeDrafts: true }))}
     `,
     prisma.$queryRaw<{ drafts: number; draftCount: number }[]>`
       SELECT COALESCE(SUM(i.total), 0)::float8 AS "drafts", COUNT(*)::int AS "draftCount"
@@ -188,7 +194,7 @@ export async function queryBillingTrend(filters?: ReportFilters): Promise<TrendP
   const { granularity, buckets, rangeStart, rangeEnd } = trendBuckets(filters);
 
   const fmt = granularity === 'day' ? 'YYYY-MM-DD' : 'YYYY-MM';
-  const conds = filterConds(filters, { excludeDrafts: true });
+  const conds = await filterConds(filters, { excludeDrafts: true });
   const [billedRows, collectedRows] = await Promise.all([
     prisma.$queryRaw<{ key: string; amount: number }[]>`
       SELECT to_char(i.date, ${fmt}) AS "key", SUM(i.total)::float8 AS "amount"
@@ -223,7 +229,7 @@ export async function queryStatusBreakdown(filters?: ReportFilters): Promise<Sta
       COUNT(*)::int AS "count",
       COALESCE(SUM(i.total), 0)::float8 AS "total"
     FROM "Invoice" i
-    ${whereSql(filterConds(filters, { excludeDrafts: false }))}
+    ${whereSql(await filterConds(filters, { excludeDrafts: false }))}
     GROUP BY 1
   `;
   const byStatus = new Map(rows.map((r) => [r.status, r]));
@@ -320,9 +326,9 @@ async function salesByProduct(filters?: ReportFilters) {
 
   type LineAgg = { key: string; productId: string | null; name: string; unit: string; stockQty: number; qtyNoSnapshot: number; revenue: number };
 
-  const creditConds = creditNoteConds(filters);
+  const creditConds = await creditNoteConds(filters);
   const [saleRows, returnRows] = await Promise.all([
-    prisma.$queryRaw<LineAgg[]>(lineSql(filterConds(filters, { excludeDrafts: true }))),
+    prisma.$queryRaw<LineAgg[]>(lineSql(await filterConds(filters, { excludeDrafts: true }))),
     prisma.$queryRaw<(LineAgg & { restockedStockQty: number; restockedNoSnapshot: number })[]>`
       WITH l AS (
         SELECT
@@ -386,8 +392,8 @@ async function salesByProduct(filters?: ReportFilters) {
 /** Conditions on `"CreditNote" cn` — the date range and customer from the
  * report filters. Credit notes have no status, so the status filter
  * doesn't apply to them. */
-function creditNoteConds(filters: ReportFilters | undefined): Prisma.Sql[] {
-  const conds: Prisma.Sql[] = [];
+async function creditNoteConds(filters: ReportFilters | undefined): Promise<Prisma.Sql[]> {
+  const conds: Prisma.Sql[] = [await tenantCond('cn')];
   if (filters?.customerId) conds.push(Prisma.sql`cn."customerId" = ${filters.customerId}`);
   if (filters?.dateFrom) conds.push(Prisma.sql`cn.date >= ${istDayRangeUtc(filters.dateFrom).gte}`);
   if (filters?.dateTo) conds.push(Prisma.sql`cn.date < ${istDayRangeUtc(filters.dateTo).lt}`);
@@ -407,7 +413,7 @@ export async function queryCollectedTrend(months = 6) {
   const rows = await prisma.$queryRaw<{ key: string; total: number }[]>`
     SELECT to_char(p.date, 'YYYY-MM') AS "key", SUM(p.amount)::float8 AS "total"
     FROM "Payment" p
-    WHERE p.date >= ${start}
+    WHERE p."companyId" = ${await currentCompanyId()} AND p.date >= ${start}
     GROUP BY 1
   `;
   const byKey = new Map(rows.map((r) => [r.key, r.total]));
@@ -424,7 +430,7 @@ export async function queryMonthOverMonth() {
       COALESCE(SUM(total) FILTER (WHERE to_char(date, 'YYYY-MM') = ${thisKey}), 0)::float8 AS "thisMonthTotal",
       COALESCE(SUM(total) FILTER (WHERE to_char(date, 'YYYY-MM') = ${lastKey}), 0)::float8 AS "lastMonthTotal"
     FROM "Invoice"
-    WHERE date >= ${new Date(`${lastKey}-01T00:00:00Z`)}
+    WHERE "companyId" = ${await currentCompanyId()} AND date >= ${new Date(`${lastKey}-01T00:00:00Z`)}
   `;
   return {
     thisMonthLabel: now.toLocaleDateString('en-IN', { month: 'long' }),
@@ -447,7 +453,7 @@ export async function queryTopCustomers(filters?: ReportFilters, limit?: number)
       SUM(GREATEST(i.total - i."amountPaid", 0))::float8 AS "balance",
       COUNT(*)::int AS "count"
     FROM "Invoice" i JOIN "Customer" c ON c.id = i."customerId"
-    ${whereSql(filterConds(filters, { excludeDrafts: true }))}
+    ${whereSql(await filterConds(filters, { excludeDrafts: true }))}
     GROUP BY c.id
     ORDER BY "total" DESC
     ${limit ? Prisma.sql`LIMIT ${limit}` : Prisma.empty}
@@ -483,7 +489,7 @@ export type GstSummary = {
 export async function queryGstSummary(filters?: ReportFilters): Promise<GstSummary> {
   const range = { dateFrom: filters?.dateFrom, dateTo: filters?.dateTo, customerId: filters?.customerId };
 
-  const purchaseConds: Prisma.Sql[] = [];
+  const purchaseConds: Prisma.Sql[] = [await tenantCond('p')];
   if (range.dateFrom) purchaseConds.push(Prisma.sql`p.date >= ${istDayRangeUtc(range.dateFrom).gte}`);
   if (range.dateTo) purchaseConds.push(Prisma.sql`p.date < ${istDayRangeUtc(range.dateTo).lt}`);
 
@@ -501,10 +507,10 @@ export async function queryGstSummary(filters?: ReportFilters): Promise<GstSumma
         COALESCE(SUM(i.taxable) FILTER (WHERE COALESCE(c.gstin, '') <> ''), 0)::float8 AS "b2bTaxable",
         (COUNT(*) FILTER (WHERE COALESCE(c.gstin, '') <> ''))::int AS "b2bCount"
       FROM "Invoice" i JOIN "Customer" c ON c.id = i."customerId"
-      ${whereSql(filterConds(range, { excludeDrafts: true }))}
+      ${whereSql(await filterConds(range, { excludeDrafts: true }))}
     `,
     prisma.$queryRaw<TaxHeads[]>`
-      SELECT ${heads('cn')} FROM "CreditNote" cn ${whereSql(creditNoteConds(range))}
+      SELECT ${heads('cn')} FROM "CreditNote" cn ${whereSql(await creditNoteConds(range))}
     `,
     range.customerId
       ? Promise.resolve(null)
@@ -712,7 +718,7 @@ export async function querySalesAnalysis(filters: ReportFilters | undefined, by:
   const curStart = prev ? istDayRangeUtc(filters!.dateFrom!).gte : null;
   const isCur = (doc: 'i' | 'cn') => (curStart ? Prisma.sql`(${Prisma.raw(doc)}.date >= ${curStart})` : Prisma.sql`TRUE`);
   const lineKey = salesKeySql(by, 'it', 'i');
-  const conds = whereSql(filterConds(span, { excludeDrafts: true }));
+  const conds = whereSql(await filterConds(span, { excludeDrafts: true }));
 
   type LineRow = { cur: boolean; key: string; productId: string | null; unit: string; name: string; stockQty: number; qtyNoSnapshot: number; revenue: number };
   const [lineRows, countRows, returnRows] = await Promise.all([
@@ -768,7 +774,7 @@ export async function querySalesAnalysis(filters: ReportFilters | undefined, by:
           cn.taxable AS "docTaxable",
           SUM(ci.qty * ci.rate * (1 - ci.discount / 100)) OVER (PARTITION BY ci."creditNoteId") AS "docSub"
         FROM "CreditNoteItem" ci JOIN "CreditNote" cn ON cn.id = ci."creditNoteId" LEFT JOIN "Product" p ON p.id = ci."productId"
-        ${whereSql(creditNoteConds(span))}
+        ${whereSql(await creditNoteConds(span))}
       )
       SELECT
         "cur",
@@ -984,7 +990,7 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
  * matching invoice, for "All time") to its end or today, whichever is
  * earlier, so future days in "This month" don't dilute the averages. */
 export async function querySalesByWeekday(filters?: ReportFilters): Promise<WeekdayPoint[]> {
-  const conds = whereSql(filterConds(filters, { excludeDrafts: true }));
+  const conds = whereSql(await filterConds(filters, { excludeDrafts: true }));
   const [rows, [span]] = await Promise.all([
     prisma.$queryRaw<{ dow: number; revenue: number; invoices: number }[]>`
       SELECT EXTRACT(ISODOW FROM i.date)::int AS "dow", COALESCE(SUM(i.taxable), 0)::float8 AS "revenue", COUNT(*)::int AS "invoices"
@@ -1063,7 +1069,7 @@ export type Receivables = {
  * "settled" counts credit notes adjusted against them too (amountPaid). */
 export async function queryReceivables(filters?: ReportFilters): Promise<Receivables> {
   const today = todayIst();
-  const conds = filterConds({ ...filters, status: undefined }, { excludeDrafts: true });
+  const conds = await filterConds({ ...filters, status: undefined }, { excludeDrafts: true });
 
   type Row = {
     customerId: string;
@@ -1125,7 +1131,7 @@ export async function queryReceivables(filters?: ReportFilters): Promise<Receiva
     ? await prisma.$queryRaw<{ customerId: string; last: Date }[]>`
         SELECT i."customerId" AS "customerId", MAX(p.date) AS "last"
         FROM "Payment" p JOIN "Invoice" i ON i.id = p."invoiceId"
-        WHERE p."creditNoteId" IS NULL AND i."customerId" IN (${Prisma.join(rows.map((r) => r.customerId))})
+        WHERE i."companyId" = ${await currentCompanyId()} AND p."creditNoteId" IS NULL AND i."customerId" IN (${Prisma.join(rows.map((r) => r.customerId))})
         GROUP BY 1
       `
     : [];
@@ -1213,8 +1219,8 @@ const PAYMENT_MODE_SQL = Prisma.raw(`CASE WHEN p."creditNoteId" IS NOT NULL THEN
 
 /** Conditions on `"Payment" p JOIN "Invoice" i` — the payment's own date in
  * the given range (not the invoice's), the customer filter on its invoice. */
-function paymentConds(customerId: string | undefined, range: { from?: string; to?: string }): Prisma.Sql[] {
-  const conds: Prisma.Sql[] = [Prisma.sql`i.status <> 'DRAFT'`];
+async function paymentConds(customerId: string | undefined, range: { from?: string; to?: string }): Promise<Prisma.Sql[]> {
+  const conds: Prisma.Sql[] = [await tenantCond('i'), Prisma.sql`i.status <> 'DRAFT'`];
   if (customerId) conds.push(Prisma.sql`i."customerId" = ${customerId}`);
   if (range.from) conds.push(Prisma.sql`p.date >= ${istDayRangeUtc(range.from).gte}`);
   if (range.to) conds.push(Prisma.sql`p.date < ${istDayRangeUtc(range.to).lt}`);
@@ -1228,7 +1234,7 @@ function paymentConds(customerId: string | undefined, range: { from?: string; to
 export async function queryCollections(filters?: ReportFilters): Promise<CollectionsReport> {
   const customerId = filters?.customerId;
   const range = { from: filters?.dateFrom, to: filters?.dateTo };
-  const conds = whereSql(paymentConds(customerId, range));
+  const conds = whereSql(await paymentConds(customerId, range));
   const prev = previousRange(filters);
   const { granularity, buckets, rangeStart, rangeEnd } = trendBuckets(filters);
   const fmt = granularity === 'day' ? 'YYYY-MM-DD' : 'YYYY-MM';
@@ -1250,21 +1256,21 @@ export async function queryCollections(filters?: ReportFilters): Promise<Collect
     prisma.$queryRaw<{ key: string; amount: number }[]>`
       SELECT to_char(p.date, ${fmt}) AS "key", SUM(p.amount)::float8 AS "amount"
       FROM "Payment" p JOIN "Invoice" i ON i.id = p."invoiceId"
-      ${whereSql([...paymentConds(customerId, {}), Prisma.sql`p.date >= ${rangeStart}`, Prisma.sql`p.date < ${rangeEnd}`])}
+      ${whereSql([...(await paymentConds(customerId, {})), Prisma.sql`p.date >= ${rangeStart}`, Prisma.sql`p.date < ${rangeEnd}`])}
       GROUP BY 1
     `,
     prev
       ? prisma.$queryRaw<{ amount: number }[]>`
           SELECT COALESCE(SUM(p.amount), 0)::float8 AS "amount"
           FROM "Payment" p JOIN "Invoice" i ON i.id = p."invoiceId"
-          ${whereSql(paymentConds(customerId, prev))}
+          ${whereSql(await paymentConds(customerId, prev))}
         `
       : Promise.resolve(null),
     prisma.$queryRaw<{ avgDays: number | null; n: number; onTime: number }[]>`
       WITH f AS (
         SELECT i.date, i.due, MAX(p.date) AS "paidAt"
         FROM "Invoice" i JOIN "Payment" p ON p."invoiceId" = i.id
-        WHERE i.status = 'PAID' ${customerId ? Prisma.sql`AND i."customerId" = ${customerId}` : Prisma.empty}
+        WHERE i."companyId" = ${await currentCompanyId()} AND i.status = 'PAID' ${customerId ? Prisma.sql`AND i."customerId" = ${customerId}` : Prisma.empty}
         GROUP BY i.id
       )
       SELECT
@@ -1422,19 +1428,19 @@ export async function queryInventoryInsights(filters?: ReportFilters): Promise<I
   const since = new Date(Date.now() - SALES_WINDOW_DAYS * DAY_MS);
 
   const [company, costs, sales, outflow, lastSoldRows] = await Promise.all([
-    prisma.company.findUniqueOrThrow({ where: { id: COMPANY_ID }, select: { reorderLeadDays: true } }),
+    prisma.company.findUniqueOrThrow({ where: { id: await currentCompanyId() }, select: { reorderLeadDays: true } }),
     averagePurchaseCosts(byId),
     salesByProduct(filters),
     prisma.$queryRaw<{ productId: string; qty: number }[]>`
       SELECT "productId", COALESCE(SUM(qty), 0)::float8 AS "qty"
       FROM "StockMovement"
-      WHERE type IN ('SALE', 'SALE_RETURN') AND date >= ${since} AND "productId" IN (${Prisma.join(ids)})
+      WHERE "companyId" = ${await currentCompanyId()} AND type IN ('SALE', 'SALE_RETURN') AND date >= ${since} AND "productId" IN (${Prisma.join(ids)})
       GROUP BY 1
     `,
     prisma.$queryRaw<{ productId: string; last: Date }[]>`
       SELECT it."productId" AS "productId", MAX(i.date) AS "last"
       FROM "InvoiceItem" it JOIN "Invoice" i ON i.id = it."invoiceId"
-      WHERE i.status <> 'DRAFT' AND it."productId" IN (${Prisma.join(ids)})
+      WHERE i."companyId" = ${await currentCompanyId()} AND i.status <> 'DRAFT' AND it."productId" IN (${Prisma.join(ids)})
       GROUP BY 1
     `,
   ]);

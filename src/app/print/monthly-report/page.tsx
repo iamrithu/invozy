@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { verifySignedToken } from '@/lib/signed-token';
+import { authorizeSignedPage } from '@/lib/signed-request';
 import { cn } from '@/lib/utils';
 import { loadPrintLetterhead } from '@/components/print/print-data';
 import { PrintPageShell } from '@/components/print/print-page-shell';
@@ -31,7 +31,7 @@ const one = (v: string | string[] | undefined) => (typeof v === 'string' ? v : n
 export default async function PrintMonthlyReportPage({ searchParams }: { searchParams: Promise<Search> }) {
   const query = await searchParams;
   const month = one(query.m);
-  if (!isReportMonth(month) || verifySignedToken('print-monthly-report', one(query.t)) !== month) notFound();
+  if (!isReportMonth(month) || !(await authorizeSignedPage('print-monthly-report', one(query.t), month))) notFound();
 
   const [report, company] = await Promise.all([loadMonthlyReport(month), loadPrintLetterhead()]);
   if (!company) notFound();

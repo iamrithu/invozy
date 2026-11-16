@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifySignedToken } from '@/lib/signed-token';
+import { withSignedTenant } from '@/lib/signed-request';
 import { getStoredInvoicePdf, invoicePdfFileName, PdfNotFoundError, requestPdfFromRenderer } from '@/lib/invoice-pdf';
+import { configuredSiteOrigin } from '@/lib/site-origin';
 
 export const dynamic = 'force-dynamic';
 // Only waits on the renderer when the stored copy is stale (a cold render).
@@ -18,14 +19,18 @@ export const maxDuration = 60;
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const invoiceId = verifySignedToken('share-invoice', token);
-  if (!invoiceId) return notFound();
+  // Acts for the company the link was minted for — and stops working if
+  // that company is suspended.
+  const res = await withSignedTenant('share-invoice', token, null, ({ id }) => serveInvoice(req, id));
+  return res ?? notFound();
+}
 
+async function serveInvoice(req: NextRequest, invoiceId: string) {
   try {
     const stored = await getStoredInvoicePdf(invoiceId);
     if (stored) return pdfResponse(stored.buffer, invoicePdfFileName(stored.number));
 
-    const res = await requestPdfFromRenderer(invoiceId, { origin: req.nextUrl.origin, wait: true });
+    const res = await requestPdfFromRenderer(invoiceId, { origin: (configuredSiteOrigin() ?? req.nextUrl.origin), wait: true });
     if (res.status === 404) return notFound();
     if (!res.ok) throw new Error(`renderer answered HTTP ${res.status}`);
     const pdf = Buffer.from(await res.arrayBuffer());

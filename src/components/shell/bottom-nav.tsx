@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import clsx from 'clsx';
 import { LayoutDashboard, Package, Users, Receipt, MoreHorizontal, BarChart3, Building2, Boxes, ShoppingCart } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { useModules } from '@/components/modules/modules-provider';
 
 // Same order as the sidebar. Four slots plus More is all a phone's width
 // takes, so stock and purchases sit under More; Products stays in the bar
@@ -25,8 +26,10 @@ const MORE = [
 
 export function BottomNav() {
   const pathname = usePathname();
+  const modules = useModules();
+  const more = MORE.filter((item) => modules.pathEnabled(item.href));
   // Suppliers is reached from Purchases, so it lights up More too.
-  const moreActive = [...MORE.map((item) => item.href), '/suppliers'].some((href) => pathname?.startsWith(href));
+  const moreActive = [...more.map((item) => item.href), '/suppliers'].some((href) => pathname?.startsWith(href));
 
   return (
     <nav
@@ -59,7 +62,7 @@ export function BottomNav() {
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" side="top">
-          {MORE.map((item) => (
+          {more.map((item) => (
             <DropdownMenuItem key={item.href} asChild>
               <Link href={item.href}>
                 <item.icon size={14} /> {item.label}

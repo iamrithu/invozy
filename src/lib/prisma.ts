@@ -2,6 +2,7 @@ import { Pool, neonConfig } from '@neondatabase/serverless';
 import { PrismaNeon } from '@prisma/adapter-neon';
 import { PrismaClient } from '@prisma/client';
 import ws from 'ws';
+import { tenantScope } from './tenant-scope';
 
 // Neon's serverless driver adapter — a WebSocket-based connection instead of
 // a raw TCP/TLS Postgres connection. On a serverless host (Vercel), every
@@ -47,7 +48,7 @@ function isTransientConnectionError(err: unknown): boolean {
  * though the data itself was never the problem — one query just lost its
  * connection mid-flight. A real, non-transient error still surfaces
  * immediately, unretried. */
-export const prisma = base.$extends({
+const withRetry = base.$extends({
   query: {
     async $allOperations({ args, query }) {
       try {
@@ -60,6 +61,19 @@ export const prisma = base.$extends({
     },
   },
 });
+
+/** UNSCOPED — sees every company's rows. Only for platform code that is
+ * genuinely cross-company or runs before a company is known: sign-in,
+ * signup and password reset, the /admin panel, cron jobs choosing which
+ * companies to run for, and requireUser() itself. Everything else uses
+ * `prisma` below. */
+export const rootPrisma = withRetry;
+
+/** The client app code uses: every query acts for the company in scope (the
+ * signed-in user's, or one set with runWithTenant / setRequestTenant — see
+ * src/lib/tenant.ts) and can't read or write another company's rows. See
+ * src/lib/tenant-scope.ts for exactly what it enforces. */
+export const prisma = withRetry.$extends(tenantScope(withRetry as unknown as Record<string, unknown>));
 
 /** The client handed to `prisma.$transaction(async (tx) => …)` callbacks.
  * Because `prisma` above is an *extended* client, its transaction client

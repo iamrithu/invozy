@@ -1,7 +1,9 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { requireUser } from '@/lib/session';
-import { verifySignedToken } from '@/lib/signed-token';
+import { withSignedTenant } from '@/lib/signed-request';
+import { runWithTenant } from '@/lib/tenant';
 import { ensureInvoicePdf, getInvoicePdf, invoicePdfFileName, PdfNotFoundError } from '@/lib/invoice-pdf';
+import { configuredSiteOrigin } from '@/lib/site-origin';
 
 export const dynamic = 'force-dynamic';
 // A cold @sparticuz/chromium launch (extracting its bundled binary) plus a
@@ -16,7 +18,7 @@ export const maxDuration = 60;
  *
  * GET (signed-in users): the stored PDF when it's current, otherwise a
  * fresh render. Served as a download named after the invoice number
- * ("ASB-26-27-1020.pdf"), or shown in the browser with `?inline=1` (the
+ * ("INV-26-27-1020.pdf"), or shown in the browser with `?inline=1` (the
  * in-app viewer).
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -25,7 +27,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { id } = await params;
   try {
-    const { buffer, number } = await getInvoicePdf(id, { origin: req.nextUrl.origin });
+    const { buffer, number } = await getInvoicePdf(id, { origin: (configuredSiteOrigin() ?? req.nextUrl.origin) });
     return pdfResponse(buffer, number, req.nextUrl.searchParams.get('inline') === '1' ? 'inline' : 'attachment');
   } catch (e) {
     return errorResponse(id, e);
@@ -42,26 +44,32 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-  if (verifySignedToken('pdf-build', token) !== id) return NextResponse.json({ error: 'Not allowed' }, { status: 403 });
+  const origin = (configuredSiteOrigin() ?? req.nextUrl.origin);
+  const wait = req.nextUrl.searchParams.get('wait') === '1';
 
-  const origin = req.nextUrl.origin;
-  if (req.nextUrl.searchParams.get('wait') !== '1') {
-    after(async () => {
-      try {
-        await ensureInvoicePdf(id, { origin });
-      } catch (e) {
-        if (!(e instanceof PdfNotFoundError)) console.error(`PDF prebuild failed for invoice ${id}`, e);
-      }
-    });
-    return new NextResponse(null, { status: 202 });
-  }
-
-  try {
-    const { buffer, number } = await getInvoicePdf(id, { origin });
-    return pdfResponse(buffer, number, 'inline');
-  } catch (e) {
-    return errorResponse(id, e);
-  }
+  // Acts for the company the token was minted for, and only for this invoice.
+  const res = await withSignedTenant('pdf-build', token, id, async ({ companyId }) => {
+    if (!wait) {
+      // after() may run outside this context, so it re-enters the company.
+      after(() =>
+        runWithTenant(companyId, async () => {
+          try {
+            await ensureInvoicePdf(id, { origin });
+          } catch (e) {
+            if (!(e instanceof PdfNotFoundError)) console.error(`PDF prebuild failed for invoice ${id}`, e);
+          }
+        })
+      );
+      return new NextResponse(null, { status: 202 });
+    }
+    try {
+      const { buffer, number } = await getInvoicePdf(id, { origin });
+      return pdfResponse(buffer, number, 'inline');
+    } catch (e) {
+      return errorResponse(id, e);
+    }
+  });
+  return res ?? NextResponse.json({ error: 'Not allowed' }, { status: 403 });
 }
 
 function pdfResponse(pdf: Buffer, invoiceNumber: string, disposition: 'inline' | 'attachment') {

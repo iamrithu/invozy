@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 
-/** Makes ASB installable ("Add to Home screen") so it opens like an app on
+/** Makes Invozy installable ("Add to Home screen") so it opens like an app on
  * the phone used for billing — see the Next.js PWA guide
  * (node_modules/next/dist/docs/01-app/02-guides/progressive-web-apps.md).
  * Served at /manifest.webmanifest, which src/proxy.ts doesn't match, so the
@@ -11,15 +11,15 @@ import type { MetadataRoute } from 'next';
  * stock as if they were current — on a billing app that's worse than
  * showing nothing while offline.
  *
- * Icons are generated from src/app/icon.png with `sips` into public/icons/.
- * The maskable ones are full-bleed brand red with the mark inside the
- * central safe zone, so Android's circle/squircle crop never clips it. */
+ * Icons in public/icons/ are rendered from public/brand/mark.png. The
+ * maskable ones are full-bleed white with the mark inside the central safe
+ * zone, so Android's circle/squircle crop never clips it. */
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: '/',
-    name: 'ASB Food Products',
-    short_name: 'ASB',
-    description: 'GST billing, payments and stock for ASB Food Products.',
+    name: 'Invozy — GST billing',
+    short_name: 'Invozy',
+    description: 'GST billing, payments, stock and returns for your business.',
     start_url: '/dashboard',
     scope: '/',
     display: 'standalone',

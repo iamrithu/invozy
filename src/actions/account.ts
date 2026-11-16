@@ -3,9 +3,10 @@
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
-import { prisma } from '@/lib/prisma';
+import { prisma, rootPrisma } from '@/lib/prisma';
+import { isReservedLoginEmail, normalizePhone, PHONE_RE } from '@/lib/login-identifiers';
 import { requireUser } from '@/lib/session';
-import { COMPANY_ID } from '@/lib/company-id';
+import { currentCompanyId } from '@/lib/tenant';
 
 async function requireUserId() {
   return (await requireUser()).id;
@@ -13,8 +14,18 @@ async function requireUserId() {
 
 const ProfileSchema = z
   .object({
-    email: z.string().email('Enter a valid email').optional().or(z.literal('')),
-    phone: z.string().min(7, 'Enter a valid phone number').optional().or(z.literal('')),
+    email: z
+      .string()
+      .email('Enter a valid email')
+      .refine((v) => !isReservedLoginEmail(v), 'This email can’t be used for a company login')
+      .optional()
+      .or(z.literal('')),
+    phone: z
+      .string()
+      .trim()
+      .optional()
+      .transform((v) => (v ? normalizePhone(v) : ''))
+      .refine((v) => !v || PHONE_RE.test(v), 'Enter a valid phone number (digits only)'),
   })
   .refine((data) => data.email || data.phone, {
     message: 'Provide an email or phone number',
@@ -33,8 +44,11 @@ export async function updateMyProfile(_prev: ProfileFormState, formData: FormDat
   const email = parsed.data.email?.trim().toLowerCase() || null;
   const phone = parsed.data.phone || null;
 
-  const existing = await prisma.user.findFirst({
-    where: { id: { not: userId }, OR: [...(email ? [{ email }] : []), ...(phone ? [{ phone }] : [])] },
+  // Across every company: logins are unique platform-wide (sign-in doesn't
+  // ask which company). Only "taken or not" is used.
+  const existing = await rootPrisma.user.findFirst({
+    where: { id: { not: userId }, OR: [...(email ? [{ email: { equals: email, mode: 'insensitive' as const } }] : []), ...(phone ? [{ phone }] : [])] },
+    select: { id: true },
   });
   if (existing) {
     return { error: 'That email or phone is already used by another account.', fieldErrors: { email: 'Already in use' } };
@@ -45,7 +59,7 @@ export async function updateMyProfile(_prev: ProfileFormState, formData: FormDat
   // never rewrite what prints on every invoice.
   await prisma.$transaction([
     prisma.user.update({ where: { id: userId }, data: { email, phone } }),
-    ...(me.role === 'OWNER' ? [prisma.company.update({ where: { id: COMPANY_ID }, data: { email } })] : []),
+    ...(me.role === 'OWNER' ? [prisma.company.update({ where: { id: await currentCompanyId() }, data: { email } })] : []),
   ]);
   revalidatePath('/account');
   revalidatePath('/company');

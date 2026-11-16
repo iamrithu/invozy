@@ -1,6 +1,7 @@
 import type { Prisma, StockMovementType } from '@prisma/client';
 import type { Tx } from './prisma';
 import { formatStock, round6, unitFactor, type UnitProduct } from './stock-units';
+import { currentCompanyId } from './tenant';
 
 // Server-side inventory ledger. Every change to Product.stockQty goes
 // through applyMovement, which updates the cached balance and appends the
@@ -67,7 +68,7 @@ export async function applyMovement(
   const allowNegative = !enforce || d >= 0;
   const rows = await tx.$queryRaw<{ stockQty: Prisma.Decimal }[]>`
     UPDATE "Product" SET "stockQty" = "stockQty" + ${d.toFixed(6)}::numeric
-    WHERE id = ${product.id} AND (${allowNegative}::boolean OR NOT "trackStock" OR "stockQty" + ${d.toFixed(6)}::numeric >= -0.000001)
+    WHERE id = ${product.id} AND "companyId" = ${await currentCompanyId()} AND (${allowNegative}::boolean OR NOT "trackStock" OR "stockQty" + ${d.toFixed(6)}::numeric >= -0.000001)
     RETURNING "stockQty"`;
   if (!rows.length) {
     const current = await tx.product.findUnique({ where: { id: product.id }, select: { stockQty: true } });

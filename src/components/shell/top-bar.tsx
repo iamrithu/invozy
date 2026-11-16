@@ -18,6 +18,7 @@ import { fmtInr } from '@/lib/gst';
 import { Skeleton } from '@/components/ui/skeleton';
 import { roleLabel, useCurrentUser, userLabel } from '@/components/current-user';
 import { initials } from '@/lib/avatar';
+import { useModules } from '@/components/modules/modules-provider';
 
 export function TopBar({ company }: { company: { name: string; logoUrl: string | null } }) {
   const router = useRouter();
@@ -25,6 +26,7 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
   // From the app layout (CurrentUserProvider) rather than useSession(): the
   // session cookie only carries the user id, not their name or role.
   const me = useCurrentUser();
+  const modules = useModules();
   const meLabel = userLabel(me);
   const [search, setSearch] = useState('');
   const [showResults, setShowResults] = useState(false);
@@ -202,9 +204,11 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
             </DropdownMenuItem>
             {me.isOwner && (
               <>
-                <DropdownMenuItem onClick={() => router.push('/team')}>
-                  <UsersRound size={14} /> Team &amp; logins
-                </DropdownMenuItem>
+                {modules.enabled('team') && (
+                  <DropdownMenuItem onClick={() => router.push('/team')}>
+                    <UsersRound size={14} /> Team &amp; logins
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem onClick={() => router.push('/activity')}>
                   <History size={14} /> Activity log
                 </DropdownMenuItem>

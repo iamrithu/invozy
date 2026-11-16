@@ -7,6 +7,7 @@ import { formatStock } from '@/lib/stock-units';
 import { STATUS_LABEL } from '@/lib/report-status';
 import { averagePurchaseCosts, loadProductMeta, mainQtyOf, type ProductMeta } from '@/app/(app)/reports/report-data';
 import { ownerGate, parseRange, type ExportRange } from '../export-utils';
+import { currentCompanyId } from '@/lib/tenant';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -194,7 +195,7 @@ const EXPORTS: Record<string, Exporter> = {
       // Balances in one aggregate up front rather than one query per row.
       const totals = await prisma.$queryRaw<{ customerId: string; count: number; billed: number; balance: number }[]>`
         SELECT "customerId", COUNT(*)::int AS "count", SUM(total)::float8 AS "billed", SUM(GREATEST(total - "amountPaid", 0))::float8 AS "balance"
-        FROM "Invoice" WHERE status <> 'DRAFT' GROUP BY 1`;
+        FROM "Invoice" WHERE "companyId" = ${await currentCompanyId()} AND status <> 'DRAFT' GROUP BY 1`;
       const byCustomer = new Map(totals.map((t) => [t.customerId, t]));
       yield* paged(
         (page) =>

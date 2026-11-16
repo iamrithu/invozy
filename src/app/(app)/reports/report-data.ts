@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import { round6, unitFactor, type UnitProduct } from '@/lib/stock-units';
+import { currentCompanyId } from '@/lib/tenant';
 
 // Server-only data helpers shared by the Reports actions (profit estimate),
 // the CSV exports (products + stock) and the loading sheet. Deliberately NOT
@@ -47,14 +48,14 @@ export async function averagePurchaseCosts(products: Map<string, ProductMeta>): 
         SUM(pi.qty * pi.rate)::float8 AS "value",
         COALESCE(SUM(pi."stockQty"), 0)::float8 AS "stockQty",
         COALESCE(SUM(pi.qty) FILTER (WHERE pi."stockQty" IS NULL), 0)::float8 AS "qtyNoSnapshot"
-      FROM "PurchaseItem" pi
-      WHERE pi."productId" IS NOT NULL
+      FROM "PurchaseItem" pi JOIN "Purchase" p ON p.id = pi."purchaseId"
+      WHERE p."companyId" = ${await currentCompanyId()} AND pi."productId" IS NOT NULL
       GROUP BY 1, 2
     `,
     prisma.$queryRaw<{ productId: string; value: number; qty: number }[]>`
       SELECT "productId", SUM(qty * "unitCost")::float8 AS "value", SUM(qty)::float8 AS "qty"
       FROM "StockMovement"
-      WHERE type IN ('PURCHASE', 'OPENING') AND qty > 0 AND "unitCost" IS NOT NULL
+      WHERE "companyId" = ${await currentCompanyId()} AND type IN ('PURCHASE', 'OPENING') AND qty > 0 AND "unitCost" IS NOT NULL
       GROUP BY 1
     `,
   ]);

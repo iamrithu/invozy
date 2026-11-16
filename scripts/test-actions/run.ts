@@ -1,7 +1,8 @@
-// Runs the real stock and purchase-attachment server actions against a
-// throwaway local Postgres and checks what they do to stock and storage.
+// Runs the real server actions against a throwaway local Postgres: stock,
+// returns, purchases and attachments as one company, then a second company
+// trying to read and change the first one's data (tenancy).
 //
-//   TEST_DATABASE_URL=postgresql://postgres@localhost:5432/asb_test npm run test:actions
+//   TEST_DATABASE_URL=postgresql://postgres@localhost:5432/invozy_test npm run test:actions
 //
 // The database is wiped first (prisma migrate reset), so only a localhost
 // URL is accepted — never point this at the real database. Uploads go to a
@@ -35,25 +36,25 @@ function check(label: string, cond: boolean, detail?: unknown) {
 async function main() {
   execSync('npx prisma migrate reset --force --skip-seed --skip-generate', { stdio: 'inherit', env: process.env });
   // src/lib/uploads.ts stores local uploads under <cwd>/public/uploads.
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'asb-test-actions-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'invozy-test-actions-'));
   process.chdir(work);
 
-  const { prisma } = await import('@/lib/prisma');
+  const { prisma, rootPrisma } = await import('@/lib/prisma');
   const invoices = await import('@/actions/invoices');
   const purchases = await import('@/actions/purchases');
   const inventory = await import('@/actions/inventory');
   const creditNotes = await import('@/actions/credit-notes');
   const statements = await import('@/actions/statements');
-  const g = globalThis as { __TEST_USER?: { id: string; role: 'OWNER' | 'STAFF' } };
+  const g = globalThis as { __TEST_USER?: { id: string; role: 'OWNER' | 'STAFF'; companyId: string } };
 
   const stock = async (id = 'p1') => Number((await prisma.product.findUniqueOrThrow({ where: { id } })).stockQty);
 
-  // ---- fixtures
-  await prisma.company.create({ data: { id: 'main', name: 'Test Co', state: 'Tamil Nadu', invoiceFY: '26-27' } });
-  const owner = await prisma.user.create({ data: { email: 'owner@test', passwordHash: 'x', role: 'OWNER' } });
-  const staff = await prisma.user.create({ data: { email: 'staff@test', passwordHash: 'x', role: 'STAFF' } });
-  const asOwner = () => (g.__TEST_USER = { id: owner.id, role: 'OWNER' });
-  const asStaff = () => (g.__TEST_USER = { id: staff.id, role: 'STAFF' });
+  // ---- fixtures: company A (companies and logins are platform-level → rootPrisma)
+  const coA = await rootPrisma.company.create({ data: { name: 'Test Co', state: 'Tamil Nadu', invoiceFY: '26-27' } });
+  const owner = await rootPrisma.user.create({ data: { companyId: coA.id, email: 'owner@test', passwordHash: 'x', role: 'OWNER' } });
+  const staff = await rootPrisma.user.create({ data: { companyId: coA.id, email: 'staff@test', passwordHash: 'x', role: 'STAFF' } });
+  const asOwner = () => (g.__TEST_USER = { id: owner.id, role: 'OWNER', companyId: coA.id });
+  const asStaff = () => (g.__TEST_USER = { id: staff.id, role: 'STAFF', companyId: coA.id });
   asOwner();
   await prisma.customer.create({ data: { id: 'c1', name: 'Shop', state: 'Tamil Nadu' } });
   await prisma.product.create({ data: { id: 'p1', name: 'Cassata', category: 'Ice', unit: 'Box', price: 100, trackStock: true, stockQty: 100 } });
@@ -309,13 +310,13 @@ async function main() {
 
   // ---- company page: each section saves only its own fields
   const companyActions = await import('@/actions/company');
-  const coRow = () => prisma.company.findUniqueOrThrow({ where: { id: 'main' } });
+  const coRow = () => prisma.company.findUniqueOrThrow({ where: { id: coA.id } });
   const form = (fields: Record<string, string>) => {
     const fd = new FormData();
     for (const [k, v] of Object.entries(fields)) fd.set(k, v);
     return fd;
   };
-  await prisma.company.update({ where: { id: 'main' }, data: { nextInvoiceNo: 42, showUpiQr: true, cgstEnabled: true, pdfShowHsnSummary: true } });
+  await prisma.company.update({ where: { id: coA.id }, data: { nextInvoiceNo: 42, showUpiQr: true, cgstEnabled: true, pdfShowHsnSummary: true } });
   const coBefore = await coRow();
   const bankSave = await companyActions.updateCompany(
     {},
@@ -367,6 +368,153 @@ async function main() {
   const pdfSave = await companyActions.updateCompany({}, form({ _fields: 'pdfShowItemDiscount,pdfShowBillDiscount', pdfShowBillDiscount: 'on' }));
   const pdfRow = await coRow();
   check('PDF discount switches save from the Company page', !pdfSave.error && !pdfRow.pdfShowItemDiscount && pdfRow.pdfShowBillDiscount && pdfRow.nextInvoiceNo === 42, { pdfSave, item: pdfRow.pdfShowItemDiscount, bill: pdfRow.pdfShowBillDiscount });
+
+
+  // ---- tenancy: company B sees none of A's data and can't change any of it
+  asOwner();
+  const aInvoice = await prisma.invoice.findFirstOrThrow({ where: { status: { not: 'DRAFT' } }, orderBy: { createdAt: 'asc' } });
+  const aCounts = { customers: await prisma.customer.count(), products: await prisma.product.count(), invoices: await prisma.invoice.count() };
+  const aStock = await stock('p1');
+  const aPaid = Number(aInvoice.amountPaid);
+  const aUpload = await purchases.uploadPurchaseAttachment(file('a-bill.pdf', 'application/pdf', '%PDF-1.4'));
+  const settings = await import('@/lib/settings');
+  await settings.setAppSetting('monthlySalesTarget', 123456);
+  const aKpis = await (await import('@/actions/dashboard')).getBusinessOverview();
+
+  const coB = await rootPrisma.company.create({ data: { name: 'Other Co', state: 'Karnataka', invoiceFY: '26-27' } });
+  const ownerB = await rootPrisma.user.create({ data: { companyId: coB.id, email: 'owner@other', passwordHash: 'x', role: 'OWNER' } });
+  const asB = () => (g.__TEST_USER = { id: ownerB.id, role: 'OWNER', companyId: coB.id });
+  asB();
+  // Refused = an { error } result or a thrown error; the reason is printed so
+  // a refusal for some unrelated reason (bad input) is easy to spot.
+  const fails = async (label: string, run: () => Promise<unknown>) => {
+    try {
+      const res = (await run()) as { error?: string } | null | undefined;
+      const refused = !!res && typeof res === 'object' && 'error' in res && !!res.error;
+      check(`${label}  [${refused ? res!.error : 'NOT refused'}]`, refused, res);
+    } catch (e) {
+      check(`${label}  [threw ${(e as Error).name}: ${(e as Error).message.split('\n').filter(Boolean).pop()?.slice(0, 90)}]`, true);
+    }
+  };
+
+  check('B starts empty: no customers, products or invoices of A', (await prisma.customer.count()) === 0 && (await prisma.product.count()) === 0 && (await prisma.invoice.count()) === 0);
+  check('B can’t read A’s invoice by id', (await prisma.invoice.findUnique({ where: { id: aInvoice.id } })) === null);
+  check('B’s invoice list is empty', (await invoices.listInvoicesPage()).items.length === 0);
+  check('B’s search finds nothing of A', JSON.stringify(await (await import('@/actions/search')).globalSearch('Cassata')).includes('Cassata') === false);
+  const bKpis = await (await import('@/actions/dashboard')).getBusinessOverview();
+  check('A’s dashboard has data to leak', aKpis.invoices.total > 0 && aKpis.money.billed > 0 && aKpis.products.active > 0, aKpis.money);
+  check(
+    'B’s dashboard (raw SQL) shows none of A’s figures',
+    bKpis.invoices.total === 0 && bKpis.money.billed === 0 && bKpis.money.received === 0 && bKpis.products.active === 0 && bKpis.customers.active === 0 && bKpis.suppliers.active === 0 && bKpis.creditNotes.count === 0,
+    { invoices: bKpis.invoices.total, money: bKpis.money, products: bKpis.products }
+  );
+  const reportsMod = await import('@/actions/reports');
+  const bStats = (await reportsMod.getReportStats()) as unknown as Record<string, number>;
+  check('B’s report totals (raw SQL) are zero', bStats.total === 0 && bStats.invoiceCount === 0 && bStats.outstanding === 0, bStats);
+  const bGst = await reportsMod.getGstSummary();
+  check('B’s GST summary (raw SQL) is empty', JSON.stringify(bGst).match(/"taxable":[1-9]/) === null, bGst);
+  check('B doesn’t see A’s monthly target', (await settings.getAppSettings()).monthlySalesTarget === null);
+
+  await fails('B can’t bill A’s customer', () => invoices.createInvoice({ customerId: 'c1', date: '2026-11-01', due: '2026-11-01', items: [{ productId: null, name: 'X', unit: 'Box', qty: 1, rate: 10, discount: 0 }] }));
+  await prisma.customer.create({ data: { id: 'cB', name: 'B Shop', state: 'Karnataka' } });
+  await fails('B can’t bill A’s product', () => invoices.createInvoice({ customerId: 'cB', date: '2026-11-01', due: '2026-11-01', items: [{ productId: 'p1', name: 'Cassata', unit: 'Box', qty: 1, rate: 10, discount: 0 }] }));
+  await fails('B can’t record a payment on A’s invoice', () => invoices.recordPayment(aInvoice.id, { amount: 1, date: '2026-11-01', mode: 'Cash' }));
+  await fails('B can’t delete A’s invoice', () => invoices.deleteInvoice(aInvoice.id));
+  await fails('B can’t move A’s stock', () => inventory.addStockMovement('p1', { type: 'ADJUSTMENT', qty: -5, unit: 'Box', date: '2026-11-01' }));
+  await fails('B can’t raise a credit note on A’s invoice', () => creditNotes.getCreditNoteSource(aInvoice.id).then((r) => (r.source ? {} : { error: 'none' })));
+  await fails('B can’t read A’s customer statement', () => statements.getCustomerStatement('c1').then((r) => (r.statement ? {} : { error: 'none' })));
+  await fails('B can’t create a row for A by naming its companyId', () => prisma.customer.create({ data: { name: 'Sneaky', state: 'Karnataka', companyId: coA.id } }));
+  await fails('B can’t update A’s customer directly', () => prisma.customer.update({ where: { id: 'c1' }, data: { name: 'Hacked' } }));
+  await fails('B can’t connect A’s customer in a nested write', () =>
+    prisma.invoice.create({ data: { number: 'X-1', date: new Date(), due: new Date(), customer: { connect: { id: 'c1' } } } })
+  );
+  const team = await import('@/actions/team');
+  await rootPrisma.user.update({ where: { id: staff.id }, data: { email: 'staff@a-co.in' } });
+  await fails('B can’t add a login using A’s staff email (any case)', () => team.createLogin({ name: 'Copy', email: 'STAFF@A-co.in', phone: '', password: 'secret12', role: 'STAFF' }));
+  const bLogin = await team.createLogin({ name: 'B Staff', email: 'staff@b-co.in', phone: '', password: 'secret12', role: 'STAFF' });
+  check('B adds its own staff login, in company B', !bLogin.error && (await rootPrisma.user.findUniqueOrThrow({ where: { id: bLogin.id! } })).companyId === coB.id, bLogin);
+  check('B’s team list has only B’s logins', (await team.listLogins()).users?.every((u) => u.id === ownerB.id || u.id === bLogin.id) === true);
+  await purchases.discardPurchaseUploads([aUpload.attachment!.url]);
+  check('B can’t delete A’s uploaded file', onDisk(aUpload.attachment!.url));
+
+  const bProduct = await prisma.product.create({ data: { id: 'pB', name: 'B Ice', category: 'Ice', unit: 'Box', price: 10 } });
+  const bInv = await invoices.createInvoice({ customerId: 'cB', date: '2026-11-01', due: '2026-11-01', items: [{ productId: bProduct.id, name: 'B Ice', unit: 'Box', qty: 2, rate: 10, discount: 0 }] });
+  const bRow = bInv.invoiceId ? await prisma.invoice.findUnique({ where: { id: bInv.invoiceId } }) : null;
+  check('B bills its own customer and product', !bInv.error && !!bRow && bRow.companyId === coB.id, bInv);
+  check('B’s invoice numbers start at 1 independently of A', bRow?.number.endsWith('0001') === true, bRow?.number);
+  let rawRefused = false;
+  try {
+    await prisma.$queryRaw`SELECT count(*) FROM "Invoice"`;
+  } catch {
+    rawRefused = true;
+  }
+  check('raw SQL without a companyId filter is refused', rawRefused);
+
+  asOwner();
+  const aAfter = await prisma.invoice.findUniqueOrThrow({ where: { id: aInvoice.id } });
+  check('A’s data is untouched', (await stock('p1')) === aStock && Number(aAfter.amountPaid) === aPaid && (await prisma.customer.findUniqueOrThrow({ where: { id: 'c1' } })).name === 'Shop', { stock: await stock('p1'), paid: aAfter.amountPaid });
+  check('A still sees only its own rows', (await prisma.customer.count()) === aCounts.customers && (await prisma.product.count()) === aCounts.products && (await prisma.invoice.count()) === aCounts.invoices);
+  check('A’s monthly target is still set', (await settings.getAppSettings()).monthlySalesTarget === 123456);
+  const { createSignedToken, verifySignedToken } = await import('@/lib/signed-token');
+  check('signed tokens carry the company they were made for', verifySignedToken('print-invoice', await createSignedToken('print-invoice', aInvoice.id, 60))?.companyId === coA.id);
+
+  // ---- review fixes: sign-in throttle, identifiers, modules, owner-only settings
+  const { lockoutKey } = await import('@/lib/login-rate-limit');
+  check('every spelling of a phone shares one lockout counter', ['98400 12345', '98400-12345', '(98400)12345', '9840012345'].every((v) => lockoutKey(v) === '9840012345'));
+  check('emails share one counter regardless of case', lockoutKey(' Owner@Test.IN ') === 'owner@test.in');
+  check('the platform admin’s counter is separate from any company login', lockoutKey('boss@platform.in', 'admin') !== lockoutKey('boss@platform.in'));
+  process.env.ADMIN_EMAIL = 'boss@platform.in';
+  asOwner();
+  const reserved = await team.createLogin({ name: 'Fake admin', email: 'Boss@Platform.in', phone: '', password: 'secret12', role: 'STAFF' });
+  check('the admin’s email can’t become a company login', !!reserved.fieldErrors?.email, reserved);
+  const { signUp } = await import('@/actions/auth');
+  const signupForm = (fields: Record<string, string>) => {
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(fields)) fd.set(k, v);
+    return fd;
+  };
+  const emailAsPhone = await signUp({}, signupForm({ companyName: 'Shadow', state: 'Goa', phone: 'staff@a-co.in', password: 'secret12' }));
+  check('an email can’t be saved as a phone (no shadowing another login)', !!emailAsPhone.fieldErrors?.phone, emailAsPhone);
+  const adminAtSignup = await signUp({}, signupForm({ companyName: 'Shadow', state: 'Goa', email: 'boss@platform.in', password: 'secret12' }));
+  check('signup refuses the admin’s email', !!adminAtSignup.fieldErrors?.email, adminAtSignup);
+  const spacedPhone = await signUp({}, signupForm({ companyName: 'Phone Co', state: 'Goa', phone: '98765 43210', password: 'secret12' }));
+  const phoneUser = await rootPrisma.user.findFirst({ where: { phone: '9876543210' } });
+  check('signup stores a phone without spacing', !spacedPhone.error && !!phoneUser, spacedPhone);
+
+  asStaff();
+  const staffCompany = await companyActions.updateCompany({}, form({ _fields: 'bankAcc', bankAcc: '999' }));
+  check('staff can’t change company settings', !!staffCompany.error && (await coRow()).bankAcc !== '999', staffCompany);
+  check('staff can’t change company GST defaults', !!(await companyActions.updateCompanyGstDefaults({ cgstRate: 1, sgstRate: 1, igstRate: 2, cgstEnabled: true, sgstEnabled: true, igstEnabled: true, pdfShowBankDetails: true, pdfShowHsnSummary: false, showUpiQr: false, showGpayNumber: false })).error);
+  asOwner();
+
+  await rootPrisma.company.update({ where: { id: coA.id }, data: { disabledModules: ['purchases', 'team', 'reports', 'returns', 'inventory'] } });
+  const refusedOff = async (label: string, run: () => Promise<unknown>) => {
+    try {
+      const res = (await run()) as { error?: string } | null;
+      check(`${label}  [${res && typeof res === 'object' && 'error' in res ? res.error : 'NOT refused'}]`, !!res && typeof res === 'object' && /isn’t enabled/.test(String(res.error)), res);
+    } catch (e) {
+      check(`${label}  [threw: ${(e as Error).message}]`, /isn’t enabled/.test((e as Error).message));
+    }
+  };
+  await refusedOff('module off: purchases list refused', () => purchases.listPurchasesPage());
+  await refusedOff('module off: saving a purchase refused', () => purchases.savePurchase(null, { supplierId: 's1', date: '2026-11-01', items: [line], attachments: [] }));
+  await refusedOff('module off: adding a team login refused', () => team.createLogin({ name: 'X', email: 'x@a-co.in', phone: '', password: 'secret12', role: 'STAFF' }));
+  await refusedOff('module off: report figures refused', () => reportsMod.getReportStats());
+  await refusedOff('module off: credit notes refused', () => creditNotes.listCreditNotesPage());
+  await refusedOff('module off: stock adjustments refused', () => inventory.addStockMovement('p1', { type: 'ADJUSTMENT', qty: 1, unit: 'Box', date: '2026-11-01' }));
+  check('module off: the dashboard still loads', (await (await import('@/actions/dashboard')).getBusinessOverview()).invoices.total > 0);
+  check('module off: billing still works', !(await invoices.createInvoice(bill(1, {}, 'p2'))).error);
+  await rootPrisma.company.update({ where: { id: coA.id }, data: { disabledModules: [] } });
+  check('module back on: purchases work again', Array.isArray((await purchases.listPurchasesPage()).items));
+
+  g.__TEST_USER = undefined;
+  let noTenant = false;
+  try {
+    await prisma.customer.count();
+  } catch (e) {
+    noTenant = (e as Error).name === 'TenantMissingError';
+  }
+  check('with nobody signed in, every query is refused', noTenant);
 
   await prisma.$disconnect();
   fs.rmSync(work, { recursive: true, force: true });

@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { requireOwner, requireUser } from '@/lib/session';
 import { toActionError, type ActionResult } from '@/lib/action-result';
 import { logActivity } from '@/lib/activity';
+import { requireModule } from '@/lib/require-module';
 
 // Suppliers are who the business buys stock from — the "Bill from" on a
 // purchase. Their state decides whether a purchase's input GST is IGST or
@@ -52,6 +53,7 @@ function blankToNull<T extends Record<string, unknown>>(data: T): T {
 /** The Suppliers list — every supplier with how much has been bought from
  * them. Not paginated: a distributor buys from a handful of companies. */
 export async function listSuppliers(opts?: { search?: string; includeInactive?: boolean }): Promise<SupplierRow[]> {
+  await requireModule('purchases');
   await requireUser();
   const search = opts?.search?.trim();
   const [suppliers, totals] = await Promise.all([
@@ -90,6 +92,7 @@ export async function listSuppliers(opts?: { search?: string; includeInactive?: 
  * purchases filter — active suppliers, plus `includeId` even if it has been
  * disabled since (so an old purchase still shows who it was from). */
 export async function listSupplierOptions(includeId?: string | null): Promise<SupplierOption[]> {
+  await requireModule('purchases');
   await requireUser();
   return prisma.supplier.findMany({
     where: includeId ? { OR: [{ active: true }, { id: includeId }] } : { active: true },
@@ -100,6 +103,7 @@ export async function listSupplierOptions(includeId?: string | null): Promise<Su
 
 export async function createSupplier(input: SupplierInput): Promise<ActionResult<{ supplier: SupplierOption }>> {
   try {
+    await requireModule('purchases');
     const user = await requireUser();
     const parsed = SupplierSchema.safeParse(input);
     if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Check the form.' };
@@ -120,6 +124,7 @@ export async function createSupplier(input: SupplierInput): Promise<ActionResult
  * issued invoice keeps its own. Re-saving a purchase picks up the new state. */
 export async function updateSupplier(id: string, input: SupplierInput): Promise<ActionResult> {
   try {
+    await requireModule('purchases');
     const user = await requireUser();
     const parsed = SupplierSchema.safeParse(input);
     if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Check the form.' };
@@ -137,6 +142,7 @@ export async function updateSupplier(id: string, input: SupplierInput): Promise<
  * form's picker — the safe alternative to deleting one with history. */
 export async function setSupplierActive(id: string, active: boolean): Promise<ActionResult> {
   try {
+    await requireModule('purchases');
     const user = await requireUser();
     const supplier = await prisma.supplier.update({ where: { id }, data: { active }, select: { name: true } }).catch(() => null);
     if (!supplier) return { error: 'This supplier no longer exists.' };
@@ -158,6 +164,7 @@ export async function setSupplierActive(id: string, active: boolean): Promise<Ac
  * Disable in the same breath. */
 export async function deleteSupplier(id: string): Promise<ActionResult<{ canDisable: boolean }>> {
   try {
+    await requireModule('purchases');
     const user = await requireOwner();
     const supplier = await prisma.supplier.findUnique({ where: { id }, select: { name: true, _count: { select: { purchases: true } } } });
     if (!supplier) return { error: 'This supplier no longer exists.' };

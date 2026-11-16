@@ -36,7 +36,7 @@ export function lastCompleteMonth(todayIst: string): string {
   return previousMonth(todayIst.slice(0, 7));
 }
 
-/** `ASB-report-2026-10.pdf`. */
+/** `report-2026-10.pdf`. */
 export function monthlyReportFileName(month: string): string {
-  return `ASB-report-${month}.pdf`;
+  return `report-${month}.pdf`;
 }

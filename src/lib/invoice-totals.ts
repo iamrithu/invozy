@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './prisma';
 import { computeTotals, type TotalsResult } from './gst';
+import { currentCompanyId } from './tenant';
 
 /** Anything shaped like an Invoice row with its items + customer state —
  * Prisma rows (Decimal fields) and plain numbers both work. */
@@ -82,7 +83,7 @@ export async function customerOutstanding(customerId: string, excludeInvoiceId?:
   const rows = await prisma.$queryRaw<{ outstanding: unknown }[]>`
     SELECT COALESCE(SUM(GREATEST(total - "amountPaid", 0)), 0) AS outstanding
     FROM "Invoice"
-    WHERE "customerId" = ${customerId} ${excludeInvoiceId ? Prisma.sql`AND id <> ${excludeInvoiceId}` : Prisma.empty}
+    WHERE "companyId" = ${await currentCompanyId()} AND "customerId" = ${customerId} ${excludeInvoiceId ? Prisma.sql`AND id <> ${excludeInvoiceId}` : Prisma.empty}
   `;
   return Number(rows[0]?.outstanding ?? 0);
 }

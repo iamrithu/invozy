@@ -6,11 +6,12 @@ import { after } from 'next/server';
 import { headers } from 'next/headers';
 import { put, del } from '@vercel/blob';
 import { prisma } from './prisma';
-import { COMPANY_ID } from './company-id';
+import { currentCompanyId, findCompanyId, runWithTenant } from './tenant';
 import { createSignedToken, invoiceShareToken } from './signed-token';
 import { getSharedPdfContext, PDF_PAGE, viewportFor } from './pdf-browser';
 import { getAppSettings } from './settings';
 import type { PdfLayout } from './pdf-layout';
+import { configuredSiteOrigin } from './site-origin';
 
 // ---------------------------------------------------------------------------
 // Invoice PDFs: render once, store, serve the stored file.
@@ -80,7 +81,7 @@ export function computePdfKey(input: PdfKeyInput): string {
     .digest('hex');
 }
 
-/** "ASB/26-27/1020" → "ASB-26-27-1020.pdf" (also mirrored client-side in
+/** "INV/26-27/1020" → "INV-26-27-1020.pdf" (also mirrored client-side in
  * download-pdf-button.tsx's invoicePdfFileName). */
 export function invoicePdfFileName(invoiceNumber: string): string {
   return `${invoiceNumber.replace(/[\\/]+/g, '-').replace(/[^A-Za-z0-9._-]/g, '-')}.pdf`;
@@ -88,8 +89,8 @@ export function invoicePdfFileName(invoiceNumber: string): string {
 
 /** Public, sign-in-free link to this invoice's PDF (valid 180 days) — for
  * sending to the customer, e.g. on WhatsApp. Prefix with the site origin. */
-export function invoiceSharePath(invoiceId: string): string {
-  return `/api/share/${invoiceShareToken(invoiceId)}`;
+export async function invoiceSharePath(invoiceId: string): Promise<string> {
+  return `/api/share/${await invoiceShareToken(invoiceId)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -193,9 +194,12 @@ function footerTemplate(layout: PdfLayout, left: string, right?: string): string
     </div>`;
 }
 
-/** The current request's own origin (route handler or server action), else
- * a configured one. Never throws — null when nothing is known. */
+/** The configured site origin (src/lib/site-origin.ts) when set, else the
+ * current request's own origin (route handler or server action), else a
+ * platform default. Never throws — null when nothing is known. */
 async function requestOrigin(): Promise<string | null> {
+  const configured = configuredSiteOrigin();
+  if (configured) return configured;
   try {
     const h = await headers();
     const host = h.get('x-forwarded-host') ?? h.get('host');
@@ -210,8 +214,8 @@ async function requestOrigin(): Promise<string | null> {
 }
 
 function configuredOrigin(): string | null {
-  const explicit = process.env.AUTH_URL || process.env.NEXTAUTH_URL;
-  if (explicit) return new URL(explicit).origin;
+  const explicit = configuredSiteOrigin();
+  if (explicit) return explicit;
   const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL;
   if (vercel) return `https://${vercel}`;
   return process.env.NODE_ENV === 'production' ? null : `http://localhost:${process.env.PORT || 3000}`;
@@ -225,7 +229,7 @@ function configuredOrigin(): string | null {
 
 const LOCAL_PREFIX = 'local:';
 const isServerless = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME;
-const LOCAL_DIR = isServerless ? path.join(os.tmpdir(), 'asb-pdfs') : path.join(process.cwd(), '.next', 'cache', 'pdfs');
+const LOCAL_DIR = isServerless ? path.join(os.tmpdir(), 'invozy-pdfs') : path.join(process.cwd(), '.next', 'cache', 'pdfs');
 
 function useBlob(): boolean {
   return !!process.env.BLOB_READ_WRITE_TOKEN;
@@ -280,7 +284,7 @@ async function deleteStoredPdf(url: string): Promise<void> {
 async function savePdfPointer(invoiceId: string, url: string, key: string): Promise<{ found: boolean; previousUrl: string | null }> {
   const rows = await prisma.$queryRaw<{ previousUrl: string | null }[]>`
     UPDATE "Invoice" AS i SET "pdfUrl" = ${url}, "pdfKey" = ${key}
-    FROM (SELECT "id", "pdfUrl" FROM "Invoice" WHERE "id" = ${invoiceId}) AS o
+    FROM (SELECT "id", "pdfUrl" FROM "Invoice" WHERE "id" = ${invoiceId} AND "companyId" = ${await currentCompanyId()}) AS o
     WHERE i."id" = o."id"
     RETURNING o."pdfUrl" AS "previousUrl"`;
   return { found: rows.length > 0, previousUrl: rows[0]?.previousUrl ?? null };
@@ -296,7 +300,7 @@ async function loadPdfMeta(invoiceId: string) {
       where: { id: invoiceId },
       select: { id: true, number: true, updatedAt: true, pdfUrl: true, pdfKey: true, customer: { select: { updatedAt: true } } },
     }),
-    prisma.company.findUnique({ where: { id: COMPANY_ID }, select: { updatedAt: true, invoiceTemplate: true } }),
+    prisma.company.findUnique({ where: { id: await currentCompanyId() }, select: { updatedAt: true, invoiceTemplate: true } }),
   ]);
   if (!invoice || !company) throw new PdfNotFoundError();
   return { ...invoice, key: computePdfKey({ ...invoice, company }) };
@@ -314,7 +318,7 @@ function buildFromMeta(meta: PdfMeta, opts: RenderOptions): Promise<Buffer> {
   let job = inflight.get(id);
   if (!job) {
     job = (async () => {
-      const token = createSignedToken('print-invoice', meta.id, PRINT_TOKEN_TTL_S);
+      const token = await createSignedToken('print-invoice', meta.id, PRINT_TOKEN_TTL_S);
       const pdf = await renderPrintPage(`/print/invoices/${encodeURIComponent(meta.id)}?t=${encodeURIComponent(token)}`, {
         ...opts,
         footerLeft: opts.footerLeft ?? 'This is a computer-generated invoice.',
@@ -380,7 +384,7 @@ export async function getStoredInvoicePdf(invoiceId: string): Promise<{ buffer: 
 export async function requestPdfFromRenderer(invoiceId: string, opts: { origin?: string; wait?: boolean } = {}): Promise<Response> {
   const origin = opts.origin ?? (await requestOrigin());
   if (!origin) throw new Error('Could not work out this site’s address (set AUTH_URL).');
-  const token = createSignedToken('pdf-build', invoiceId, BUILD_TOKEN_TTL_S);
+  const token = await createSignedToken('pdf-build', invoiceId, BUILD_TOKEN_TTL_S);
   return fetch(`${origin}/api/invoices/${encodeURIComponent(invoiceId)}/pdf${opts.wait ? '?wait=1' : ''}`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}` },
@@ -403,9 +407,14 @@ export function schedulePdfBuild(invoiceId: string): void {
     // Read the request's host now — inside after() it may no longer be
     // available (Server Components can't read headers there at all).
     const origin = requestOrigin();
+    // Same for the company: after() may run outside this request's context
+    // (no session, no runWithTenant), so it's captured now and re-entered.
+    const companyId = findCompanyId();
     after(async () => {
       try {
-        const res = await requestPdfFromRenderer(invoiceId, { origin: (await origin) ?? undefined });
+        const cid = await companyId;
+        if (!cid) return;
+        const res = await runWithTenant(cid, async () => requestPdfFromRenderer(invoiceId, { origin: (await origin) ?? undefined }));
         await res.body?.cancel();
         if (!res.ok) console.error(`PDF prebuild for invoice ${invoiceId} was refused: HTTP ${res.status}`);
       } catch (e) {

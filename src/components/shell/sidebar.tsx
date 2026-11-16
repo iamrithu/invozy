@@ -9,6 +9,7 @@ import { useAppDispatch, useAppSelector } from '@/lib/redux/hooks';
 import { sidebarHydrated, toggleSidebar } from '@/lib/redux/ui-slice';
 import { BrandMark } from '@/components/shell/brand-mark';
 import { APP_NAME } from '@/lib/brand';
+import { useModules } from '@/components/modules/modules-provider';
 
 // Ordered by how often a working day reaches for each: billing first, then
 // who and what you bill, then stock. `also` lists sub-screens that live
@@ -29,6 +30,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const dispatch = useAppDispatch();
   const collapsed = useAppSelector((state) => state.ui.sidebarCollapsed);
+  const modules = useModules();
 
   useEffect(() => {
     dispatch(sidebarHydrated());
@@ -42,7 +44,7 @@ export function Sidebar() {
       )}
     >
       <nav className="flex flex-1 flex-col gap-1">
-        {NAV.map((item) => {
+        {NAV.filter((item) => modules.pathEnabled(item.href)).map((item) => {
           const active = [item.href, ...(item.also ?? [])].some((href) => pathname?.startsWith(href));
           const Icon = item.icon;
           return (
