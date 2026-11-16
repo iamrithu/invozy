@@ -10,6 +10,8 @@ import { getCompany } from '@/lib/get-company';
 import { requireUser } from '@/lib/session';
 import { themeStyleTag } from '@/lib/theme-presets';
 import { ModulesProvider } from '@/components/modules/modules-provider';
+import { StatusBanners } from '@/components/shell/status-banners';
+import { subscriptionView } from '@/lib/entitlements';
 
 // Installed-app look (see src/app/manifest.ts): the phone's status bar takes
 // the brand red, and iOS — which ignores most of the manifest — opens a
@@ -37,6 +39,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const user = userResult.value;
   const company = companyResult.value;
   const isNewUser = !user.onboardedAt;
+  const subscription = subscriptionView(company);
 
   return (
     // Every client component below can read the signed-in login (name, role)
@@ -47,6 +50,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <div className="flex min-h-screen flex-col">
         {/* Per-company theme color override — see src/lib/theme-presets.ts */}
         <style dangerouslySetInnerHTML={{ __html: themeStyleTag(company.themeColor) }} />
+        <StatusBanners
+          viewOnly={user.viewOnly ? { companyName: company.name } : null}
+          unverifiedEmail={!user.viewOnly && user.email && !user.emailVerifiedAt ? user.email : null}
+          billing={{ state: subscription.state, daysLeft: subscription.daysLeft, isOwner: user.role === 'OWNER', planLabel: subscription.plan.label }}
+        />
         <WelcomeCard show={isNewUser} companyName={company.name} />
         <OnboardingTour />
         <TopBar company={{ name: company.name, logoUrl: company.logoUrl }} />

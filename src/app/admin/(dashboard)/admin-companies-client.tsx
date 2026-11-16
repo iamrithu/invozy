@@ -64,8 +64,8 @@ export function AdminCompaniesClient({ initialData, initialStats }: { initialDat
 
       <div className="mb-4 grid grid-cols-2 gap-2.5 md:grid-cols-4">
         <Stat label="Companies" value={String(stats.companies)} hint={`${stats.newThisMonth} new this month`} />
-        <Stat label="Active" value={String(stats.active)} hint={stats.suspended ? `${stats.suspended} suspended` : 'None suspended'} />
-        <Stat label="Active logins" value={String(stats.users)} hint="Owners and staff" />
+        <Stat label="Active" value={String(stats.active)} hint={[stats.suspended ? `${stats.suspended} suspended` : 'None suspended', stats.deletionRequests ? `${stats.deletionRequests} asked to delete` : ''].filter(Boolean).join(' · ')} />
+        <Stat label="On trial · paying" value={`${stats.trialing} · ${stats.paying}`} hint={stats.needsPayment ? `${stats.needsPayment} need payment` : 'None overdue'} />
         <Stat label="Billed this month" value={fmtInr(stats.billedThisMonth)} hint={`${stats.invoicesThisMonth} invoices, all companies`} />
       </div>
 
@@ -125,6 +125,11 @@ export function AdminCompaniesClient({ initialData, initialStats }: { initialDat
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
                         {c.active ? <Badge variant="green">Active</Badge> : <Badge variant="red">Suspended</Badge>}
+                        <Badge variant={c.billingState === 'active' ? 'outline' : c.billingState === 'trialing' ? 'brand' : c.billingState === 'grace' ? 'gold' : 'red'}>
+                          {c.planLabel}
+                          {c.billingState === 'trialing' ? ' · trial' : c.billingState === 'grace' ? ' · due' : c.billingState === 'locked' ? ' · ended' : ''}
+                        </Badge>
+                        {c.deletionRequestedAt && <Badge variant="red">Delete requested</Badge>}
                         {c.disabledModules.length > 0 && <Badge variant="outline">{c.disabledModules.length} module{c.disabledModules.length === 1 ? '' : 's'} off</Badge>}
                       </div>
                     </TableCell>

@@ -8,6 +8,12 @@ import {
   setCompanyActive,
   setCompanyModules,
   setUserActiveForAdmin,
+  setCompanySubscription,
+  extendTrial,
+  recordPaymentForCompany,
+  startViewAs,
+  deleteCompanyPermanently,
+  listAuditLog,
   type AdminCompanyDetail,
   type AdminCompanyStatus,
   type CreateCompanyFormState,
@@ -22,6 +28,7 @@ export const adminKeys = {
   stats: () => [...adminKeys.all, 'stats'] as const,
   page: (params: CompanyListParams) => [...adminKeys.all, 'companies', params] as const,
   detail: (id: string) => [...adminKeys.all, 'company', id] as const,
+  audit: (params: { companyId?: string; page: number }) => [...adminKeys.all, 'audit', params] as const,
 };
 
 export function useCompaniesForAdmin(params: CompanyListParams) {
@@ -73,4 +80,30 @@ export function useSetCompanyModules() {
 
 export function useSetUserActive() {
   return useAdminMutation(({ userId, active }: { userId: string; active: boolean }) => setUserActiveForAdmin(userId, active));
+}
+
+export function useSetCompanySubscription() {
+  return useAdminMutation(({ companyId, plan, status, periodEnd }: { companyId: string; plan: string; status: string; periodEnd: string | null }) =>
+    setCompanySubscription(companyId, { plan, status, periodEnd })
+  );
+}
+
+export function useExtendTrial() {
+  return useAdminMutation(({ companyId, days }: { companyId: string; days: number }) => extendTrial(companyId, days));
+}
+
+export function useRecordPayment() {
+  return useAdminMutation(({ companyId, ...input }: { companyId: string; plan: string; months: number; amount: number; note: string }) => recordPaymentForCompany(companyId, input));
+}
+
+export function useStartViewAs() {
+  return useMutation({ mutationFn: (companyId: string) => startViewAs(companyId) });
+}
+
+export function useDeleteCompany() {
+  return useAdminMutation(({ companyId, confirmName }: { companyId: string; confirmName: string }) => deleteCompanyPermanently(companyId, confirmName));
+}
+
+export function useAuditLog(params: { companyId?: string; page: number }) {
+  return useQuery({ queryKey: adminKeys.audit(params), queryFn: () => listAuditLog({ ...params, pageSize: 50 }), placeholderData: (prev) => prev });
 }

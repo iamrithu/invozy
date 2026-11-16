@@ -97,6 +97,7 @@ import { customerDisplayName } from '@/lib/customer';
 import { UNITS } from '@/lib/units';
 import { PAPER_STYLE } from '@/lib/paper-theme';
 import type { PdfLayout } from '@/lib/pdf-layout';
+import { useModules } from '@/components/modules/modules-provider';
 
 type PriceTier = { id?: string; unit: string; price: string | number; approxQty: string | number | null };
 type Product = {
@@ -239,7 +240,7 @@ function CategoryIcon({ category, size = 15 }: { category: string; size?: number
 type SaveMode = 'draft' | 'send' | 'keep' | 'paid';
 
 export function BuilderClient({
-  products,
+  products: catalog,
   company,
   editInvoice,
   initialMode = 'edit',
@@ -254,6 +255,14 @@ export function BuilderClient({
   // Deletes are owner-only on the server; staff don't see the buttons.
   const { isOwner, id: currentUserId } = useCurrentUser();
   const DRAFT_KEY = `${DRAFT_KEY_PREFIX}:${currentUserId}`;
+  // Modules the platform admin switched off for this company (src/lib/modules.ts).
+  // Inventory off: every product counts as untracked here — no stock left /
+  // shortage / batch hints, and the server doesn't block on stock either
+  // (src/lib/stock.ts). Returns off: no credit-note shortcuts.
+  const modules = useModules();
+  const inventoryOn = modules.enabled('inventory');
+  const returnsOn = modules.enabled('returns');
+  const products = useMemo(() => (inventoryOn ? catalog : catalog.map((p) => (p.trackStock ? { ...p, trackStock: false } : p))), [catalog, inventoryOn]);
   const [mode, setMode] = useState<'edit' | 'preview'>(initialMode);
   const [customer, setCustomer] = useState<Customer | null>((editInvoice?.customer as Customer) ?? null);
   const [custQuery, setCustQuery] = useState('');
@@ -1015,7 +1024,7 @@ export function BuilderClient({
                 <Clock size={14} /> Send payment reminder
               </DropdownMenuItem>
             )}
-            {status !== 'DRAFT' && (
+            {status !== 'DRAFT' && returnsOn && (
               <DropdownMenuItem onClick={() => router.push(`/credit-notes/new?invoice=${savedId}`)}>
                 <FileMinus size={14} /> Credit note / return
               </DropdownMenuItem>
@@ -1622,9 +1631,11 @@ export function BuilderClient({
                       {p.receiptNo ? ` · ${p.receiptNo}` : ''}
                     </span>
                     {p.creditNoteId ? (
-                      <Link href={`/credit-notes/${p.creditNoteId}`} className="text-[10.5px] font-bold text-brand hover:underline">
-                        View
-                      </Link>
+                      returnsOn ? (
+                        <Link href={`/credit-notes/${p.creditNoteId}`} className="text-[10.5px] font-bold text-brand hover:underline">
+                          View
+                        </Link>
+                      ) : null
                     ) : (
                       <PdfDownloadButton
                         iconOnly

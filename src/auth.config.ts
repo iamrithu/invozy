@@ -1,9 +1,10 @@
 import type { NextAuthConfig } from 'next-auth';
 import type { AppRole } from '@/types/next-auth';
+import { VIEW_AS_COOKIE } from '@/lib/view-as-cookie';
 
 /** Pages reachable without a session — everything else the proxy matches
  * (see src/proxy.ts) requires one. */
-const PUBLIC_PATHS = ['/login', '/signup', '/forgot-password', '/reset-password', '/admin/login'];
+const PUBLIC_PATHS = ['/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/admin/login'];
 
 /** Edge-safe half of the NextAuth config (no Prisma, no bcrypt) — this is
  * the only part `proxy.ts` loads. The full config in `src/auth.ts` spreads
@@ -13,7 +14,7 @@ export const authConfig = {
     signIn: '/login',
   },
   callbacks: {
-    authorized({ auth, request: { nextUrl } }) {
+    authorized({ auth, request: { nextUrl, cookies } }) {
       const path = nextUrl.pathname;
       const role = auth?.user?.role;
       const isPublic = PUBLIC_PATHS.some((p) => path.startsWith(p));
@@ -29,7 +30,10 @@ export const authConfig = {
       if (path.startsWith('/admin')) {
         return role === 'SUPER_ADMIN' ? true : Response.redirect(new URL('/admin/login', nextUrl));
       }
-      if (!auth?.user || role === 'SUPER_ADMIN' || !auth.user.companyId) return Response.redirect(new URL('/login', nextUrl));
+      // …except read-only "view as company" (src/lib/view-as.ts): the cookie is
+      // only a hint here; requireUser verifies it on every request.
+      if (role === 'SUPER_ADMIN') return cookies.has(VIEW_AS_COOKIE) ? true : Response.redirect(new URL('/admin', nextUrl));
+      if (!auth?.user || !auth.user.companyId) return Response.redirect(new URL('/login', nextUrl));
       return true;
     },
     jwt({ token, user }) {

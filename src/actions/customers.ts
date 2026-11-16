@@ -11,6 +11,7 @@ import { saveUploadedImage, deleteUploadedImage } from '@/lib/uploads';
 import { toActionError, type ActionResult } from '@/lib/action-result';
 import { logActivity } from '@/lib/activity';
 import { customerDisplayName } from '@/lib/customer';
+import { assertCanCreate } from '@/lib/subscription-guard';
 
 const MAX_IMAGES = 6;
 
@@ -240,6 +241,7 @@ export async function createCustomer(guest: boolean, _prev: CustomerFormState, f
       return { error: 'Check the highlighted fields.', fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string> };
     }
     const user = await requireUser();
+    await assertCanCreate('customer');
     uploaded = await uploadNewImages(formData, MAX_IMAGES);
     const customer = await prisma.customer.create({ data: { ...parsed.data, guest, active: parseActive(formData) ?? true, images: uploaded } });
     uploaded = []; // saved — no longer ours to clean up

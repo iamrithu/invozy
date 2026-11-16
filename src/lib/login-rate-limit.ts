@@ -32,7 +32,7 @@ export async function assertNotLockedOut(identifier: string, kind: LoginKind = '
   }
 }
 
-export async function recordFailedLogin(identifier: string, kind: LoginKind = 'company') {
+export async function recordFailedLogin(identifier: string, kind: LoginKind = 'company', max = MAX_ATTEMPTS) {
   const key = lockoutKey(identifier, kind);
   if (!key) return;
   const row = await prisma.loginAttempt.upsert({
@@ -40,7 +40,7 @@ export async function recordFailedLogin(identifier: string, kind: LoginKind = 'c
     create: { identifier: key, failCount: 1 },
     update: { failCount: { increment: 1 } },
   });
-  if (row.failCount >= MAX_ATTEMPTS) {
+  if (row.failCount >= max) {
     await prisma.loginAttempt.update({
       where: { identifier: key },
       data: { lockedUntil: new Date(Date.now() + LOCKOUT_MS) },
@@ -58,3 +58,40 @@ export async function clearAdminFailedLogins(email: string) {
   const key = lockoutKey(email, 'admin');
   if (key) await prisma.loginAttempt.deleteMany({ where: { identifier: key } });
 }
+
+/** A simple fixed-window counter on the same table, for things that aren't
+ * passwords: signups per IP, verification-email resends… Returns false once
+ * `max` hits have been used in the current `windowMs`. Keys are namespaced
+ * by the caller ("signup-ip:…", "verify:…") so they never collide with the
+ * login counters above. */
+export async function consumeRateLimit(key: string, max: number, windowMs: number): Promise<boolean> {
+  if (!key) return true;
+  if ((await windowCount(key, windowMs)) >= max) return false;
+  await bumpWindow(key, windowMs);
+  return true;
+}
+
+/** Hits recorded on `key` in the current window (0 once it's lapsed). */
+export async function windowCount(key: string, windowMs: number): Promise<number> {
+  if (!key) return 0;
+  const row = await prisma.loginAttempt.findUnique({ where: { identifier: key } });
+  return !row || Date.now() - row.updatedAt.getTime() > windowMs ? 0 : row.failCount;
+}
+
+/** Records one hit on `key`, starting a new window if the last one lapsed. */
+export async function bumpWindow(key: string, windowMs: number): Promise<void> {
+  if (!key) return;
+  const row = await prisma.loginAttempt.findUnique({ where: { identifier: key } });
+  if (!row || Date.now() - row.updatedAt.getTime() > windowMs) {
+    await prisma.loginAttempt.upsert({ where: { identifier: key }, create: { identifier: key, failCount: 1 }, update: { failCount: 1, lockedUntil: null } });
+  } else {
+    await prisma.loginAttempt.update({ where: { identifier: key }, data: { failCount: { increment: 1 } } });
+  }
+}
+
+/** Wrong passwords from one network, across every login: a separate window
+ * so credential-stuffing from one IP is cut off even when it spreads its
+ * guesses over many accounts. Never cleared by a successful sign-in (an
+ * attacker with one real account could otherwise reset it). */
+export const IP_WINDOW_MS = 15 * 60 * 1000;
+export const ipKey = (kind: LoginKind, ip: string) => (ip ? `${kind}-ip:${ip}` : '');

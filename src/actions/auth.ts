@@ -11,6 +11,11 @@ import { sendEmail } from '@/lib/email';
 import { clearFailedLogins } from '@/lib/login-rate-limit';
 import { APP_NAME } from '@/lib/brand';
 import { configuredSiteOrigin } from '@/lib/site-origin';
+import { addDays } from 'date-fns';
+import { TRIAL_DAYS } from '@/lib/plans';
+import { requestIp } from '@/lib/request-ip';
+import { consumeRateLimit } from '@/lib/login-rate-limit';
+import { sendVerificationEmail } from '@/lib/email-verification';
 
 // Everything here runs before anyone is signed in to a company, so it uses
 // the unscoped `rootPrisma` — and only ever touches the one login (or the one
@@ -45,8 +50,33 @@ export type SignUpFormState = { error?: string; fieldErrors?: Record<string, str
 /** Self-serve signup: a new company and its first OWNER login, together.
  * Switched off by SIGNUPS_DISABLED=1, in which case only the platform admin
  * (/admin) can add companies. */
+/** Cloudflare Turnstile (optional): with TURNSTILE_SECRET_KEY set, signup
+ * needs a passing challenge token from the widget on /signup. */
+async function turnstilePasses(token: FormDataEntryValue | null, ip: string): Promise<boolean> {
+  const secret = process.env.TURNSTILE_SECRET_KEY;
+  if (!secret) return true;
+  if (typeof token !== 'string' || !token) return false;
+  try {
+    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      body: new URLSearchParams({ secret, response: token, ...(ip ? { remoteip: ip } : {}) }),
+      cache: 'no-store',
+    });
+    return ((await res.json()) as { success?: boolean }).success === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function signUp(_prev: SignUpFormState, formData: FormData): Promise<SignUpFormState> {
   if (process.env.SIGNUPS_DISABLED === '1') return { error: 'New sign-ups are closed. Contact us to get an account.' };
+  const ip = await requestIp();
+  if (!(await turnstilePasses(formData.get('cf-turnstile-response'), ip))) return { error: 'Please complete the “I’m human” check and try again.' };
+  // A handful of companies per network per hour is plenty for real people
+  // and stops a script from filling the platform with junk workspaces.
+  if (ip && !(await consumeRateLimit(`signup-ip:${ip}`, 5, 60 * 60 * 1000))) {
+    return { error: 'Too many sign-ups from this network. Please try again in an hour.' };
+  }
   const parsed = SignUpSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) {
     return { error: 'Check the highlighted fields.', fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string> };
@@ -67,12 +97,16 @@ export async function signUp(_prev: SignUpFormState, formData: FormData): Promis
 
   const passwordHash = await bcrypt.hash(password, 10);
   try {
-    await rootPrisma.$transaction(async (tx) => {
+    const owner = await rootPrisma.$transaction(async (tx) => {
       // Company.email mirrors the owner's login email (src/actions/account.ts
       // keeps them in step) — it's what prints on invoices until changed.
-      const company = await tx.company.create({ data: { name: companyName, state, email, invoiceFY: currentIndianFY() } });
-      await tx.user.create({ data: { companyId: company.id, email, phone, passwordHash, role: 'OWNER' } });
+      // Every new company starts on a free trial with every module.
+      const company = await tx.company.create({
+        data: { name: companyName, state, email, invoiceFY: currentIndianFY(), plan: 'growth', subscriptionStatus: 'TRIALING', trialEndsAt: addDays(new Date(), TRIAL_DAYS) },
+      });
+      return tx.user.create({ data: { companyId: company.id, email, phone, passwordHash, role: 'OWNER' }, select: { id: true } });
     });
+    if (email) await sendVerificationEmail(owner.id);
   } catch (e) {
     // A race with another signup for the same email/phone.
     if (e instanceof Error && 'code' in e && (e as { code?: string }).code === 'P2002') {
@@ -152,8 +186,10 @@ export async function resetPassword(_prev: ResetPasswordFormState, formData: For
   }
 
   const passwordHash = await bcrypt.hash(parsed.data.password, 10);
+  // Following a reset link proves the inbox is theirs, so it also confirms the email.
+  const verifies = !!record.user.email && !record.user.emailVerifiedAt;
   await rootPrisma.$transaction([
-    rootPrisma.user.update({ where: { id: record.userId }, data: { passwordHash } }),
+    rootPrisma.user.update({ where: { id: record.userId }, data: { passwordHash, ...(verifies ? { emailVerifiedAt: new Date() } : {}) } }),
     rootPrisma.passwordResetToken.update({ where: { id: record.id }, data: { usedAt: new Date() } }),
   ]);
   await clearFailedLogins(record.user.email, record.user.phone);

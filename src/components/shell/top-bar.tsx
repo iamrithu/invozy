@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
-import { Search, Plus, Building2, ChevronDown, Package, Users, Receipt, LogOut, UserCog, Compass, UsersRound, History } from 'lucide-react';
+import { Search, Plus, Building2, ChevronDown, Package, Users, Receipt, LogOut, UserCog, Compass, UsersRound, History, CreditCard } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
 import { CommandPalette } from '@/components/shell/command-palette';
 import { NotificationsBell } from '@/components/shell/notifications-bell';
@@ -209,13 +209,16 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
                     <UsersRound size={14} /> Team &amp; logins
                   </DropdownMenuItem>
                 )}
+                <DropdownMenuItem onClick={() => router.push('/billing')} data-tour="menu-billing">
+                  <CreditCard size={14} /> Billing &amp; plan
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => router.push('/activity')}>
                   <History size={14} /> Activity log
                 </DropdownMenuItem>
               </>
             )}
             <DropdownMenuItem onClick={() => dispatch(requestTour())}>
-              <Compass size={14} /> Replay tour
+              <Compass size={14} /> Take the tour
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => signOut({ callbackUrl: '/login' })}>

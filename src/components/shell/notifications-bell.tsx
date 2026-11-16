@@ -116,6 +116,7 @@ export function NotificationsBell() {
   return (
     <div ref={ref} className="relative">
       <button
+        data-tour="notifications"
         type="button"
         onClick={toggle}
         aria-label={unread.length ? `Notifications, ${unread.length} new` : 'Notifications'}

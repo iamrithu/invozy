@@ -16,6 +16,7 @@ import { deleteUploadedImage, isOwnUpload, saveUploadedDocument } from '@/lib/up
 import { computePurchaseTotals, PURCHASE_ATTACHMENT_LIMIT } from '@/components/purchases/purchase-math';
 import { currentCompanyId } from '@/lib/tenant';
 import { requireModule } from '@/lib/require-module';
+import { assertCanCreate } from '@/lib/subscription-guard';
 
 // Supplier bills. Saving one adds its lines to stock (PURCHASE movements);
 // editing posts only the difference against what the bill added before
@@ -263,6 +264,7 @@ export async function getLastPurchaseRates(): Promise<Record<string, Record<stri
 export async function savePurchase(id: string | null, input: PurchaseInput): Promise<ActionResult<{ purchaseId: string }>> {
   try {
     await requireModule('purchases');
+    if (!id) await assertCanCreate('purchase');
     const user = await requireUser();
     const parsed = PurchaseInputSchema.safeParse(input);
     const companyId = await currentCompanyId();

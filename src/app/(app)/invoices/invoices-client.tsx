@@ -26,6 +26,7 @@ import { DeleteInvoiceDialog } from '@/components/invoices/delete-invoice-dialog
 import { RemindersDialog } from '@/components/invoices/reminders-dialog';
 import { useCustomersForFilter } from '@/hooks/use-customers';
 import type { InvoiceSort } from '@/actions/invoices';
+import { useModules } from '@/components/modules/modules-provider';
 
 type GstTypeFilter = 'all' | 'intra' | 'inter';
 
@@ -94,6 +95,7 @@ export function InvoicesClient({
   const [page, setPage] = useState(1);
   const router = useRouter();
   const { isOwner } = useCurrentUser();
+  const modules = useModules();
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [paymentTarget, setPaymentTarget] = useState<Invoice | null>(null);
   const [remindersOpen, setRemindersOpen] = useState(openReminders);
@@ -207,11 +209,13 @@ export function InvoicesClient({
               <MessageCircle size={13} /> Payment reminders
             </Button>
           )}
-          <Button asChild variant="outline">
-            <Link href="/credit-notes">
-              <FileMinus size={13} /> Credit notes
-            </Link>
-          </Button>
+          {modules.enabled('returns') && (
+            <Button asChild variant="outline">
+              <Link href="/credit-notes">
+                <FileMinus size={13} /> Credit notes
+              </Link>
+            </Button>
+          )}
           <Button asChild>
             <Link href="/invoices/new">
               <Plus size={13} /> New invoice

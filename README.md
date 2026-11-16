@@ -53,6 +53,40 @@ admin's email can't be a company login. Wrong-password lockouts count per login 
 spaced, and the admin has its own counter. Rotating `ADMIN_EMAIL`/`ADMIN_PASSWORD_HASH` ends admin
 sessions.
 
+## Running the platform
+
+**Subscriptions** (`src/lib/plans.ts`, `src/lib/entitlements.ts`): plans Starter / Growth / Business
+decide the included modules and limits (invoices a month, active logins) — prices are placeholders in
+`plans.ts`. New companies get a 14-day trial with every module. When a trial or paid period ends there's
+a 7-day grace period with a warning, then new invoices, customers, products, purchases, credit notes and
+logins are refused (`src/lib/subscription-guard.ts`) — viewing, editing, payments and exports always keep
+working. Companies that existed before subscriptions are grandfathered: Business, no end date.
+Owners see their plan, usage and payments at `/billing` and pay with Razorpay when its keys are set
+(checkout + webhook, applied idempotently); otherwise, and for bank transfers, the admin records
+payments in `/admin`. Reminder emails go out 3 days before and after the end (daily job).
+
+**Admin panel** (`/admin`): companies with plan/billing state, trial extension, manual payments, plan and
+status changes, suspend/restore, modules, password resets, logins on/off, **view as company** (opens the
+workspace read-only for 30 minutes — every write is refused at the data layer, `src/lib/view-as.ts`),
+**permanent deletion** (suspended companies only, name typed; `src/lib/company-purge.ts`), and an
+**audit log** (`/admin/audit`) of every admin action, kept even for deleted companies. Owners can ask for
+deletion from `/billing`. Admin sign-in: optional authenticator codes (`npm run admin-totp` →
+`ADMIN_TOTP_SECRET`) and a per-network throttle.
+
+**Sign-up and logins:** new logins get an email-confirmation link (`/verify-email`; a banner offers to
+resend it); sign-ups are limited to 5 per network per hour, with an optional Cloudflare Turnstile check.
+
+**Onboarding:** new owners get a "Get set up" checklist on the dashboard (worked out from their real
+data) and a full guided tour of every section they have (`src/components/onboarding/onboarding-tour.tsx`,
+also under the account menu → "Take the tour").
+
+**Scheduled jobs:** `/api/cron/daily` and `/api/cron/backup` hand each active company its own job at
+`/api/cron/company` (its own function run and time limit) — the 8 AM summary + subscription reminders,
+and the nightly per-company backup.
+
+**Monitoring:** server errors are logged as JSON lines and, with `ERROR_WEBHOOK_URL`, posted to a chat
+channel (`src/instrumentation.ts`); `/api/health` is for an uptime monitor.
+
 ## Setup (local)
 
 ```bash
@@ -73,8 +107,10 @@ tool.) `npm run db:seed` creates a demo company with sample products, customers 
 
 ## Deploying the upgrade to an existing database
 
-`prisma/migrations/20261116100000_saas_asb_features` upgrades a database that has the original Invozy
-migrations applied. It is additive: no column or row is dropped. It adds the new tables and columns,
+Two migrations upgrade a database that has the original Invozy migrations applied:
+`20261116100000_saas_asb_features` (below) and `20261117000000_subscriptions_audit_verification`
+(subscriptions, audit log, email verification — existing companies become Business with no end date,
+existing logins count as verified). `20261116100000_saas_asb_features` It is additive: no column or row is dropped. It adds the new tables and columns,
 converts `Role` → `UserRole` keeping every login's role, gives payments their company, and backfills
 each existing invoice's `amountPaid`, stored totals (the same float math as `computeTotals()`, verified
 equal on 600 generated invoices) and `stockTaken`.
@@ -89,7 +125,9 @@ On a live database:
 Deploy the code and the migration together: the code expects the new columns.
 
 New environment variables for production: `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` (raw hash in the host's
-UI), `CRON_SECRET`, `AUTH_URL`, optional `SIGNUPS_DISABLED=1`. `AUTH_URL` is what password-reset emails,
+UI), `CRON_SECRET`, `AUTH_URL`; optional `ADMIN_TOTP_SECRET`, `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` /
+`RAZORPAY_WEBHOOK_SECRET`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY`, `ERROR_WEBHOOK_URL`,
+`SIGNUPS_DISABLED=1` (see `.env.example`). `AUTH_URL` is what password-reset emails,
 share links and the PDF renderer use for the site's address; when it's unset they fall back to request
 headers, which is only safe on hosts that set those headers themselves (Vercel does). **Self-hosting
 requires `AUTH_URL`.** `vercel.json` pins functions to `sin1`,

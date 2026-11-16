@@ -27,5 +27,5 @@ export default async function SignupPage() {
       </div>
     );
   }
-  return <SignupClient />;
+  return <SignupClient turnstileSiteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || null} />;
 }

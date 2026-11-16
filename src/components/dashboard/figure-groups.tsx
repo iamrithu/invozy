@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { isModuleEnabled, moduleForPath } from '@/lib/modules';
 import type { LucideIcon } from 'lucide-react';
 import {
   AlertTriangle,
@@ -59,7 +60,8 @@ export type Figure = {
   /** Exact figure behind a short value. */
   title?: string;
   sub: React.ReactNode;
-  href: string;
+  /** Where the figure links to — none when that page's module is switched off (see forModules). */
+  href?: string;
   delta?: DeltaView;
   /** A small trend line under the figure. */
   spark?: { values: number[]; color: string };
@@ -68,6 +70,28 @@ export type Figure = {
 };
 
 export type FigureGroup = { title: string; figures: Figure[]; footer?: React.ReactNode; /** Full width, four figures across. */ wide?: boolean };
+
+// Column classes spelled out in full so Tailwind keeps them — sized to the
+// figures a group has left once switched-off modules' figures are dropped.
+const COLS: Record<number, string> = { 1: 'sm:grid-cols-1', 2: 'sm:grid-cols-2', 3: 'sm:grid-cols-3' };
+const WIDE_COLS: Record<number, string> = { 1: 'xl:grid-cols-1', 2: 'xl:grid-cols-2', 3: 'xl:grid-cols-3', 4: 'xl:grid-cols-4' };
+
+/** Fits the figures to the company's modules (src/lib/modules.ts): a figure
+ * that *is* a switched-off module's data (credit notes, purchases,
+ * suppliers) is dropped; one that only *links* into a switched-off module
+ * (Reports) keeps its number but loses the link. Empty groups go too. */
+export function forModules(groups: FigureGroup[], disabled: readonly string[]): FigureGroup[] {
+  return groups
+    .map((g) => ({
+      ...g,
+      figures: g.figures.flatMap((f) => {
+        const key = f.href ? moduleForPath(f.href.split('?')[0]) : null;
+        if (!key || isModuleEnabled(disabled, key)) return [f];
+        return key === 'reports' ? [{ ...f, href: undefined }] : [];
+      }),
+    }))
+    .filter((g) => g.figures.length > 0);
+}
 
 export function FigureGroups({ groups }: { groups: FigureGroup[] }) {
   return (
@@ -78,13 +102,13 @@ export function FigureGroups({ groups }: { groups: FigureGroup[] }) {
           {g.wide ? (
             // Two by two until there's room for four across (then divided
             // like the other groups) — four narrow columns cut the labels.
-            <div className="grid grid-cols-2 gap-x-5 gap-y-4 xl:grid-cols-4 xl:gap-x-0 xl:divide-x xl:divide-line">
+            <div className={cn('grid grid-cols-2 gap-x-5 gap-y-4 xl:gap-x-0 xl:divide-x xl:divide-line', WIDE_COLS[Math.min(g.figures.length, 4)])}>
               {g.figures.map((f) => (
                 <FigureCell key={f.label} {...f} className="xl:px-3.5 xl:first:pl-0 xl:last:pr-0" />
               ))}
             </div>
           ) : (
-            <div className="grid grid-cols-1 divide-y divide-line sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+            <div className={cn('grid grid-cols-1 divide-y divide-line sm:divide-x sm:divide-y-0', COLS[Math.min(g.figures.length, 3)])}>
               {g.figures.map((f) => (
                 <FigureCell key={f.label} {...f} />
               ))}
@@ -98,14 +122,22 @@ export function FigureGroups({ groups }: { groups: FigureGroup[] }) {
 }
 
 function FigureCell({ icon: Icon, tone, label, value, title, sub, href, delta, spark, badge, className }: Figure & { className?: string }) {
+  const Wrap = ({ children, className: cls }: { children: React.ReactNode; className: string }) =>
+    href ? (
+      <Link href={href} className={cls}>
+        {children}
+      </Link>
+    ) : (
+      <div className={cls}>{children}</div>
+    );
   return (
-    <Link href={href} className={cn('group flex min-w-0 flex-col', className ?? 'py-2.5 first:pt-0 last:pb-0 sm:px-3.5 sm:py-0 sm:first:pl-0 sm:last:pr-0')}>
+    <Wrap className={cn('group flex min-w-0 flex-col', className ?? 'py-2.5 first:pt-0 last:pb-0 sm:px-3.5 sm:py-0 sm:first:pl-0 sm:last:pr-0')}>
       <span className="flex min-w-0 items-center gap-1.5 text-[12px] font-semibold text-ink-soft">
         <span className={cn('hidden h-6 w-6 flex-shrink-0 items-center justify-center rounded-sm2 sm:flex', TONE_CHIP[tone ?? 'none'])}>
           <Icon size={13} />
         </span>
         <span className="min-w-0 leading-tight group-hover:text-ink sm:truncate">{label}</span>
-        <ChevronRight size={12} className="ml-auto hidden flex-shrink-0 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100 sm:block" />
+        {href && <ChevronRight size={12} className="ml-auto hidden flex-shrink-0 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100 sm:block" />}
       </span>
       <span className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
         <span className="font-mono text-[18px] font-bold leading-tight tracking-tight text-ink xl:text-[19px]" title={title}>
@@ -120,7 +152,7 @@ function FigureCell({ icon: Icon, tone, label, value, title, sub, href, delta, s
       </span>
       <span className="mt-0.5 text-[11px] leading-snug text-ink-faint">{sub}</span>
       {spark && spark.values.length > 1 && <Sparkline values={spark.values} color={spark.color} />}
-    </Link>
+    </Wrap>
   );
 }
 

@@ -12,6 +12,7 @@ import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetIcon, SheetBody, SheetFooter } from '@/components/ui/sheet';
 import { initials, hashColor } from '@/lib/avatar';
+import { useModules } from '@/components/modules/modules-provider';
 
 type AccountUser = { name: string | null; email: string | null; phone: string | null; role: UserRoleName; companyName: string };
 
@@ -25,6 +26,7 @@ export function AccountClient({ user }: { user: AccountUser }) {
   const [tab, setTab] = useState<(typeof TABS)[number]['id']>('profile');
   const displayName = userLabel(user);
   const isOwner = user.role === 'OWNER';
+  const modules = useModules();
 
   function openTab(t: (typeof TABS)[number]['id']) {
     setTab(t);
@@ -72,7 +74,9 @@ export function AccountClient({ user }: { user: AccountUser }) {
 
       {isOwner && (
         <InfoCard icon={<UsersRound size={13} />} title="Team" className="lg:col-span-12">
-          <LinkRow href="/team" icon={<UsersRound size={14} />} title="Team & logins" hint="Add staff logins, reset passwords, switch someone off" />
+          {modules.enabled('team') && (
+            <LinkRow href="/team" icon={<UsersRound size={14} />} title="Team & logins" hint="Add staff logins, reset passwords, switch someone off" />
+          )}
           <LinkRow href="/activity" icon={<History size={14} />} title="Activity log" hint="Who created, changed or deleted what, and when" />
         </InfoCard>
       )}

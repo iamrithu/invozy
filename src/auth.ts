@@ -3,7 +3,10 @@ import Credentials from 'next-auth/providers/credentials';
 import bcrypt from 'bcryptjs';
 import { authConfig } from '@/auth.config';
 import { rootPrisma } from '@/lib/prisma';
-import { assertNotLockedOut, clearAdminFailedLogins, clearFailedLogins, recordFailedLogin } from '@/lib/login-rate-limit';
+import { assertNotLockedOut, bumpWindow, clearAdminFailedLogins, clearFailedLogins, IP_WINDOW_MS, ipKey, recordFailedLogin, windowCount } from '@/lib/login-rate-limit';
+import { ipFromHeaders } from '@/lib/request-ip';
+import { matchTotp } from '@/lib/totp';
+import { rootPrisma as db } from '@/lib/prisma';
 import { isEmailIdentifier, normalizePhone } from '@/lib/login-identifiers';
 import { adminFingerprint } from '@/lib/admin-fingerprint';
 
@@ -20,9 +23,42 @@ class CompanySuspended extends CredentialsSignin {
   code = 'company-suspended';
 }
 
+/** Admin sign-in with two-factor on: the password was right but the
+ * authenticator code is missing or wrong. */
+class CodeRequired extends CredentialsSignin {
+  code = 'code-required';
+}
+
+/** Wrong passwords tolerated per network per 15 minutes. */
+const COMPANY_IP_MAX = 30;
+const ADMIN_IP_MAX = 5;
+/** Without two-factor the admin's own counter still caps a distributed guess. */
+const ADMIN_ID_MAX = 30;
+
+/** The last authenticator step accepted — a code can't be replayed. */
+const TOTP_LAST_KEY = 'admin-totp:last-step';
+async function totpAccepts(code: string): Promise<boolean> {
+  const secret = process.env.ADMIN_TOTP_SECRET;
+  if (!secret) return true;
+  const step = matchTotp(secret, code.trim());
+  if (step === null) return false;
+  const last = await db.loginAttempt.findUnique({ where: { identifier: TOTP_LAST_KEY } });
+  if (last && last.failCount >= step) return false;
+  await db.loginAttempt.upsert({ where: { identifier: TOTP_LAST_KEY }, create: { identifier: TOTP_LAST_KEY, failCount: step }, update: { failCount: step } });
+  return true;
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   session: { strategy: 'jwt' },
+  events: {
+    // Every platform-admin sign-in goes into the platform audit log.
+    async signIn({ user }) {
+      if (user.role !== 'SUPER_ADMIN') return;
+      const { logPlatformAction } = await import('@/lib/platform-audit');
+      await logPlatformAction({ actor: user.email ?? 'admin', action: 'admin.sign-in', summary: 'Signed in to the admin panel' });
+    },
+  },
   providers: [
     // A company's logins (owners and staff), signed in by email or phone.
     // Sign-in doesn't ask which company — email/phone are unique across the
@@ -31,16 +67,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       id: 'credentials',
       name: 'Credentials',
       credentials: { identifier: {}, password: {} },
-      async authorize(credentials) {
+      async authorize(credentials, request) {
         const identifier = String(credentials?.identifier ?? '').trim();
         const password = String(credentials?.password ?? '');
         if (!identifier || !password) return null;
+        const ip = ipKey('company', ipFromHeaders(request.headers));
 
         try {
           await assertNotLockedOut(identifier);
         } catch {
           throw new TooManyAttempts();
         }
+        if ((await windowCount(ip, IP_WINDOW_MS)) >= COMPANY_IP_MAX) throw new TooManyAttempts();
 
         // An email (has "@") only ever matches an email, a phone only a phone —
         // so a value saved in one field can't shadow someone else's login.
@@ -59,6 +97,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // no hint that the account exists.
         if (!user || !valid || !user.active) {
           await recordFailedLogin(identifier);
+          await bumpWindow(ip, IP_WINDOW_MS);
           return null;
         }
         await clearFailedLogins(identifier);
@@ -72,10 +111,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Credentials({
       id: 'admin',
       name: 'Admin',
-      credentials: { email: {}, password: {} },
-      async authorize(credentials) {
+      credentials: { email: {}, password: {}, code: {} },
+      async authorize(credentials, request) {
         const email = String(credentials?.email ?? '').trim();
         const password = String(credentials?.password ?? '');
+        const code = String(credentials?.code ?? '');
+        const twoFactor = !!process.env.ADMIN_TOTP_SECRET;
+        const ip = ipKey('admin', ipFromHeaders(request.headers));
         const adminEmail = process.env.ADMIN_EMAIL;
         // Some hosts' env-var UIs (e.g. Vercel's dashboard) don't unescape a
         // shell-escaped "\$" the way Next's local .env loader does, so a hash
@@ -85,17 +127,29 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const adminHash = process.env.ADMIN_PASSWORD_HASH?.replace(/\\\$/g, '$');
         if (!email || !password || !adminEmail || !adminHash) return null;
 
-        // The admin's own throttle namespace — no company login shares it.
-        try {
-          await assertNotLockedOut(email, 'admin');
-        } catch {
-          throw new TooManyAttempts();
+        // Counted per network: a stranger guessing can only lock themselves
+        // out. With two-factor on, that's the only lock (a password alone gets
+        // nowhere); without it, the admin's own counter also caps a guess
+        // spread over many networks. Neither namespace is shared with a
+        // company login.
+        if ((await windowCount(ip, IP_WINDOW_MS)) >= ADMIN_IP_MAX) throw new TooManyAttempts();
+        if (!twoFactor) {
+          try {
+            await assertNotLockedOut(email, 'admin');
+          } catch {
+            throw new TooManyAttempts();
+          }
         }
 
         const valid = email.toLowerCase() === adminEmail.toLowerCase() && (await bcrypt.compare(password, adminHash));
         if (!valid) {
-          await recordFailedLogin(email, 'admin');
+          await bumpWindow(ip, IP_WINDOW_MS);
+          if (!twoFactor) await recordFailedLogin(email, 'admin', ADMIN_ID_MAX);
           return null;
+        }
+        if (twoFactor && !(await totpAccepts(code))) {
+          await bumpWindow(ip, IP_WINDOW_MS);
+          throw new CodeRequired();
         }
         await clearAdminFailedLogins(email);
 

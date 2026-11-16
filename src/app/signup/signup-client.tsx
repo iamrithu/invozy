@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
+import Script from 'next/script';
 import { signIn } from 'next-auth/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -13,7 +14,7 @@ import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/shell/theme-toggle';
 import { StateSelect } from '@/components/ui/location-field';
 
-export function SignupClient() {
+export function SignupClient({ turnstileSiteKey = null }: { turnstileSiteKey?: string | null }) {
   const router = useRouter();
   // Cached queries aren't keyed by company — drop them all on every sign-in
   // so nothing from a previous login on this browser can be shown.
@@ -73,6 +74,15 @@ export function SignupClient() {
           <Field label="Email" name="email" type="email" error={fieldErrors.email} />
           <Field label="Phone (optional if email given)" name="phone" error={fieldErrors.phone} />
           <Field label="Password" name="password" type="password" error={fieldErrors.password} />
+
+          {/* Optional bot check (Cloudflare Turnstile) — the widget adds a
+              cf-turnstile-response field that signUp verifies. */}
+          {turnstileSiteKey && (
+            <>
+              <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js" strategy="afterInteractive" />
+              <div className="cf-turnstile" data-sitekey={turnstileSiteKey} data-theme="auto" />
+            </>
+          )}
 
           {error && <p className="text-[12.5px] font-bold text-destructive">{error}</p>}
 

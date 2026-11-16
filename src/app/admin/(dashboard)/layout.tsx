@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { requireSuperAdmin } from '@/lib/session';
 import { APP_NAME } from '@/lib/brand';
-import { Building2 } from 'lucide-react';
+import { AdminNav } from './admin-nav';
 import { AdminUserMenu } from '@/components/shell/admin-user-menu';
 import { ThemeToggle } from '@/components/shell/theme-toggle';
 
@@ -22,9 +22,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       </header>
       <div className="flex flex-1">
         <aside className="hidden w-[200px] flex-shrink-0 flex-col gap-1 border-r border-line bg-surface p-3 md:flex">
-          <Link href="/admin" className="flex items-center gap-2.5 rounded-md2 bg-brand-light px-3 py-2.5 text-[13px] font-bold text-brand">
-            <Building2 size={16} /> Companies
-          </Link>
+          <AdminNav />
         </aside>
         <main className="mx-auto w-full max-w-[1100px] flex-1 px-4 py-6 md:px-6">{children}</main>
       </div>

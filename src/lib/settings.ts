@@ -98,3 +98,59 @@ export async function setUserFlag(userId: string, name: string, value: boolean):
     throw err;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Dashboard setup checklist (src/lib/setup-checklist.ts) — per company.
+// ---------------------------------------------------------------------------
+
+const CHECKLIST_KEY = 'onboarding.checklist';
+
+export type ChecklistState = {
+  /** The owner hid the checklist for good. */
+  dismissed: boolean;
+  /** Items the owner ticked by hand — only ones that can't be detected from
+   * data (e.g. "I'm happy with the default invoice design"). */
+  marked: string[];
+};
+
+/** The checklist's saved state, defaulted. Never throws. */
+export async function getChecklistState(): Promise<ChecklistState> {
+  try {
+    const row = await prisma.appSetting.findUnique({ where: { companyId_key: { companyId: await currentCompanyId(), key: CHECKLIST_KEY } } });
+    const v = row?.value as { dismissed?: unknown; marked?: unknown } | null | undefined;
+    return {
+      dismissed: v?.dismissed === true,
+      marked: Array.isArray(v?.marked) ? v.marked.filter((m): m is string => typeof m === 'string') : [],
+    };
+  } catch (err) {
+    warnMissing(err);
+    return { dismissed: false, marked: [] };
+  }
+}
+
+export async function setChecklistState(state: ChecklistState): Promise<void> {
+  try {
+    const value = { dismissed: state.dismissed, marked: [...new Set(state.marked)] } as Prisma.InputJsonValue;
+    await prisma.appSetting.upsert({
+      where: { companyId_key: { companyId: await currentCompanyId(), key: CHECKLIST_KEY } },
+      create: { key: CHECKLIST_KEY, value },
+      update: { value },
+    });
+  } catch (err) {
+    if (isMissingTable(err)) throw new Error('This setting needs the latest database update. Run `npm run db:deploy`, then try again.');
+    throw err;
+  }
+}
+
+/** Whether the company has saved its own PDF layout (Company → PDF layout),
+ * rather than living with the defaults. Never throws. */
+export async function hasSavedPdfLayout(): Promise<boolean> {
+  try {
+    const row = await prisma.appSetting.findUnique({ where: { companyId_key: { companyId: await currentCompanyId(), key: KEYS.pdfLayout } }, select: { key: true } });
+    return !!row;
+  } catch (err) {
+    warnMissing(err);
+    return false;
+  }
+}
+

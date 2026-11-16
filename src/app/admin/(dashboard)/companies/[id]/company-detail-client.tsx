@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { ArrowLeft, Building2, Package, Users, Receipt, KeyRound, Mail, Phone, MapPin, IdCard, Clock, Ban, RotateCcw, Puzzle, Wallet, AlertCircle, UserX, UserCheck } from 'lucide-react';
+import { ArrowLeft, Building2, Package, Users, Receipt, KeyRound, Mail, Phone, MapPin, IdCard, Clock, Ban, RotateCcw, Puzzle, Wallet, AlertCircle, UserX, UserCheck, Eye, History } from 'lucide-react';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,9 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { fmtInr } from '@/lib/gst';
 import { MODULES, type ModuleKey } from '@/lib/modules';
 import type { AdminCompanyDetail } from '@/actions/admin';
-import { useCompanyForAdmin, useSetCompanyActive, useSetCompanyModules, useSetUserActive } from '@/hooks/use-admin';
+import { useCompanyForAdmin, useSetCompanyActive, useSetCompanyModules, useSetUserActive, useStartViewAs } from '@/hooks/use-admin';
+import { CompanySubscriptionCard } from './company-subscription-card';
+import { CompanyDangerZone } from './company-danger-zone';
 import { ResetPasswordDialog, type CompanyUser } from '../../admin-companies-client';
 
 type Login = AdminCompanyDetail['users'][number];
@@ -26,6 +28,14 @@ export function CompanyDetailClient({ company: initial }: { company: AdminCompan
   const setActive = useSetCompanyActive();
   const setModules = useSetCompanyModules();
   const setUserActive = useSetUserActive();
+  const viewAs = useStartViewAs();
+
+  async function openViewAs() {
+    const res = await viewAs.mutateAsync(company.id);
+    if (res.error) return toast.error(res.error);
+    // A full navigation, so the app loads fresh as this company (read-only).
+    window.location.href = '/dashboard';
+  }
 
   async function changeActive(active: boolean) {
     const res = await setActive.mutateAsync({ companyId: company.id, active });
@@ -85,6 +95,9 @@ export function CompanyDetailClient({ company: initial }: { company: AdminCompan
             </span>
           </div>
         </div>
+        <Button type="button" variant="outline" onClick={openViewAs} disabled={viewAs.isPending} title="Open this company’s workspace read-only for 30 minutes">
+          <Eye size={13} /> View as company
+        </Button>
         {company.active ? (
           <Button type="button" variant="outline" onClick={() => setConfirmSuspend(true)}>
             <Ban size={13} /> Suspend
@@ -95,6 +108,13 @@ export function CompanyDetailClient({ company: initial }: { company: AdminCompan
           </Button>
         )}
       </div>
+
+      {company.deletionRequestedAt && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg2 border border-red/30 bg-red/5 p-3 text-[12.5px] text-ink-soft">
+          <AlertCircle size={15} className="mt-0.5 flex-shrink-0 text-red" />
+          The owner asked on {new Date(company.deletionRequestedAt).toLocaleDateString('en-IN')} for this company and its data to be deleted. Confirm with them, suspend it, then delete it at the bottom of this page.
+        </div>
+      )}
 
       {!company.active && (
         <div className="mb-4 flex items-start gap-2 rounded-lg2 border border-red/30 bg-red/5 p-3 text-[12.5px] text-ink-soft">
@@ -144,6 +164,7 @@ export function CompanyDetailClient({ company: initial }: { company: AdminCompan
                     <span className="truncate text-[12.5px] font-bold text-ink">{u.name || u.email || u.phone}</span>
                     <Badge variant={u.role === 'OWNER' ? 'brand' : 'default'}>{u.role === 'OWNER' ? 'Owner' : 'Staff'}</Badge>
                     {!u.active && <Badge variant="red">Off</Badge>}
+                    {u.email && !u.emailVerifiedAt && <Badge variant="outline">Email not confirmed</Badge>}
                   </div>
                   <div className="truncate text-[11px] text-ink-faint">
                     {[u.name ? u.email || u.phone : null, `Added ${new Date(u.createdAt).toLocaleDateString('en-IN')}`].filter(Boolean).join(' · ')}
@@ -159,6 +180,8 @@ export function CompanyDetailClient({ company: initial }: { company: AdminCompan
             ))}
           </div>
         </div>
+
+        <CompanySubscriptionCard key={`${company.plan}-${company.subscriptionStatus}-${company.currentPeriodEnd}`} company={company} />
 
         <div className="rounded-xl2 border border-line bg-surface p-4 shadow-card lg:col-span-2">
           <div className="mb-3 text-[11.5px] font-extrabold uppercase tracking-wide text-ink-soft">Recent invoices</div>
@@ -178,6 +201,28 @@ export function CompanyDetailClient({ company: initial }: { company: AdminCompan
             </div>
           )}
         </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="rounded-xl2 border border-line bg-surface p-4 shadow-card lg:col-span-2">
+          <div className="mb-2 flex items-center gap-1.5 text-[11.5px] font-extrabold uppercase tracking-wide text-ink-soft">
+            <History size={13} /> Admin activity
+          </div>
+          {company.audit.length === 0 ? (
+            <p className="py-3 text-center text-[12.5px] text-ink-faint">Nothing yet.</p>
+          ) : (
+            <div className="divide-y divide-dashed divide-line">
+              {company.audit.map((a) => (
+                <div key={a.id} className="flex flex-wrap gap-2 py-1.5 text-[12px]">
+                  <span className="w-[150px] flex-shrink-0 text-ink-faint">{new Date(a.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                  <span className="min-w-0 flex-1 text-ink">{a.summary}</span>
+                  <span className="text-ink-faint">{a.actor}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <CompanyDangerZone company={company} />
       </div>
 
       <ResetPasswordDialog user={resetTarget} onOpenChange={(open) => !open && setResetTarget(null)} />

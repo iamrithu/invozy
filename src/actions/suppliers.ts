@@ -6,6 +6,7 @@ import { requireOwner, requireUser } from '@/lib/session';
 import { toActionError, type ActionResult } from '@/lib/action-result';
 import { logActivity } from '@/lib/activity';
 import { requireModule } from '@/lib/require-module';
+import { assertCanCreate } from '@/lib/subscription-guard';
 
 // Suppliers are who the business buys stock from — the "Bill from" on a
 // purchase. Their state decides whether a purchase's input GST is IGST or
@@ -104,6 +105,7 @@ export async function listSupplierOptions(includeId?: string | null): Promise<Su
 export async function createSupplier(input: SupplierInput): Promise<ActionResult<{ supplier: SupplierOption }>> {
   try {
     await requireModule('purchases');
+    await assertCanCreate('supplier');
     const user = await requireUser();
     const parsed = SupplierSchema.safeParse(input);
     if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Check the form.' };

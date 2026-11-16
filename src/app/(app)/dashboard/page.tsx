@@ -32,6 +32,8 @@ import { PaymentModesBar, WeekdayChart } from '@/components/dashboard/dashboard-
 import { getAppSettings } from '@/lib/settings';
 import { customerDisplayName } from '@/lib/customer';
 import { cn } from '@/lib/utils';
+import { loadSetupChecklist } from '@/lib/setup-checklist';
+import { SetupChecklist } from '@/components/onboarding/setup-checklist';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,6 +66,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const days = daysBetween(range.from, range.to) + 1;
   const weekdayFilter = days >= 14 ? filter : { dateFrom: addDays(today, -83), dateTo: today };
 
+  // The new-company setup card — owners only, gone once done or hidden.
+  const checklist = await loadSetupChecklist().catch(() => null);
   const [company, overview, kpis, trend, recent, dueSoon, settings, stock, reorder, openInvoices, topCustomers, topProducts, routes, running, modes, weekdays] = await Promise.all([
     getCompany(),
     getBusinessOverview(),
@@ -124,7 +128,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         </div>
       </div>
 
-      {isBrandNew && <GettingStarted />}
+      {checklist && <SetupChecklist initial={checklist} />}
+
+      {isBrandNew && !checklist && <GettingStarted />}
 
       <Section
         title="Date-wise summary"

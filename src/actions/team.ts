@@ -11,6 +11,8 @@ import { logActivity } from '@/lib/activity';
 import { toActionError } from '@/lib/action-result';
 import { currentCompanyId } from '@/lib/tenant';
 import { requireModule } from '@/lib/require-module';
+import { assertCanCreate } from '@/lib/subscription-guard';
+import { sendVerificationEmail } from '@/lib/email-verification';
 
 /** Logins for the one company — the owner adds staff here instead of
  * running `npm run setup` for each person. Every mutation is owner-only
@@ -133,6 +135,7 @@ function checkPassword(password: string | undefined): string | null {
 export async function createLogin(input: LoginDetailsInput & { password: string; role?: TeamRole }): Promise<TeamFormResult> {
   try {
     await requireModule('team');
+    await assertCanCreate('login');
     const me = await requireOwner();
     const { name, email, phone, fieldErrors } = parseDetails(input);
     const passwordError = checkPassword(input.password);
@@ -154,6 +157,7 @@ export async function createLogin(input: LoginDetailsInput & { password: string;
       entityId: user.id,
       summary: `Added ${roleWord(role)} login for ${name} (${email ?? phone})`,
     });
+    if (email) await sendVerificationEmail(user.id);
     return { id: user.id };
   } catch (err) {
     if (isUniqueViolation(err)) return { error: 'That email or phone is already used by another login.' };
@@ -176,7 +180,9 @@ export async function updateLogin(userId: string, input: LoginDetailsInput): Pro
     const clash = await findIdentifierClash(email, phone, userId);
     if (clash) return clash;
 
-    await prisma.user.update({ where: { id: userId }, data: { name, email, phone } });
+    const emailChanged = before.email !== email;
+    await prisma.user.update({ where: { id: userId }, data: { name, email, phone, ...(emailChanged ? { emailVerifiedAt: null } : {}) } });
+    if (emailChanged && email) await sendVerificationEmail(userId);
 
     const changes = [
       before.name !== name && `name to ${name}`,
@@ -252,6 +258,7 @@ export async function setLoginRole(userId: string, role: TeamRole): Promise<{ er
 export async function setLoginActive(userId: string, active: boolean): Promise<{ error?: string }> {
   try {
     await requireModule('team');
+    if (active) await assertCanCreate('login');
     const me = await requireOwner();
     if (userId === me.id) return { error: 'You can’t disable your own login.' };
 

@@ -6,7 +6,7 @@ import { after } from 'next/server';
 import { headers } from 'next/headers';
 import { put, del } from '@vercel/blob';
 import { prisma } from './prisma';
-import { currentCompanyId, findCompanyId, runWithTenant } from './tenant';
+import { currentCompanyId, findCompanyId, isViewOnly, runWithTenant } from './tenant';
 import { createSignedToken, invoiceShareToken } from './signed-token';
 import { getSharedPdfContext, PDF_PAGE, viewportFor } from './pdf-browser';
 import { getAppSettings } from './settings';
@@ -324,6 +324,8 @@ function buildFromMeta(meta: PdfMeta, opts: RenderOptions): Promise<Buffer> {
         footerLeft: opts.footerLeft ?? 'This is a computer-generated invoice.',
         footerRight: opts.footerRight ?? meta.number,
       });
+      // Viewing as the platform admin is read-only: hand the PDF over, store nothing.
+      if (await isViewOnly()) return pdf;
       try {
         const url = await storePdf(`${meta.id}-${meta.key}.pdf`, pdf);
         const { found, previousUrl } = await savePdfPointer(meta.id, url, meta.key);
@@ -426,4 +428,9 @@ export function schedulePdfBuild(invoiceId: string): void {
     // PDF is simply built on first request instead.
     console.error('schedulePdfBuild: no request scope', e);
   }
+}
+
+/** Removes stored invoice PDFs by URL — for a permanent company deletion. */
+export async function deleteStoredPdfs(urls: string[]): Promise<void> {
+  for (const url of urls) await deleteStoredPdf(url);
 }

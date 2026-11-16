@@ -7,6 +7,7 @@ import { prisma, rootPrisma } from '@/lib/prisma';
 import { isReservedLoginEmail, normalizePhone, PHONE_RE } from '@/lib/login-identifiers';
 import { requireUser } from '@/lib/session';
 import { currentCompanyId } from '@/lib/tenant';
+import { sendVerificationEmail } from '@/lib/email-verification';
 
 async function requireUserId() {
   return (await requireUser()).id;
@@ -57,10 +58,12 @@ export async function updateMyProfile(_prev: ProfileFormState, formData: FormDat
   // Company.email mirrors the *owner's* login email (see
   // src/actions/company.ts) — a staff login changing its own email must
   // never rewrite what prints on every invoice.
+  const emailChanged = (me.email ?? null) !== email;
   await prisma.$transaction([
-    prisma.user.update({ where: { id: userId }, data: { email, phone } }),
+    prisma.user.update({ where: { id: userId }, data: { email, phone, ...(emailChanged ? { emailVerifiedAt: null } : {}) } }),
     ...(me.role === 'OWNER' ? [prisma.company.update({ where: { id: await currentCompanyId() }, data: { email } })] : []),
   ]);
+  if (emailChanged && email) await sendVerificationEmail(userId);
   revalidatePath('/account');
   revalidatePath('/company');
   return {};

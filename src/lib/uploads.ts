@@ -2,7 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { put, del, list } from '@vercel/blob';
-import { currentCompanyId } from './tenant';
+import { currentCompanyId, isViewOnly, ViewOnlyError } from './tenant';
 
 const UPLOAD_ROOT = path.join(process.cwd(), 'public', 'uploads');
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -70,6 +70,7 @@ export function isOwnUpload(url: string, kind: UploadKind, companyId: string): b
 }
 
 async function store(file: File, kind: UploadKind, ext: string): Promise<string> {
+  if (await isViewOnly()) throw new ViewOnlyError();
   const filename = `${randomUUID()}.${ext}`;
   const companyId = await currentCompanyId();
 
@@ -136,4 +137,32 @@ export async function sweepOrphanUploads(companyId: string, kind: UploadKind, ke
   } while (cursor);
   if (stale.length) await del(stale);
   return stale.length;
+}
+
+/** Removes every file a company uploaded (logos, signatures, product and
+ * customer photos, bill attachments) — for a permanent company deletion.
+ * Blob: everything under `<companyId>/`; local: public/uploads/<companyId>.
+ * Returns how many files were removed. Never throws. */
+export async function deleteCompanyUploads(companyId: string): Promise<number> {
+  if (!/^[a-z0-9]+$/i.test(companyId)) return 0;
+  try {
+    if (useBlob) {
+      let removed = 0;
+      let cursor: string | undefined;
+      do {
+        const page = await list({ prefix: `${companyId}/`, cursor, limit: 1000 });
+        if (page.blobs.length) await del(page.blobs.map((b) => b.url));
+        removed += page.blobs.length;
+        cursor = page.hasMore ? page.cursor : undefined;
+      } while (cursor);
+      return removed;
+    }
+    const dir = path.join(UPLOAD_ROOT, companyId);
+    if (!dir.startsWith(UPLOAD_ROOT + path.sep)) return 0;
+    await fs.rm(dir, { recursive: true, force: true });
+    return 1;
+  } catch (e) {
+    console.error(`Deleting uploads of company ${companyId} failed`, e);
+    return 0;
+  }
 }

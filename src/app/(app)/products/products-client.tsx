@@ -24,6 +24,7 @@ import { ProductFormDialog } from '@/components/products/product-form-dialog';
 import { ProductOffers } from '@/components/products/product-offers';
 import { StockBadge } from '@/components/products/stock-badge';
 import type { ProductSort } from '@/actions/products';
+import { useModules } from '@/components/modules/modules-provider';
 
 type PriceTier = { id?: string; unit: string; price: string | number; approxQty: string | number | null };
 
@@ -57,6 +58,8 @@ const PAGE_SIZE = 10;
 
 export function ProductsClient({ initialData }: { initialData: { items: Product[]; total: number } }) {
   const router = useRouter();
+  // Inventory off (src/lib/modules.ts): no stock column, badges or history links.
+  const inventoryOn = useModules().enabled('inventory');
   const searchParams = useSearchParams();
   const [searchInput, setSearchInput] = useState('');
   const search = useDebouncedValue(searchInput, 300);
@@ -208,7 +211,7 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
                 <TableHead className="hidden md:table-cell">Category</TableHead>
                 <TableHead className="hidden sm:table-cell">Units</TableHead>
                 <TableHead>Price</TableHead>
-                <TableHead>Stock</TableHead>
+                {inventoryOn && <TableHead>Stock</TableHead>}
                 <TableHead className="hidden sm:table-cell">Status</TableHead>
                 <TableHead className="w-12 text-right">
                   <span className="sr-only">Actions</span>
@@ -244,9 +247,11 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
                       here before, hiding that a bulk option even existed. */}
                   <TableCell className="hidden text-ink-soft sm:table-cell">{tiers.map((t) => formatUnit(t.unit)).join(' · ')}</TableCell>
                   <TableCell className="font-mono font-bold text-ink-soft">{tiers.map((t) => fmtInr(Number(t.price))).join(' · ')}</TableCell>
-                  <TableCell>
-                    <StockBadge product={p} />
-                  </TableCell>
+                  {inventoryOn && (
+                    <TableCell>
+                      <StockBadge product={p} />
+                    </TableCell>
+                  )}
                   <TableCell className="hidden sm:table-cell">
                     <Badge variant={p.active ? 'green' : 'outline'}>{p.active ? 'Live' : 'Hidden'}</Badge>
                   </TableCell>
@@ -268,11 +273,13 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
                         <DropdownMenuItem onSelect={() => setLive(p, !p.active)}>
                           {p.active ? <EyeOff size={13} /> : <Eye size={13} />} {p.active ? 'Hide' : 'Make live'}
                         </DropdownMenuItem>
-                        <DropdownMenuItem asChild>
-                          <Link href={`/inventory/${p.id}`}>
-                            <History size={13} /> Stock history
-                          </Link>
-                        </DropdownMenuItem>
+                        {inventoryOn && (
+                          <DropdownMenuItem asChild>
+                            <Link href={`/inventory/${p.id}`}>
+                              <History size={13} /> Stock history
+                            </Link>
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onSelect={() => setDeleteTarget(p)} className="text-red focus:bg-red-soft focus:text-red">
                           <Trash2 size={13} /> Delete
@@ -350,6 +357,7 @@ function ProductViewSheet({
   onToggleLive: (active: boolean) => void;
   toggling: boolean;
 }) {
+  const inventoryOn = useModules().enabled('inventory');
   const tiers = tiersFor(product);
 
   return (
@@ -391,6 +399,7 @@ function ProductViewSheet({
             </div>
           )}
 
+          {inventoryOn && (
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg2 border border-line bg-bg px-3 py-2.5">
             <div className="flex items-center gap-2 text-[12.5px]">
               <Boxes size={13} className="text-ink-faint" />
@@ -406,6 +415,7 @@ function ProductViewSheet({
               <History size={12} /> {product.trackStock ? 'Stock history' : 'Track in Inventory'}
             </Link>
           </div>
+          )}
 
           <div className="mb-4 overflow-hidden rounded-lg2 border border-line">
             <table className="w-full text-[12.5px]">

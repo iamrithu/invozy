@@ -9,6 +9,7 @@ import { toActionError, type ActionResult } from '@/lib/action-result';
 import { logActivity } from '@/lib/activity';
 import { applyMovement } from '@/lib/stock';
 import { needsPackSize } from '@/lib/stock-units';
+import { assertCanCreate } from '@/lib/subscription-guard';
 
 const MAX_IMAGES = 6;
 
@@ -208,6 +209,7 @@ export async function getProductCategories() {
 export async function createProduct(_prev: ProductFormState, formData: FormData): Promise<ProductFormState> {
   let uploaded: string[] = [];
   try {
+    await assertCanCreate('product');
     const parsed = ProductSchema.safeParse(Object.fromEntries(formData));
     if (!parsed.success) {
       return { error: 'Check the highlighted fields.', fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string> };

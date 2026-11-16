@@ -4,7 +4,7 @@ type TestUser = { id: string; role: 'OWNER' | 'STAFF'; companyId: string };
 export async function requireUser() {
   const u = (globalThis as { __TEST_USER?: TestUser }).__TEST_USER;
   if (!u) throw new Error('Not signed in.');
-  return { id: u.id, email: null, phone: null, name: 'Test', role: u.role, active: true, onboardedAt: null, companyId: u.companyId };
+  return { id: u.id, email: null, phone: null, name: 'Test', role: u.role, active: true, onboardedAt: null, companyId: u.companyId, emailVerifiedAt: null, viewOnly: false };
 }
 
 export async function requireOwner() {

@@ -44,18 +44,52 @@ export function setRequestTenant(companyId: string) {
   requestBox().companyId = companyId;
 }
 
-const sessionCompanyId = cache(async (): Promise<string | null> => {
+type SessionScope = { companyId: string | null; viewOnly: boolean };
+
+const sessionScope = cache(async (): Promise<SessionScope> => {
   try {
     // Lazy: keeps next-auth out of scripts that only use runWithTenant, and
     // breaks the prisma → tenant-scope → tenant → auth → prisma import cycle.
     const { auth } = await import('@/auth');
     const session = await auth();
-    return session?.user?.companyId ?? null;
+    if (session?.user?.role === 'SUPER_ADMIN') {
+      // The platform admin has no company — except while "viewing as" one,
+      // read-only (src/lib/view-as.ts). requireSuperAdmin-level checks on the
+      // fingerprint happen inside readViewAs.
+      const { adminFingerprint } = await import('./admin-fingerprint');
+      if (session.user.adminFp !== adminFingerprint()) return { companyId: null, viewOnly: false };
+      const { readViewAs } = await import('./view-as');
+      const view = await readViewAs();
+      return view ? { companyId: view.companyId, viewOnly: true } : { companyId: null, viewOnly: false };
+    }
+    return { companyId: session?.user?.companyId ?? null, viewOnly: false };
   } catch {
     // auth() throws outside a request (scripts, tests) — no session there.
-    return null;
+    return { companyId: null, viewOnly: false };
   }
 });
+
+const sessionCompanyId = async () => (await sessionScope()).companyId;
+
+/** True while the platform admin is viewing a company read-only — the scoped
+ * client then refuses every write. Explicit scopes (runWithTenant, token-
+ * authorised pages) are never view-only. */
+export async function isViewOnly(): Promise<boolean> {
+  if (store.getStore()) return false;
+  try {
+    if (requestBox().companyId) return false;
+  } catch {
+    // cache() unavailable — fall through.
+  }
+  return (await sessionScope()).viewOnly;
+}
+
+export class ViewOnlyError extends Error {
+  constructor() {
+    super('View only — you’re viewing this company as the platform admin, so nothing can be changed.');
+    this.name = 'ViewOnlyError';
+  }
+}
 
 /** The company in scope, or null. */
 export async function findCompanyId(): Promise<string | null> {

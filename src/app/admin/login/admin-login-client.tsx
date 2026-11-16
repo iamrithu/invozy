@@ -8,8 +8,9 @@ import { toast } from 'sonner';
 import { Field } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/shell/theme-toggle';
+import { APP_NAME } from '@/lib/brand';
 
-export function AdminLoginClient() {
+export function AdminLoginClient({ twoFactor = false }: { twoFactor?: boolean }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -22,11 +23,17 @@ export function AdminLoginClient() {
     const result = await signIn('admin', {
       email: String(formData.get('email') || ''),
       password: String(formData.get('password') || ''),
+      code: String(formData.get('code') || ''),
       redirect: false,
     });
     if (result?.error) {
       setPending(false);
-      const message = result.code === 'too-many-attempts' ? 'Too many failed attempts. Try again in a few minutes.' : 'Incorrect email or password.';
+      const message =
+        result.code === 'too-many-attempts'
+          ? 'Too many failed attempts. Try again in a few minutes.'
+          : result.code === 'code-required'
+            ? 'Enter the current 6-digit code from your authenticator app.'
+            : 'Incorrect email or password.';
       setError(message);
       toast.error(message);
       return;
@@ -45,12 +52,13 @@ export function AdminLoginClient() {
             <ShieldCheck size={20} />
           </span>
           <h1 className="text-[19px] font-extrabold text-ink">Platform admin</h1>
-          <p className="text-[12.5px] text-ink-faint">Manage every company on Invozy.</p>
+          <p className="text-[12.5px] text-ink-faint">Manage every company on {APP_NAME}.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-3">
           <Field label="Email" name="email" type="email" />
           <Field label="Password" name="password" type="password" />
+          {twoFactor && <Field label="Authenticator code" name="code" mono placeholder="6-digit code" />}
 
           {error && <p className="text-[12.5px] font-bold text-destructive">{error}</p>}
 

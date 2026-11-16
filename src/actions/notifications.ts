@@ -5,6 +5,7 @@ import { listOverdueForReminders } from '@/actions/invoices';
 import { getDraftsHoldingStock, getInventorySummary } from '@/actions/inventory';
 import { getFrequentCustomItems } from '@/actions/products';
 import { getCompany } from '@/lib/get-company';
+import { isModuleEnabled } from '@/lib/modules';
 import { prisma } from '@/lib/prisma';
 import { requireUser } from '@/lib/session';
 import { toActionError } from '@/lib/action-result';
@@ -80,10 +81,13 @@ async function readsFor(userId: string): Promise<Record<string, string> | null> 
 
 export async function getNotifications(): Promise<NotificationsResult> {
   const [user, company] = await Promise.all([requireUser(), getCompany()]);
+  // Inventory switched off for this company (src/lib/modules.ts): no stock
+  // alerts — "drafts holding stock", low/out of stock, expiring batches.
+  const inventoryOn = isModuleEnabled(company.disabledModules, 'inventory');
   const [overdue, drafts, stock, catalog, reads, dailyDigest] = await Promise.all([
     listOverdueForReminders().catch(() => []),
-    getDraftsHoldingStock().catch(() => null),
-    getInventorySummary().catch(() => null),
+    inventoryOn ? getDraftsHoldingStock().catch(() => null) : null,
+    inventoryOn ? getInventorySummary().catch(() => null) : null,
     getFrequentCustomItems().catch(() => []),
     readsFor(user.id),
     user.role === 'OWNER' && user.email ? getUserFlag(user.id, 'dailyDigest', true) : Promise.resolve(null),

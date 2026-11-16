@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { getHeldStock } from '@/actions/invoices';
 import { useDeleteInvoice } from '@/hooks/use-invoices';
 import { unwrap } from '@/lib/action-result';
+import { useModules } from '@/components/modules/modules-provider';
 
 /** Delete confirmation for an invoice, shared by the Invoices list and the
  * invoice editor. A draft lists the stock it's holding and offers both
@@ -31,13 +32,19 @@ export function DeleteInvoiceDialog({
   const router = useRouter();
   const del = useDeleteInvoice();
   const isDraft = invoice?.status === 'DRAFT';
+  // Inventory off (src/lib/modules.ts): no stock talk at all — a draft just
+  // deletes (its stock quietly goes back, keeping the ledger in step for if
+  // the module comes back). Returns off: no "return it on a credit note".
+  const modules = useModules();
+  const inventoryOn = modules.enabled('inventory');
+  const returnsOn = modules.enabled('returns');
   const held = useQuery({
     queryKey: ['invoices', 'held-stock', invoice?.id],
     queryFn: async () => unwrap(await getHeldStock(invoice!.id)).lines ?? [],
-    enabled: open && !!invoice,
+    enabled: open && !!invoice && inventoryOn,
     staleTime: 0,
   });
-  const lines = held.data ?? [];
+  const lines = inventoryOn ? (held.data ?? []) : [];
   const offersChoice = isDraft && lines.length > 0;
 
   function remove(restock: boolean) {
@@ -77,7 +84,7 @@ export function DeleteInvoiceDialog({
                 It was sent{invoice?.customer ? ` to ${invoice.customer}` : ''}, so deleting it removes it with its payments and puts <b className="text-ink">no</b> stock
                 back.
               </p>
-              {lines.length > 0 && (
+              {lines.length > 0 && returnsOn && (
                 <div className="space-y-2 rounded-lg2 border border-line bg-green-soft p-3">
                   <div className="text-[13px] font-extrabold text-ink">Goods came back? Return them instead</div>
                   <ul className="max-h-[min(30vh,180px)] divide-y divide-line overflow-y-auto rounded-sm2 border border-line bg-surface">
@@ -131,7 +138,7 @@ export function DeleteInvoiceDialog({
               </p>
             </>
           ) : (
-            <p>This removes the draft with its items. It isn’t holding any stock, so nothing changes in Inventory.</p>
+            <p>{inventoryOn ? 'This removes the draft with its items. It isn’t holding any stock, so nothing changes in Inventory.' : 'This removes the draft with its items.'}</p>
           )}
           {invoice?.irn && <p className="text-[12px] text-ink-soft">Its e-Invoice stays filed with the GST portal — cancel it there within 24 hours if needed.</p>}
           <p className="text-[12px] text-ink-faint">This can’t be undone.</p>

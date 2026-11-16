@@ -2,6 +2,7 @@ import type { Prisma, StockMovementType } from '@prisma/client';
 import type { Tx } from './prisma';
 import { formatStock, round6, unitFactor, type UnitProduct } from './stock-units';
 import { currentCompanyId } from './tenant';
+import { ENTITLEMENT_SELECT, effectiveDisabledModules } from './entitlements';
 
 // Server-side inventory ledger. Every change to Product.stockQty goes
 // through applyMovement, which updates the cached balance and appends the
@@ -133,7 +134,13 @@ export function invoiceHeld(stockTaken: boolean, lines: { productId: string | nu
  * credit note *adds*. Only tracked products move. Throws
  * InsufficientStockError (rolling back the caller's transaction) listing
  * every product that would go below zero — unless `enforce` is false (the
- * owner's "save anyway"), which lets stock go negative. */
+ * owner's "save anyway"), which lets stock go negative.
+ *
+ * When the company doesn't have the Inventory module (switched off by the
+ * platform admin, or not in its plan),
+ * stock is still recorded (so switching it back on finds the ledger in
+ * step) but never blocks a document: nobody can see or recount stock then,
+ * so a refusal would be unexplainable. */
 export async function postStockChanges(
   tx: Tx,
   opts: {
@@ -149,6 +156,7 @@ export async function postStockChanges(
 ) {
   const ids = [...new Set([...opts.before.keys(), ...opts.after.keys()])].sort();
   const products = await loadProducts(tx, ids);
+  const enforce = (opts.enforce ?? true) && (await inventoryModuleOn(tx));
   const shortages: Shortage[] = [];
   for (const id of ids) {
     const p = products.get(id);
@@ -159,8 +167,15 @@ export async function postStockChanges(
     // is stock going up.
     const delta = opts.direction === 'out' ? -change : change;
     const type = change > 0 ? opts.increaseType : opts.decreaseType;
-    const res = await applyMovement(tx, p, delta, { ...opts.meta, ...opts.perProductMeta?.get(id), type }, opts.enforce ?? true);
+    const res = await applyMovement(tx, p, delta, { ...opts.meta, ...opts.perProductMeta?.get(id), type }, enforce);
     if ('shortage' in res) shortages.push(res.shortage);
   }
   if (shortages.length) throw new InsufficientStockError(shortages);
+}
+
+/** Whether the company in scope has the Inventory module — switched on by
+ * the platform admin and included in its plan (src/lib/entitlements.ts). */
+async function inventoryModuleOn(tx: Tx): Promise<boolean> {
+  const company = await tx.company.findUnique({ where: { id: await currentCompanyId() }, select: ENTITLEMENT_SELECT });
+  return !!company && !effectiveDisabledModules(company).includes('inventory');
 }

@@ -2,6 +2,7 @@ import { cache } from 'react';
 import { auth } from '@/auth';
 import { rootPrisma } from './prisma';
 import { adminFingerprint } from './admin-fingerprint';
+import { readViewAs, VIEW_AS_USER_ID } from './view-as';
 
 /** The auth gate every Server Action and protected page runs first. Server
  * Actions are public POST endpoints (callable from any page, including the
@@ -17,8 +18,42 @@ import { adminFingerprint } from './admin-fingerprint';
  * `onboardedAt` instead of querying again. A login the owner has switched
  * off (User.active), or one whose company the platform admin suspended, is
  * treated as signed out. */
-export const requireUser = cache(async () => {
+export type SessionUser = {
+  id: string;
+  email: string | null;
+  phone: string | null;
+  name: string | null;
+  role: 'OWNER' | 'STAFF';
+  active: boolean;
+  onboardedAt: Date | null;
+  companyId: string;
+  emailVerifiedAt: Date | null;
+  /** The platform admin viewing this company read-only (src/lib/view-as.ts). */
+  viewOnly: boolean;
+};
+
+export const requireUser = cache(async (): Promise<SessionUser> => {
   const session = await auth();
+  if (session?.user?.role === 'SUPER_ADMIN') {
+    // The platform admin has no company of its own; while "viewing as" one
+    // it gets a synthetic, read-only owner — every write is refused by the
+    // scoped client (src/lib/tenant-scope.ts).
+    if (session.user.adminFp !== adminFingerprint()) throw new Error('Not signed in.');
+    const view = await readViewAs();
+    if (!view) throw new Error('Not signed in.');
+    return {
+      id: VIEW_AS_USER_ID,
+      email: session.user.email ?? null,
+      phone: null,
+      name: 'Platform admin (view only)',
+      role: 'OWNER',
+      active: true,
+      onboardedAt: new Date(0),
+      companyId: view.companyId,
+      emailVerifiedAt: new Date(0),
+      viewOnly: true,
+    };
+  }
   const id = session?.user?.id;
   const user =
     id && session.user.companyId
@@ -33,6 +68,7 @@ export const requireUser = cache(async () => {
             active: true,
             onboardedAt: true,
             companyId: true,
+            emailVerifiedAt: true,
             company: { select: { active: true } },
           },
         })
@@ -40,7 +76,7 @@ export const requireUser = cache(async () => {
   if (!user || !user.active || user.companyId !== session?.user?.companyId) throw new Error('Not signed in.');
   if (!user.company.active) throw new Error('This company account is suspended. Contact support.');
   const { company: _company, ...rest } = user;
-  return rest;
+  return { ...rest, viewOnly: false };
 });
 
 /** Owner-only actions (deletes, company settings, managing logins) — staff

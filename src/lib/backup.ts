@@ -181,3 +181,23 @@ async function pruneLocalBackups(dir: string, now: Date): Promise<number> {
   }
   return pruned;
 }
+
+/** Removes a company's stored nightly backups — for a permanent company
+ * deletion. Never throws. */
+export async function deleteCompanyBackups(companyId: string): Promise<void> {
+  if (!/^[a-z0-9]+$/i.test(companyId)) return;
+  try {
+    if (process.env.BLOB_READ_WRITE_TOKEN) {
+      let cursor: string | undefined;
+      do {
+        const page = await list({ prefix: `backups/${companyId}/`, cursor, limit: 1000 });
+        if (page.blobs.length) await del(page.blobs.map((b) => b.url));
+        cursor = page.hasMore ? page.cursor : undefined;
+      } while (cursor);
+      return;
+    }
+    await fs.rm(path.join(LOCAL_DIR, companyId), { recursive: true, force: true });
+  } catch (e) {
+    console.error(`Deleting backups of company ${companyId} failed`, e);
+  }
+}

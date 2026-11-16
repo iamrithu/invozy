@@ -1,5 +1,7 @@
 {
-  "regions": ["sin1"],
+  "regions": [
+    "sin1"
+  ],
   "functions": {
     "src/app/api/invoices/[id]/pdf/route.ts": {
       "memory": 2048,
@@ -13,9 +15,6 @@
       "memory": 2048,
       "maxDuration": 60
     },
-    "src/app/api/cron/backup/route.ts": {
-      "maxDuration": 60
-    },
     "src/app/api/cron/daily/route.ts": {
       "memory": 2048,
       "maxDuration": 60
@@ -25,10 +24,23 @@
     },
     "src/app/api/share/[token]/route.ts": {
       "maxDuration": 60
+    },
+    "src/app/api/cron/company/route.ts": {
+      "memory": 2048,
+      "maxDuration": 60
+    },
+    "src/app/api/cron/backup/route.ts": {
+      "maxDuration": 60
     }
   },
   "crons": [
-    { "path": "/api/cron/backup", "schedule": "30 21 * * *" },
-    { "path": "/api/cron/daily", "schedule": "30 2 * * *" }
+    {
+      "path": "/api/cron/backup",
+      "schedule": "30 21 * * *"
+    },
+    {
+      "path": "/api/cron/daily",
+      "schedule": "30 2 * * *"
+    }
   ]
 }

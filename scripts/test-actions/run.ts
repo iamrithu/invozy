@@ -507,6 +507,145 @@ async function main() {
   await rootPrisma.company.update({ where: { id: coA.id }, data: { disabledModules: [] } });
   check('module back on: purchases work again', Array.isArray((await purchases.listPurchasesPage()).items));
 
+  // ---- subscriptions, limits and payments
+  const { recordManualPayment, applyPaidOrder } = await import('@/lib/subscription-apply');
+  const days = (n: number) => new Date(Date.now() + n * 86_400_000);
+  const setSub = (data: Record<string, unknown>) => rootPrisma.company.update({ where: { id: coA.id }, data });
+  const coNow = () => rootPrisma.company.findUniqueOrThrow({ where: { id: coA.id } });
+  asOwner();
+  await setSub({ plan: 'starter', subscriptionStatus: 'ACTIVE', currentPeriodEnd: days(20), trialEndsAt: null });
+  await refusedOff('Starter plan: inventory isn’t included', () => inventory.addStockMovement('p1', { type: 'ADJUSTMENT', qty: 1, unit: 'Box', date: '2026-11-01' }));
+  const loginLimit = await team.createLogin({ name: 'Third', email: 'third@a-co.in', phone: '', password: 'secret12', role: 'STAFF' });
+  check('Starter plan: a third active login is refused', !!loginLimit.error && /2 active logins/.test(loginLimit.error), loginLimit);
+  await setSub({ plan: 'growth', currentPeriodEnd: days(-3) });
+  check('3 days past the end (grace): billing still works', !(await invoices.createInvoice(bill(1, {}, 'p2'))).error);
+  await setSub({ currentPeriodEnd: days(-30) });
+  const lockedInv = await invoices.createInvoice(bill(1, {}, 'p2'));
+  check('grace over: new invoices are refused', !!lockedInv.error && /subscription has ended/.test(lockedInv.error), lockedInv);
+  const openInv = await prisma.invoice.findFirstOrThrow({ where: { status: { in: ['SENT', 'PARTIALLY_PAID'] } } });
+  check('…but payments can still be recorded', !(await invoices.recordPayment(openInv.id, { amount: 1, date: '2026-11-02', mode: 'Cash' })).error);
+  await recordManualPayment({ companyId: coA.id, plan: 'growth', months: 1, amount: 999, note: 'UTR 1', recordedBy: 'test' });
+  const afterManual = await coNow();
+  check('a manual payment re-activates for a month from today', afterManual.subscriptionStatus === 'ACTIVE' && Math.abs(afterManual.currentPeriodEnd!.getTime() - days(30).getTime()) < 3 * 86_400_000, afterManual.currentPeriodEnd);
+  check('…and billing works again', !(await invoices.createInvoice(bill(1, {}, 'p2'))).error);
+  const periodBefore = (await coNow()).currentPeriodEnd!;
+  await rootPrisma.subscriptionPayment.create({ data: { companyId: coA.id, plan: 'business', months: 12, amount: 19990, provider: 'razorpay', orderId: 'order_test_1', status: 'created' } });
+  const first = await applyPaidOrder('order_test_1', 'pay_test_1');
+  const second = await applyPaidOrder('order_test_1', 'pay_test_1');
+  const afterOrder = await coNow();
+  check('a paid order applies once (webhook + checkout can both arrive)', first === 'applied' && second === 'already', [first, second]);
+  check('…extending from the current end by 12 months, on its plan', afterOrder.plan === 'business' && afterOrder.currentPeriodEnd!.getTime() > periodBefore.getTime() + 360 * 86_400_000, afterOrder.currentPeriodEnd);
+  check('an unknown order is ignored', (await applyPaidOrder('order_nope', 'pay_x')) === 'unknown');
+  process.env.RAZORPAY_KEY_SECRET = 'rzp_test_secret';
+  process.env.RAZORPAY_WEBHOOK_SECRET = 'whsec_test';
+  const { verifyCheckoutSignature, verifyWebhookSignature } = await import('@/lib/razorpay');
+  const { createHmac } = await import('node:crypto');
+  const goodSig = createHmac('sha256', 'rzp_test_secret').update('order_1|pay_1').digest('hex');
+  check('checkout signatures verify, and a forged one doesn’t', verifyCheckoutSignature('order_1', 'pay_1', goodSig) && !verifyCheckoutSignature('order_1', 'pay_2', goodSig));
+  const body = JSON.stringify({ event: 'payment.captured' });
+  check('webhook signatures verify, and a forged one doesn’t', verifyWebhookSignature(body, createHmac('sha256', 'whsec_test').update(body).digest('hex')) && !verifyWebhookSignature(body, 'deadbeef'));
+  asB();
+  check('B can’t see A’s subscription payments', (await prisma.subscriptionPayment.count()) === 0);
+  asOwner();
+
+  // ---- platform data is off-limits to the company-scoped client
+  let platformRefused = 0;
+  for (const run of [() => prisma.platformAuditLog.findMany(), () => prisma.passwordResetToken.findMany(), () => prisma.emailVerificationToken.findMany()]) {
+    try {
+      await run();
+    } catch {
+      platformRefused++;
+    }
+  }
+  check('audit log and sign-in tokens can’t be read through the scoped client', platformRefused === 3);
+
+  // ---- view as company: the admin reads, never writes
+  const { mintViewAsToken, VIEW_AS_COOKIE } = await import('@/lib/view-as');
+  const jar = ((globalThis as { __TEST_COOKIES?: Record<string, string> }).__TEST_COOKIES ??= {});
+  const aCustomers = await prisma.customer.count();
+  jar[VIEW_AS_COOKIE] = await mintViewAsToken(coA.id);
+  g.__TEST_USER = { id: 'super-admin', role: 'SUPER_ADMIN' } as unknown as typeof g.__TEST_USER;
+  check('viewing as A, the admin reads A’s data', (await prisma.customer.count()) === aCustomers);
+  const viewWrites: [string, () => Promise<unknown>][] = [
+    ['create', () => prisma.customer.create({ data: { name: 'Admin wrote', state: 'Goa' } })],
+    ['update', () => prisma.customer.update({ where: { id: 'c1' }, data: { name: 'Admin wrote' } })],
+    ['raw UPDATE', () => prisma.$queryRaw`UPDATE "Product" SET "stockQty" = "stockQty" WHERE "companyId" = ${coA.id} RETURNING id`],
+    ['executeRaw', () => prisma.$executeRaw`UPDATE "Invoice" SET notes = notes WHERE "companyId" = ${coA.id}`],
+    ['row lock', () => prisma.$queryRaw`SELECT id FROM "Invoice" WHERE "companyId" = ${coA.id} FOR UPDATE`],
+  ];
+  for (const [label, run] of viewWrites) {
+    let blocked = false;
+    try {
+      await run();
+    } catch (e) {
+      blocked = (e as Error).name === 'ViewOnlyError';
+    }
+    check(`viewing as A: ${label} is refused`, blocked);
+  }
+  delete jar[VIEW_AS_COOKIE];
+  let adminNoCompany = false;
+  try {
+    await prisma.customer.count();
+  } catch (e) {
+    adminNoCompany = (e as Error).name === 'TenantMissingError';
+  }
+  check('without the view cookie the admin reaches no company at all', adminNoCompany);
+  jar[VIEW_AS_COOKIE] = await mintViewAsToken(coA.id);
+  const realHash = process.env.ADMIN_PASSWORD_HASH;
+  process.env.ADMIN_PASSWORD_HASH = 'rotated';
+  let rotated = false;
+  try {
+    await prisma.customer.count();
+  } catch {
+    rotated = true;
+  }
+  process.env.ADMIN_PASSWORD_HASH = realHash;
+  delete jar[VIEW_AS_COOKIE];
+  check('rotating the admin credentials ends a view session', rotated);
+  asOwner();
+
+  // ---- email verification, two-factor codes, rate limits
+  const { sendVerificationEmail, verifyEmailToken } = await import('@/lib/email-verification');
+  await rootPrisma.user.update({ where: { id: owner.id }, data: { email: 'owner@a-co.in', emailVerifiedAt: null } });
+  await sendVerificationEmail(owner.id);
+  const vt = await rootPrisma.emailVerificationToken.findFirstOrThrow({ where: { userId: owner.id }, orderBy: { createdAt: 'desc' } });
+  check('a verification link confirms the email once', (await verifyEmailToken(vt.token)) === 'verified' && !!(await rootPrisma.user.findUniqueOrThrow({ where: { id: owner.id } })).emailVerifiedAt && (await verifyEmailToken(vt.token)) === 'already');
+  check('a made-up link confirms nothing', (await verifyEmailToken('0'.repeat(64))) === 'invalid');
+  const totp = await import('@/lib/totp');
+  const secret = totp.generateTotpSecret();
+  const nowCode = totp.hotp(totp.base32Decode(secret), totp.counterAt(Date.now()));
+  check('authenticator codes: the current one matches, a wrong one doesn’t', totp.matchTotp(secret, nowCode) !== null && totp.matchTotp(secret, nowCode === '000000' ? '111111' : '000000') === null);
+  const { consumeRateLimit } = await import('@/lib/login-rate-limit');
+  const hits = [await consumeRateLimit('test:limit', 2, 60_000), await consumeRateLimit('test:limit', 2, 60_000), await consumeRateLimit('test:limit', 2, 60_000)];
+  check('rate limit: the third hit in the window is refused', hits.join() === 'true,true,false', hits);
+
+  // ---- setup checklist
+  const { loadSetupChecklist } = await import('@/lib/setup-checklist');
+  const onboarding = await import('@/actions/onboarding');
+  const list1 = await loadSetupChecklist();
+  check('the setup checklist reflects real data', !!list1 && list1.items.find((i) => i.key === 'product')?.done === true && list1.items.find((i) => i.key === 'gstin')?.done === false, list1?.items.map((i) => `${i.key}:${i.done}`));
+  await onboarding.markSetupItem('gstin');
+  check('“not GST-registered” ticks the GSTIN step', (await loadSetupChecklist())?.items.find((i) => i.key === 'gstin')?.done === true);
+  check('only skippable steps can be ticked by hand', !!(await onboarding.markSetupItem('invoice')).error);
+  await onboarding.dismissSetupChecklist();
+  check('hiding the checklist hides it', (await loadSetupChecklist()) === null);
+
+  // ---- permanent deletion
+  const coC = await rootPrisma.company.create({ data: { name: 'Gone Co', state: 'Goa', invoiceFY: '26-27', active: false } });
+  const ownerC = await rootPrisma.user.create({ data: { companyId: coC.id, email: 'owner@gone.in', passwordHash: 'x', role: 'OWNER' } });
+  g.__TEST_USER = { id: ownerC.id, role: 'OWNER', companyId: coC.id };
+  await prisma.customer.create({ data: { id: 'cC', name: 'C Shop', state: 'Goa' } });
+  await prisma.product.create({ data: { id: 'pC', name: 'C Ice', category: 'Ice', unit: 'Box', price: 10 } });
+  await rootPrisma.company.update({ where: { id: coC.id }, data: { active: true } });
+  const cInv = await invoices.createInvoice({ customerId: 'cC', date: '2026-11-01', due: '2026-11-01', markPaid: true, paymentMode: 'Cash', items: [{ productId: 'pC', name: 'C Ice', unit: 'Box', qty: 2, rate: 10, discount: 0 }] });
+  check('company C has data to delete', !cInv.error, cInv);
+  const { purgeCompany } = await import('@/lib/company-purge');
+  const purged = await purgeCompany(coC.id);
+  const leftover = (await rootPrisma.invoice.count({ where: { companyId: coC.id } })) + (await rootPrisma.user.count({ where: { companyId: coC.id } })) + (await rootPrisma.company.count({ where: { id: coC.id } }));
+  check('deleting company C removes every row of it', leftover === 0 && purged.Invoice === 1 && purged.Payment === 1, purged);
+  asOwner();
+  check('…and leaves A untouched', (await prisma.customer.count()) === aCustomers);
+
   g.__TEST_USER = undefined;
   let noTenant = false;
   try {

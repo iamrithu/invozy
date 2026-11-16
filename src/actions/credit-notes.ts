@@ -25,6 +25,7 @@ import {
 } from '@/components/credit-notes/credit-note-math';
 import { fmtQty, istDateString } from '@/components/print/format';
 import { requireModule } from '@/lib/require-module';
+import { assertCanCreate } from '@/lib/subscription-guard';
 
 // GST credit notes against an invoice — goods taken back, or a price
 // corrected after the fact. A credit note's value is set off against its
@@ -302,6 +303,7 @@ export async function createCreditNote(input: CreditNoteInput): Promise<CreditNo
 
   try {
     const user = await requireUser();
+    await assertCanCreate('credit note');
     const result = await prisma.$transaction(async (tx) => {
       await lockInvoice(tx, data.invoiceId);
       const inv = await tx.invoice.findUnique({ where: { id: data.invoiceId }, select: SOURCE_SELECT });

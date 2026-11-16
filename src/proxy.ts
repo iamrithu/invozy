@@ -25,6 +25,7 @@ export const config = {
     '/credit-notes/:path*',
     '/activity/:path*',
     '/team/:path*',
+    '/billing/:path*',
     // The platform admin panel (role-checked in src/auth.config.ts; the
     // admin layout and every admin action re-check it).
     '/admin/:path*',

@@ -17,6 +17,7 @@ import { UNITS } from '@/lib/units';
 import { formatStock, isPieceUnit, mainPieces, needsPackSize, piecesText, unitFactor, type UnitProduct } from '@/lib/stock-units';
 import { MixedQtyInput, mixedTotal, type MixedQty } from '@/components/inventory/mixed-qty-input';
 import { StockBadge } from '@/components/products/stock-badge';
+import { useModules } from '@/components/modules/modules-provider';
 
 type PriceTier = { id?: string; unit: string; price: string | number; approxQty: string | number | null };
 
@@ -181,7 +182,10 @@ export function ProductFormDialog({
     setFormKey((k) => k + 1);
   }
 
-  const tracked = mode === 'create' ? trackStock : !!product?.trackStock;
+  // Inventory off (src/lib/modules.ts): no Stock section, and no pack-size
+  // rule — it only exists to convert sales into stock.
+  const inventoryOn = useModules().enabled('inventory');
+  const tracked = inventoryOn && (mode === 'create' ? trackStock : !!product?.trackStock);
   const shape = unitShape(tiers);
   const packSizeMissing = tracked && needsPackSize(shape);
   const mainUnit = formatUnit(shape.unit) || 'unit';
@@ -288,7 +292,7 @@ export function ProductFormDialog({
   const sections = [
     { id: 'basics', label: 'Basics', done: !!name && !!category.trim() && !issuesIn('basics'), issues: issuesIn('basics') },
     { id: 'pricing', label: 'Pricing', done: priced.length > 0 && !packSizeMissing && !issuesIn('pricing'), issues: issuesIn('pricing') },
-    { id: 'stock', label: 'Stock', done: (mode === 'edit' || trackStock) && !issuesIn('stock'), issues: issuesIn('stock') },
+    ...(inventoryOn ? [{ id: 'stock', label: 'Stock', done: (mode === 'edit' || trackStock) && !issuesIn('stock'), issues: issuesIn('stock') }] : []),
     { id: 'photos', label: 'Photos', done: photoCount > 0 },
   ];
 
@@ -526,6 +530,7 @@ export function ProductFormDialog({
           </FormGrid>
         </FormSection>
 
+        {inventoryOn && (
         <StockSection
           mode={mode}
           product={product}
@@ -541,8 +546,9 @@ export function ProductFormDialog({
           error={fe}
           done={sections[2].done}
         />
+        )}
 
-        <FormSection id="photos" n={4} title="Photos" aside="Shown while billing · up to 6" done={photoCount > 0}>
+        <FormSection id="photos" n={inventoryOn ? 4 : 3} title="Photos" aside="Shown while billing · up to 6" done={photoCount > 0}>
           <ProductImagesField value={images} onChange={setImages} />
         </FormSection>
       </FormSheet>

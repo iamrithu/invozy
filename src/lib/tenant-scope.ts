@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { currentCompanyId } from './tenant';
+import { currentCompanyId, isViewOnly, ViewOnlyError } from './tenant';
 
 // The tenancy boundary of the data layer: a Prisma query extension that makes
 // every query through the scoped client (`prisma` in src/lib/prisma.ts) act
@@ -15,8 +15,12 @@ import { currentCompanyId } from './tenant';
 // is no "all companies" fallback. Platform-wide code uses `rootPrisma`.
 
 type Scope =
-  /** Not tenant data — login throttling, password-reset tokens. */
+  /** Not tenant data, but used by sign-in code through this client — login
+   * throttling only. */
   | { kind: 'global' }
+  /** Platform data the scoped client must never touch (audit log, sign-in
+   * tokens) — only rootPrisma reads or writes it. */
+  | { kind: 'platform' }
   /** The Company table: only the tenant's own row is visible. */
   | { kind: 'company' }
   /** Has its own companyId column. */
@@ -51,8 +55,11 @@ export const MODEL_SCOPES: Record<Prisma.ModelName, Scope> = {
   PurchaseAttachment: via('purchase'),
   CreditNoteItem: via('creditNote'),
   NotificationRead: via('user'),
+  SubscriptionPayment: direct,
   LoginAttempt: { kind: 'global' },
-  PasswordResetToken: { kind: 'global' },
+  PasswordResetToken: { kind: 'platform' },
+  EmailVerificationToken: { kind: 'platform' },
+  PlatformAuditLog: { kind: 'platform' },
 };
 
 export class CrossTenantError extends Error {
@@ -82,7 +89,7 @@ for (const model of Prisma.dmmf.datamodel.models) {
 }
 const relationsOf = (model: string) => relationsByModel.get(model) ?? [];
 const scopeOf = (model: string): Scope => MODEL_SCOPES[model as Prisma.ModelName] ?? { kind: 'global' };
-const isTenantModel = (model: string) => scopeOf(model).kind !== 'global';
+const isTenantModel = (model: string) => scopeOf(model).kind !== 'global' && scopeOf(model).kind !== 'platform';
 
 function parentOf(model: string, relation: string): string {
   const rel = relationsOf(model).find((r) => r.field === relation);
@@ -95,6 +102,7 @@ export function tenantFilter(model: string, c: string): Record<string, unknown> 
   const scope = scopeOf(model);
   switch (scope.kind) {
     case 'global':
+    case 'platform':
       return null;
     case 'company':
       return { id: c };
@@ -326,6 +334,14 @@ export function assertTenantSql(args: unknown) {
 
 // ── The extension ──────────────────────────────────────────────────────────
 
+const WRITES = new Set(['create', 'createMany', 'createManyAndReturn', 'update', 'updateMany', 'upsert', 'delete', 'deleteMany']);
+
+/** Raw SQL that changes data or takes row locks — refused while view-only. */
+function isWriteSql(args: unknown): boolean {
+  const text = sqlText(args);
+  return /^\s*(insert|update|delete|merge|truncate|alter|create|drop)\b/i.test(text) || /\bfor\s+update\b/i.test(text) || /\bwith\b[\s\S]*\b(insert|update|delete)\b/i.test(text);
+}
+
 const READ_OR_FILTER = new Set([
   'findUnique',
   'findUniqueOrThrow',
@@ -350,9 +366,14 @@ export function tenantScope(root: RootClient) {
           // $queryRaw / $executeRaw (+Unsafe). Needs a company in scope too.
           await currentCompanyId();
           assertTenantSql(args);
+          if ((operation === '$executeRaw' || operation === '$executeRawUnsafe' || isWriteSql(args)) && (await isViewOnly())) throw new ViewOnlyError();
           return query(args);
         }
+        if (scopeOf(model).kind === 'platform') {
+          throw new Error(`${model} is platform data — use rootPrisma (it is never read or written through the company-scoped client).`);
+        }
         if (!isTenantModel(model)) return query(args);
+        if (WRITES.has(operation) && (await isViewOnly())) throw new ViewOnlyError();
 
         const c = await currentCompanyId();
         const scope = scopeOf(model);

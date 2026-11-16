@@ -130,6 +130,22 @@ model Company {
   // added later is on for everyone without a backfill.
   disabledModules String[] @default([])
 
+  // ── Subscription (src/lib/plans.ts, src/lib/subscription.ts) ─────────────
+  // Plan key from src/lib/plans.ts. A plan decides which modules are
+  // included and the usage limits; the admin's disabledModules can switch
+  // off more on top.
+  plan                 String                @default("growth")
+  subscriptionStatus   SubscriptionStatus    @default(TRIALING)
+  // End of the free trial (TRIALING) — set at signup.
+  trialEndsAt          DateTime?
+  // Paid up to (ACTIVE). Null on an ACTIVE company = complimentary / no
+  // expiry (every company that existed before subscriptions).
+  currentPeriodEnd     DateTime?
+  // The owner asked for the company and its data to be deleted; the platform
+  // admin does the deletion from /admin.
+  deletionRequestedAt  DateTime?
+  subscriptionPayments SubscriptionPayment[]
+
   users          User[]
   products       Product[]
   customers      Customer[]
@@ -148,25 +164,28 @@ model Company {
 /// platform admin; owners add more from Team. Email/phone stay globally
 /// unique because sign-in doesn't ask which company.
 model User {
-  id                String               @id @default(cuid())
-  companyId         String               @default(dbgenerated("current_setting('app.company_id'::text)"))
-  company           Company              @relation(fields: [companyId], references: [id])
-  email             String?              @unique
-  phone             String?              @unique
+  id                String                   @id @default(cuid())
+  companyId         String                   @default(dbgenerated("current_setting('app.company_id'::text)"))
+  company           Company                  @relation(fields: [companyId], references: [id])
+  email             String?                  @unique
+  phone             String?                  @unique
   passwordHash      String
-  createdAt         DateTime             @default(now())
+  createdAt         DateTime                 @default(now())
   onboardedAt       DateTime?
   resetTokens       PasswordResetToken[]
   // OWNER (the signup/admin-created login) can do everything; STAFF
   // can bill, take payments and receive stock, but can't delete, change
   // company settings or manage logins — see src/lib/session.ts requireOwner.
   name              String?
-  role              UserRole             @default(OWNER)
-  active            Boolean              @default(true)
+  role              UserRole                 @default(OWNER)
+  active            Boolean                  @default(true)
   activities        ActivityLog[]
   movements         StockMovement[]
   notificationReads NotificationRead[]
   refunds           Refund[]
+  // Null until the login's email is confirmed via a link (src/actions/verify-email.ts).
+  emailVerifiedAt   DateTime?
+  emailTokens       EmailVerificationToken[]
 
   @@index([companyId])
 }
@@ -854,4 +873,69 @@ model AppSetting {
   updatedAt DateTime @default(now()) @updatedAt
 
   @@id([companyId, key])
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+}
+
+/// One payment for a company's subscription — Razorpay checkout or recorded
+/// by the platform admin (bank transfer, cash…). Paid rows extend
+/// Company.currentPeriodEnd by `months` (src/lib/subscription.ts).
+model SubscriptionPayment {
+  id          String    @id @default(cuid())
+  companyId   String    @default(dbgenerated("current_setting('app.company_id'::text)"))
+  company     Company   @relation(fields: [companyId], references: [id])
+  plan        String
+  months      Int
+  // In rupees (INR).
+  amount      Decimal
+  provider    String // 'razorpay' | 'manual'
+  // Razorpay order / payment ids; null for manual payments.
+  orderId     String?   @unique
+  paymentId   String?   @unique
+  status      String    @default("created") // 'created' | 'paid' | 'failed'
+  periodStart DateTime?
+  periodEnd   DateTime?
+  // Manual payments: who recorded it and why.
+  recordedBy  String?
+  note        String?
+  createdAt   DateTime  @default(now())
+  paidAt      DateTime?
+
+  @@index([companyId, createdAt])
+}
+
+/// What the platform admin did (src/lib/platform-audit.ts) — kept forever and
+/// deliberately not linked to Company by a foreign key, so a deleted
+/// company's history stays. Never readable through the tenant-scoped client.
+model PlatformAuditLog {
+  id        String   @id @default(cuid())
+  actor     String
+  action    String
+  companyId String?
+  targetId  String?
+  summary   String
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([companyId, createdAt])
+}
+
+/// Single-use link proving a login controls its email address.
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email     String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
 }

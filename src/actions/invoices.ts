@@ -19,6 +19,7 @@ import { invoiceShareToken } from '@/lib/signed-token';
 import { deleteUploadedImage } from '@/lib/uploads';
 import { currentCompanyId } from '@/lib/tenant';
 import { configuredSiteOrigin } from '@/lib/site-origin';
+import { assertCanCreate } from '@/lib/subscription-guard';
 
 const LineSchema = z.object({
   // Nullable — an ad-hoc/custom line item isn't backed by a catalog Product.
@@ -168,6 +169,7 @@ export async function createInvoice(input: InvoiceInput): Promise<InvoiceActionR
   const data = parsed.data;
 
   try {
+    await assertCanCreate('invoice');
     // The outstanding-balance lookup only matters when the customer has a
     // credit limit, but it's one indexed aggregate — running it alongside
     // the other reads is cheaper than a second round trip afterwards.
@@ -835,6 +837,7 @@ export async function deleteInvoice(id: string, opts?: { restock?: boolean }): P
 
 export async function duplicateInvoice(id: string): Promise<{ error?: string; invoiceId?: string }> {
   try {
+    await assertCanCreate('invoice');
     const [user, src, company] = await Promise.all([requireUser(), prisma.invoice.findUnique({ where: { id }, include: { items: true, customer: { select: { active: true, name: true } } } }), getCompany()]);
     if (!src) return { error: 'Invoice not found' };
     if (!src.customer.active) return { error: `${src.customer.name} is disabled. Enable them in Customers to bill them again.` };
