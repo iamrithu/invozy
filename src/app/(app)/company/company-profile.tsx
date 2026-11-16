@@ -28,6 +28,7 @@ import {
   CircleCheck,
   AlertTriangle,
   Undo2,
+  Ruler,
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -42,6 +43,8 @@ import type { toPublicCompany } from '@/lib/public-company';
 import type { InvoiceTemplateName } from '@/lib/invoice-template';
 import type { PdfItemRows } from '@/lib/settings';
 import { PdfRowStyle } from './pdf-row-style';
+import { PdfLayoutSection } from './pdf-layout-settings';
+import { DEFAULT_PDF_LAYOUT, type PdfLayout } from '@/lib/pdf-layout';
 import { cn } from '@/lib/utils';
 
 /** The Company row as the settings page hands it over: no encrypted NIC
@@ -71,6 +74,7 @@ const SECTIONS = [
   { id: 'tax', label: 'GST & tax', icon: Percent },
   { id: 'bank', label: 'Bank & UPI', icon: Landmark },
   { id: 'invoice', label: 'Numbering & PDF', icon: Hash },
+  { id: 'pdf-layout', label: 'PDF layout', icon: Ruler },
   { id: 'signature', label: 'Signature', icon: PenLine },
   { id: 'einvoice', label: 'e-Invoice API', icon: ShieldCheck },
 ] as const;
@@ -80,7 +84,7 @@ type SectionId = (typeof SECTIONS)[number]['id'];
 /** Every company detail on one scrolling page — each section shows its
  * values straight away and edits in place (Edit → fields → Save), saving
  * only that section's fields (see updateCompany's `_fields`). */
-export function CompanyProfile({ company: co, pdfItemRows = 'none' }: { company: PublicCompany; pdfItemRows?: PdfItemRows }) {
+export function CompanyProfile({ company: co, pdfItemRows = 'none', pdfLayout = DEFAULT_PDF_LAYOUT }: { company: PublicCompany; pdfItemRows?: PdfItemRows; pdfLayout?: PdfLayout }) {
   const [editing, setEditing] = useState<Set<SectionId>>(new Set());
   const [active, setActive] = useState<SectionId>('business');
 
@@ -331,6 +335,8 @@ export function CompanyProfile({ company: co, pdfItemRows = 'none' }: { company:
               </div>
             )}
           />
+
+          <PdfLayoutSection id="pdf-layout" value={pdfLayout} />
 
           <Section
             {...sectionProps('signature')}

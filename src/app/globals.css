@@ -359,3 +359,15 @@ main:has(> .invoice-builder-root) {
 .doc-rows-zebra .clean-item-row:nth-child(even) > td {
   background-color: #f4f5f6;
 }
+/* Company → PDF layout → Row spacing (src/lib/pdf-layout.ts) on every
+   invoice template's item rows. Normal keeps each template's own padding;
+   the page planner measures rows with the same class, so a denser or
+   airier table still splits across pages exactly. */
+.row-space-compact .pdf-item-row > td {
+  padding-top: 2px !important;
+  padding-bottom: 2px !important;
+}
+.row-space-relaxed .pdf-item-row > td {
+  padding-top: 9px !important;
+  padding-bottom: 9px !important;
+}

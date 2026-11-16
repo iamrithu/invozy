@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './prisma';
+import { DEFAULT_PDF_LAYOUT, normalizePdfLayout, type PdfLayout } from './pdf-layout';
 
 // Company-wide settings kept in the AppSetting key/value table rather than
 // as Company columns. The point is deploy safety: code ships to Vercel the
@@ -16,11 +17,14 @@ export type AppSettings = {
   /** How product rows are separated on CLEAN-style documents: column rules
    * only (default), a thin line between rows, or light alternate shading. */
   pdfItemRows: PdfItemRows;
+  /** Margins, row spacing, rows per page and the page furniture of every
+   * printed document (src/lib/pdf-layout.ts). */
+  pdfLayout: PdfLayout;
 };
 
-export const DEFAULT_SETTINGS: AppSettings = { monthlySalesTarget: null, pdfItemRows: 'none' };
+export const DEFAULT_SETTINGS: AppSettings = { monthlySalesTarget: null, pdfItemRows: 'none', pdfLayout: DEFAULT_PDF_LAYOUT };
 
-const KEYS = { monthlySalesTarget: 'sales.monthlyTarget', pdfItemRows: 'pdf.itemRows' } as const;
+const KEYS = { monthlySalesTarget: 'sales.monthlyTarget', pdfItemRows: 'pdf.itemRows', pdfLayout: 'pdf.layout' } as const;
 
 /** P2021 = "table does not exist" — the migration hasn't been applied yet. */
 export function isMissingTable(err: unknown): boolean {
@@ -41,6 +45,7 @@ function parse(rows: { key: string; value: Prisma.JsonValue }[]): AppSettings {
   return {
     monthlySalesTarget: typeof target === 'number' && target > 0 ? target : null,
     pdfItemRows: rowsStyle === 'lines' || rowsStyle === 'zebra' ? rowsStyle : 'none',
+    pdfLayout: normalizePdfLayout(by.get(KEYS.pdfLayout)),
   };
 }
 

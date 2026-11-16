@@ -18,6 +18,6 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: P
     // Keyed so navigating here from an invoice's editor (e.g. the top bar's
     // "New invoice") mounts a fresh builder instead of carrying that
     // invoice's state over.
-    <BuilderClient key="new" products={JSON.parse(JSON.stringify(products))} company={JSON.parse(JSON.stringify({ ...toPublicCompany(company), pdfItemRows: settings.pdfItemRows }))} editInvoice={null} />
+    <BuilderClient key="new" products={JSON.parse(JSON.stringify(products))} company={JSON.parse(JSON.stringify({ ...toPublicCompany(company), pdfItemRows: settings.pdfItemRows, pdfLayout: settings.pdfLayout }))} editInvoice={null} />
   );
 }

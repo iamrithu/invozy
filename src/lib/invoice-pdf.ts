@@ -8,7 +8,9 @@ import { put, del } from '@vercel/blob';
 import { prisma } from './prisma';
 import { COMPANY_ID } from './company-id';
 import { createSignedToken, invoiceShareToken } from './signed-token';
-import { getSharedPdfContext, PDF_PAGE } from './pdf-browser';
+import { getSharedPdfContext, PDF_PAGE, viewportFor } from './pdf-browser';
+import { getAppSettings } from './settings';
+import type { PdfLayout } from './pdf-layout';
 
 // ---------------------------------------------------------------------------
 // Invoice PDFs: render once, store, serve the stored file.
@@ -104,6 +106,9 @@ export type RenderOptions = {
   footerLeft?: string;
   /** Footer, right side before "Page X of Y" — e.g. the document number. */
   footerRight?: string;
+  /** Paper margins and page footer; read from Company → PDF layout when
+   * not given. */
+  layout?: PdfLayout;
 };
 
 /** Renders one print page (e.g. `/print/invoices/<id>?t=<token>`) to an A4
@@ -123,6 +128,7 @@ export async function renderPrintPage(pagePath: string, opts: RenderOptions = {}
   // Never echo the token into logs/errors.
   const label = pagePath.split('?')[0];
 
+  const layout = opts.layout ?? (await getAppSettings()).pdfLayout;
   const context = await getSharedPdfContext();
   const page = await context.newPage();
   const startedAt = Date.now();
@@ -134,6 +140,9 @@ export async function renderPrintPage(pagePath: string, opts: RenderOptions = {}
       // sections on mount (print-pagination.tsx), and `print:` styles
       // change those sections' padding/borders.
       await page.emulateMedia({ media: 'print' });
+      // Lay out at the content width these margins leave, so what the sheet
+      // measures is what prints.
+      await page.setViewportSize(viewportFor(layout));
       // 'load', not 'networkidle': the print page's images are inlined
       // data URLs (decoded by 'load'), and the readiness marker below is
       // the real layout signal — waiting for the network to go quiet (the
@@ -151,14 +160,14 @@ export async function renderPrintPage(pagePath: string, opts: RenderOptions = {}
         // extra page by itself. The footer is rendered in a separate
         // document that can't load the page's web fonts — generic font
         // stack only, and nothing that needs a ₹ glyph.
-        displayHeaderFooter: true,
+        displayHeaderFooter: layout.pageFooter,
         headerTemplate: '<span></span>',
-        footerTemplate: footerTemplate(opts.footerLeft ?? 'This is a computer-generated document.', opts.footerRight),
+        footerTemplate: footerTemplate(layout, opts.footerLeft ?? 'This is a computer-generated document.', opts.footerRight),
         margin: {
-          top: `${PDF_PAGE.margin.top}mm`,
-          bottom: `${PDF_PAGE.margin.bottom}mm`,
-          left: `${PDF_PAGE.margin.left}mm`,
-          right: `${PDF_PAGE.margin.right}mm`,
+          top: `${layout.marginTop}mm`,
+          bottom: `${layout.marginBottom}mm`,
+          left: `${layout.marginLeft}mm`,
+          right: `${layout.marginRight}mm`,
         },
       });
     })();
@@ -175,10 +184,10 @@ export async function renderPrintPage(pagePath: string, opts: RenderOptions = {}
   }
 }
 
-function footerTemplate(left: string, right?: string): string {
+function footerTemplate(layout: PdfLayout, left: string, right?: string): string {
   const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
   return `
-    <div style="width:100%;display:flex;justify-content:space-between;padding:0 ${PDF_PAGE.margin.left}mm;font-family:system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:8px;color:#4b5563;">
+    <div style="width:100%;display:flex;justify-content:space-between;padding:0 ${layout.marginRight}mm 0 ${layout.marginLeft}mm;font-family:system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:8px;color:#4b5563;">
       <span>${esc(left)}</span>
       <span>${right ? `${esc(right)} · ` : ''}Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>
     </div>`;

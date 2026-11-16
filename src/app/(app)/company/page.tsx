@@ -17,7 +17,7 @@ export default async function CompanyPage() {
         </h1>
         <p className="mt-1 text-[12px] text-ink-faint">Everything here prints on your invoices. Tap Edit on any section to change it in place.</p>
       </div>
-      <CompanyProfile company={JSON.parse(JSON.stringify(company))} pdfItemRows={settings.pdfItemRows} />
+      <CompanyProfile company={JSON.parse(JSON.stringify(company))} pdfItemRows={settings.pdfItemRows} pdfLayout={settings.pdfLayout} />
     </div>
   );
 }

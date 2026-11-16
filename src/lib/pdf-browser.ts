@@ -1,23 +1,29 @@
 import type { Browser, BrowserContext } from 'playwright-core';
+import { contentWidthMm, DEFAULT_PDF_LAYOUT, type PdfLayout } from './pdf-layout';
 
-/** The one physical page every PDF prints to — A4 with these margins. The
- * print pages (src/app/print/**) lay their content out at exactly
- * CONTENT_WIDTH_MM, and the invoice sheets' pagination budget
- * (print-pagination.tsx's USABLE_MM) is derived from the same 297mm −
- * top − bottom height, so what gets measured on screen is what prints.
+/** The physical page every PDF prints to — A4, with the margins from
+ * Company → PDF layout (these are the defaults). The print pages
+ * (src/app/print/**) lay their content out at exactly the content width the
+ * margins leave, and the invoice sheets' page plan (print-pagination.tsx
+ * pageBudgets) uses the same 297mm − top − bottom height, so what gets
+ * measured on screen is what prints.
  * Kept here (server-only) rather than in print-pagination.tsx because that
  * file is a Client Component module: a server import from it would get a
  * client reference instead of these numbers. */
 export const PDF_PAGE = {
   format: 'A4' as const,
-  margin: { top: 14, bottom: 14, left: 12, right: 12 },
+  /** The defaults; each render uses Company → PDF layout (src/lib/pdf-layout.ts). */
+  margin: { top: DEFAULT_PDF_LAYOUT.marginTop, bottom: DEFAULT_PDF_LAYOUT.marginBottom, left: DEFAULT_PDF_LAYOUT.marginLeft, right: DEFAULT_PDF_LAYOUT.marginRight },
   /** 210mm − 12mm − 12mm. */
-  contentWidthMm: 186,
+  contentWidthMm: contentWidthMm(DEFAULT_PDF_LAYOUT),
 };
 
-/** CSS px at 96dpi — the A4 content width as a viewport width, so the
+/** CSS px at 96dpi — a layout's A4 content width as a viewport width, so the
  * headless page lays out at the same width it prints at. */
-export const PDF_VIEWPORT = { width: Math.round((PDF_PAGE.contentWidthMm * 96) / 25.4), height: 1000 };
+export function viewportFor(layout: PdfLayout) {
+  return { width: Math.round((contentWidthMm(layout) * 96) / 25.4), height: 1000 };
+}
+export const PDF_VIEWPORT = viewportFor(DEFAULT_PDF_LAYOUT);
 
 /** A single headless Chromium instance, shared across every PDF render in
  * this Node process — launching a browser takes ~1s, so reusing one

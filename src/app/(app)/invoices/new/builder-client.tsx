@@ -96,6 +96,7 @@ import { hashColor, initials } from '@/lib/avatar';
 import { customerDisplayName } from '@/lib/customer';
 import { UNITS } from '@/lib/units';
 import { PAPER_STYLE } from '@/lib/paper-theme';
+import type { PdfLayout } from '@/lib/pdf-layout';
 
 type PriceTier = { id?: string; unit: string; price: string | number; approxQty: string | number | null };
 type Product = {
@@ -128,6 +129,7 @@ type Company = {
   address: string;
   /** CLEAN product-row style for the live preview (src/lib/settings.ts). */
   pdfItemRows?: 'none' | 'lines' | 'zebra';
+  pdfLayout?: PdfLayout;
   gstin: string;
   state: string;
   logoUrl?: string | null;

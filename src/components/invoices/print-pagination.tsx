@@ -1,26 +1,21 @@
 'use client';
 
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { contentHeightMm, DEFAULT_PDF_LAYOUT, type PdfLayout } from '@/lib/pdf-layout';
 
 // ---------------------------------------------------------------------------
-// Shared print pagination — used by both InvoiceSheet (MODERN) and
-// InvoiceSheetClassic (CLASSIC) to split line items into physical A4 pages
-// for the PDF/print path.
+// Shared print pagination for all three invoice templates (Modern, Classic,
+// Clean): splits the line items into physical A4 pages for the PDF/print
+// path.
 //
-// Earlier versions of this logic (still visible in invoice-sheet-classic.tsx
-// history) used hardcoded mm-per-section budgets (header ≈32mm, buyer
-// ≈26mm, etc.), measured once during development against one particular
-// company's data. That broke in production the moment a real company's
-// content didn't match the guess — e.g. a two-line wrapping address makes
-// the real header taller than the constant assumed, so the true content for
-// what should be one page overflows past the physical page boundary and the
-// browser's own pagination silently takes over mid-flow, stranding a lone
-// item (and sometimes the whole closing block) on its own near-blank page.
-//
-// This module instead measures each invoice's *actual* rendered section
-// heights at render time (see useMeasuredSections below) and computes the
-// page split from those real numbers, so it stays correct regardless of how
-// long a given company's address, notes, or optional sections happen to be.
+// Earlier versions used hardcoded mm-per-section budgets, then a single
+// sample row height — both broke on real data (a two-line address, a long
+// product name that wraps), and the browser's own pagination silently took
+// over mid-flow, stranding rows or the totals on a near-blank page. This
+// module measures each invoice's *actual* rendered sections and every row
+// at render time (useMeasuredLayout), then plans the pages from those real
+// numbers within the company's PDF layout settings (src/lib/pdf-layout.ts:
+// margins, rows per page, rows with the totals).
 // ---------------------------------------------------------------------------
 
 const PX_PER_MM = 96 / 25.4;
@@ -28,257 +23,189 @@ export function mmToPx(mm: number): number {
   return mm * PX_PER_MM;
 }
 
-/** A4 usable content height (297mm page, 14mm top+bottom margins — matches
- * both `@page` in globals.css and PDF_PAGE in src/lib/pdf-browser.ts, which
- * the PDF renderer prints with; content width there is 186mm, the width
- * the print pages lay the sheet out at),
- * minus a safety band. This one is genuinely template-agnostic — every
- * physical page both templates print to has the same shape — so, unlike
- * the section heights below, it doesn't need measuring.
- *
- * The safety band here is deliberately generous (269mm true usable → 250mm
- * budget, ~19mm/~72px of slack) rather than trimmed close to the true
- * limit: a last page whose content is pushed to fill this height exactly
- * (see the `minHeight: ${USABLE_MM}mm` usage on each template's last-page
- * container) has zero margin left to absorb any small mismatch between
- * this module's mm→px conversion and whatever Chromium's own print
- * pagination actually uses internally — confirmed empirically to matter:
- * a last page computed against a slimmer budget measured as fitting
- * exactly, by getBoundingClientRect(), in the normal DOM, yet still
- * silently overflowed onto an extra, near-blank physical page once
- * through the real PDF route. `USABLE_MM` is exported (not just the
- * derived px value) specifically so every place that needs this number —
- * the capacity math below and each template's last-page min-height style —
- * reads from the exact same source instead of a second hardcoded value
- * that could silently drift out of sync with it. */
-export const USABLE_MM = 250;
-export const USABLE_PX = mmToPx(USABLE_MM);
-export const ENDBAND_PX = mmToPx(10);
+// ---------------------------------------------------------------------------
+// Fill-first page planning (all templates)
+//
+// What paginateLinesUniform got wrong for long invoices: it assumed every
+// row is as tall as one sample row, spread rows *evenly* across pages
+// instead of filling them, budgeted only 250mm of the 269mm content box,
+// and never planned where the closing block (totals, words, bank, terms,
+// signature) lands — Chromium's own pagination pushed it wherever it fell.
+// A 12-item invoice came out as 10 rows + a page of white, then 2 rows and
+// the totals overleaf.
+//
+// planPages measures instead of guessing and decides everything up front:
+//   · every row's real height (a long product name wraps to two lines);
+//   · page 1 = full letterhead + buyer block; pages 2+ = a slim
+//     continuation header (number, customer, page n of N, brought forward);
+//   · each non-last page is filled with as many rows as fit above a small
+//     "Continued on page n+1 · carried forward ₹…" strip — but never more
+//     than the layout's rows-per-page (20 by default);
+//   · the closing block goes on the page where the remaining rows (at most
+//     rows-with-totals, 14 by default) and it fit together. With
+//     `keepWithClosing` 0 (the default) a page of totals alone is fine;
+//     above 0, that many rows always travel with the totals.
+// ---------------------------------------------------------------------------
 
-/** How far down the page the CLEAN template's ruled frame is drawn on its
- * last page (an explicit-pixel filler row inside the item table, never a
- * min-height). Closer to the true 269mm than USABLE_MM because it's only
- * ever applied when the page's *measured* sections already fit beneath it,
- * and 7mm of slack covers any rounding between that sum and Chromium's own
- * print layout — verified against real renders with 1–15 lines, HSN
- * summary and notes on and off. Never used to decide the page split. */
-export const FRAME_FILL_MM = 262;
-export const FRAME_FILL_PX = mmToPx(FRAME_FILL_MM);
-
-export type PaginationResult<T> = {
-  pages: T[][];
-};
-
-/** Splits line items into physical pages. A short invoice that fits —
- * header + buyer + every item + the full closing block, all together —
- * stays a single page. Otherwise, non-last pages are packed as full as
- * `perPage` allows (spread evenly *among themselves* when there's more
- * than one, so an early continuation page never sits mostly blank while a
- * later one is dense) and only the genuinely last page — which drops the
- * buyer block to make room for the closing block instead — absorbs
- * whatever remains, never exceeding `lastCap`.
- *
- * The buyer block (customer name/address/GSTIN, delivery instructions)
- * always shows somewhere — either on the single page, when everything fits
- * together, or on page 1 of a genuine multi-page split. An earlier version
- * of this function also allowed a single page to drop the buyer block
- * entirely to squeeze in a few more items without spilling onto a second
- * page; that traded away information the buyer/delivery crew actually
- * needs off of every invoice, which isn't a trade this app makes anymore —
- * a slightly-over-capacity invoice now genuinely paginates instead.
- *
- * An even earlier version spread the total evenly across *every* page,
- * last page included — e.g. a 3-item invoice whose closing block alone
- * (HSN summary, bank details, QR, declaration, signatures — the CLASSIC
- * template's is tall) left room for only 2 items on a single page came out
- * [2, 1]: two items on page 1 with most of the page sitting blank, and the
- * third item stranded alone on page 2. That was worried about a genuinely
- * different failure mode — a *non-last* page left sparse by greedily
- * packing every earlier page to its cap — but the true last page never has
- * that problem: it's always stretched to the full physical page height by
- * the `lastPageSpacerPx` spacer at the call site, closing block anchored to
- * the bottom, regardless of how few items land on it. Treating the last
- * page's small, structurally-fixed `lastCap` (it alone carries the whole
- * closing block) as just another page to spread evenly into was starving
- * every earlier page of room it actually had. Now only the non-last pages
- * split evenly among each other; the last page simply takes what's left. */
-export function paginateLines<T>(lines: T[], perPage: number, singleCap: number, lastCap: number): PaginationResult<T> {
-  const total = lines.length;
-  if (total <= singleCap) return { pages: [lines] };
-
-  // Fewest pages that can hold everything: every page but the last can hold
-  // up to `perPage` items (it only has to make room for the small
-  // "Continued on page N" footer below it), the last page up to `lastCap`
-  // (it carries the full closing block instead).
-  let pageCount = 2;
-  while ((pageCount - 1) * perPage + lastCap < total) pageCount++;
-
-  const nonLastPages = pageCount - 1;
-  // Whatever doesn't fit within the non-last pages' combined `perPage`
-  // capacity has to land on the last page — guaranteed by the `pageCount`
-  // loop above to never exceed `lastCap`.
-  const lastCount = Math.max(0, total - nonLastPages * perPage);
-  let remaining = total - lastCount;
-
-  const counts = new Array(pageCount).fill(0);
-  for (let i = 0; i < nonLastPages; i++) {
-    const pagesLeft = nonLastPages - i;
-    const take = Math.min(perPage, Math.ceil(remaining / pagesLeft));
-    counts[i] = take;
-    remaining -= take;
-  }
-  counts[pageCount - 1] = lastCount;
-
-  const pages: T[][] = [];
-  let idx = 0;
-  for (const c of counts) {
-    pages.push(lines.slice(idx, idx + c));
-    idx += c;
-  }
-  return { pages };
-}
-
-/** Splits line items into physical pages using a single, uniform per-page
- * cap — every page, including the last, can hold up to `perPage` items
- * (spread evenly among pages when there's more than one, so an early page
- * never sits mostly blank while a later one is dense). Unlike `paginateLines`
- * above (MODERN's model — a separate, reduced `lastCap` for a dedicated
- * last/closing page that a spacer then stretches to the full physical page
- * height), this makes no attempt to pre-compute whether the closing block
- * fits alongside the last chunk of items: the caller (CLASSIC) appends the
- * closing block directly after the last chunk in the *same* physical-page
- * flow, with no forced page break before it, and lets Chromium's native
- * print pagination carry over onto more pages whatever doesn't fit —
- * `break-inside-avoid` on each of the closing block's own sub-sections (see
- * ClassicClosing) keeps each one intact across that overflow.
- *
- * This avoids a failure mode `paginateLines`' reduced-last-page-cap model
- * has for CLASSIC specifically: its closing block (HSN summary, bank
- * details, QR, declaration, signature) is tall enough that `singleCap`
- * (item capacity for a page that also fits the *entire* closing block) can
- * come out smaller than the item count even when every item easily fits on
- * page 1 by itself — e.g. 2 items but `singleCap` of 1 forces a second,
- * dedicated "closing-only" page that stretches to full height while page 1
- * sits mostly blank below those 2 items. Capping every page uniformly by
- * `perPage` (which never accounts for closing at all) keeps every item on
- * page 1 in that case, with the closing block flowing to fill whatever
- * space remains there before any of it spills to page 2. */
-export function paginateLinesUniform<T>(lines: T[], perPage: number): PaginationResult<T> {
-  const total = lines.length;
-  if (total === 0) return { pages: [[]] };
-
-  const pageCount = Math.max(1, Math.ceil(total / perPage));
-  const counts = new Array(pageCount).fill(0);
-  let remaining = total;
-  for (let i = 0; i < pageCount; i++) {
-    const pagesLeft = pageCount - i;
-    const take = Math.min(perPage, Math.ceil(remaining / pagesLeft));
-    counts[i] = take;
-    remaining -= take;
-  }
-
-  const pages: T[][] = [];
-  let idx = 0;
-  for (const c of counts) {
-    pages.push(lines.slice(idx, idx + c));
-    idx += c;
-  }
-  return { pages };
-}
-
-export type MeasuredHeights = {
+export type LayoutHeights = {
   header: number;
   buyer: number;
+  /** Slim header on pages 2+. */
+  contHeader: number;
   thead: number;
-  row: number;
-  continued: number;
+  /** One per line item, in order. */
+  rows: number[];
+  /** "Continued on page n+1" strip under a non-last page's rows. */
+  contFooter: number;
   closing: number;
 };
 
-export type PageCapacities = { perPage: number; singleCap: number; lastCap: number };
+export type PlannedPage = { start: number; end: number; closing: boolean };
 
-/** The same "sum the fixed sections, subtract from usable, divide by row
- * height" arithmetic invoice-sheet-classic.tsx always used — now taking
- * measured pixel heights instead of hardcoded mm constants. */
-export function computeCapacities(h: MeasuredHeights): PageCapacities {
-  const perPage = Math.max(1, Math.floor((USABLE_PX - h.header - h.buyer - h.thead - h.continued) / h.row));
-  const singleCap = Math.max(0, Math.floor((USABLE_PX - h.header - h.buyer - h.thead - h.closing - ENDBAND_PX) / h.row));
-  const lastCap = Math.max(0, Math.floor((USABLE_PX - h.header - h.thead - h.closing - ENDBAND_PX) / h.row));
-  return { perPage, singleCap, lastCap };
-}
-
-export type ProbeContent = {
-  header: ReactNode;
-  buyer: ReactNode;
-  /** The items table's `<thead>` content (just the header row(s)). */
-  itemsTableHead: ReactNode;
-  /** The real items `<table>`'s own classes (font size, layout) — applied
-   * to the probe's table too, so a row is measured at the size it prints
-   * at rather than at whatever the wrapper's text size happens to be. */
-  itemsTableClassName?: string;
-  /** One representative `<tr>`'s content — used to measure a single row's
-   * real height (font size, padding, borders all included). */
-  itemRow: ReactNode;
-  /** The "Continued on page N of M →" footer shown on non-last pages. */
-  continuedFooter: ReactNode;
-  /** The full closing block (totals, amount-in-words, optional sections,
-   * signature) for THIS invoice — i.e. only whichever optional sections
-   * (bank details, discount row, paid box, HSN table, "you saved", …)
-   * this specific invoice actually renders. */
-  closing: ReactNode;
+export type PlanOptions = {
+  /** Planned content height of one page, px. */
+  budget: number;
+  /** Most rows on a page without the totals (20 by default). */
+  maxRows: number;
+  /** Most rows on the page with the totals (14 by default). */
+  maxRowsWithClosing: number;
+  /** Rows that always go with the totals (0 by default: totals may stand alone). */
+  keepWithClosing: number;
 };
 
-/** Mounts a hidden, off-screen probe of this invoice's real sections
- * (rendered with this invoice's actual data — real address, real notes,
- * whichever optional sections are actually on) and measures each one's
- * true rendered height once, on mount.
- *
- * Intended for the static print/PDF render path only (editable === false):
- * the invoice's content there is fixed for the life of the page (server-
- * fetched, not live-edited), so measuring once on mount — rather than on
- * every render — is both sufficient and necessary: re-running the
- * measurement effect on every render (e.g. by depending on the `content`
- * object, which is a fresh reference each render) would set new state
- * every render and never settle. */
-export function useMeasuredSections(content: ProbeContent): { heights: MeasuredHeights | null; ready: boolean; probe: ReactNode } {
+/** Page budgets for a layout: what pages are planned against, and how far
+ * the CLEAN frame's column lines are drawn (closer to the true content
+ * height — only ever applied to sections already measured to fit). */
+export function pageBudgets(layout: PdfLayout): { planPx: number; fillPx: number } {
+  const content = contentHeightMm(layout);
+  return { planPx: mmToPx(content - 9), fillPx: mmToPx(content - 7) };
+}
+
+export function planOptions(layout: PdfLayout): PlanOptions {
+  return {
+    budget: pageBudgets(layout).planPx,
+    maxRows: layout.maxRowsPerPage,
+    maxRowsWithClosing: layout.maxRowsWithTotals,
+    keepWithClosing: layout.keepWithTotals,
+  };
+}
+
+/** Fill-first page plan — see the section comment above. Returns row index
+ * ranges ([start, end)) per page; exactly one page (the last) carries the
+ * closing block. A page holds as many rows as fit by measured height, but
+ * never more than `maxRows` — or `maxRowsWithClosing` on the page with the
+ * totals. */
+export function planPages(h: LayoutHeights, opts: PlanOptions = planOptions(DEFAULT_PDF_LAYOUT)): PlannedPage[] {
+  const { budget, maxRows, maxRowsWithClosing, keepWithClosing } = opts;
+  const n = h.rows.length;
+  const pages: PlannedPage[] = [];
+  const sum = (a: number, b: number) => h.rows.slice(a, b).reduce((s, x) => s + x, 0);
+  // A closing block taller than a whole continuation page can't be planned
+  // around — fill pages fully and let it flow on after the last rows, its
+  // own break-inside-avoid sections keeping each part intact.
+  const closingFitsAPage = h.contHeader + h.thead + h.closing <= budget;
+  let i = 0;
+
+  while (pages.length < 1000) {
+    const first = pages.length === 0;
+    const top = (first ? h.header + h.buyer : h.contHeader) + h.thead;
+
+    // Everything left fits here with the closing block: done.
+    if (n - i <= maxRowsWithClosing && top + sum(i, n) + h.closing <= budget) {
+      pages.push({ start: i, end: n, closing: true });
+      return pages;
+    }
+    if (i >= n) {
+      pages.push({ start: n, end: n, closing: true });
+      return pages;
+    }
+
+    // Fill this page, leaving room for the "continued" strip.
+    const cap = budget - top - h.contFooter;
+    let take = 0;
+    let used = 0;
+    while (i + take < n && take < maxRows && used + h.rows[i + take] <= cap) {
+      used += h.rows[i + take];
+      take++;
+    }
+
+    if (!closingFitsAPage) {
+      take = Math.max(1, take);
+      const end = i + take;
+      pages.push({ start: i, end, closing: end === n });
+      if (end === n) return pages;
+      i = end;
+      continue;
+    }
+
+    // Keep at least `keepWithClosing` rows for the page with the totals —
+    // never leaving this page without a row, and only when those rows and
+    // the closing block really fit together on a page.
+    const left = n - (i + take);
+    if (left < keepWithClosing) {
+      const hold = Math.min(keepWithClosing - left, take - 1);
+      if (hold > 0 && h.contHeader + h.thead + sum(i + take - hold, n) + h.closing <= budget) take -= hold;
+    }
+    take = Math.max(1, take);
+    pages.push({ start: i, end: i + take, closing: false });
+    i += take;
+  }
+  pages.push({ start: i, end: n, closing: true });
+  return pages;
+}
+
+export type LayoutProbe = {
+  header: ReactNode;
+  buyer: ReactNode;
+  contHeader: ReactNode;
+  itemsTableHead: ReactNode;
+  itemsTableClassName?: string;
+  /** The items table's wrapper class (a top rule, say) — the whole block,
+   * wrapper and table margins included, is what gets measured. */
+  itemsWrapClassName?: string;
+  /** Every row's `<td>` cells, in order — each one measured. */
+  rows: ReactNode[];
+  /** The printed rows' own class (row rules add height). */
+  rowClassName?: string;
+  contFooter: ReactNode;
+  closing: ReactNode;
+  /** The page frame's own class (its border). The probe is measured inside
+   * the same frame so every width matches the printed page to the pixel —
+   * a 1px border each side was enough to wrap a long product name onto a
+   * third line on the page but not in the probe. */
+  frameClassName?: string;
+};
+
+/** Like useMeasuredSections, but measures every row (and the continuation
+ * header/strip) so planPages works from real heights. Same once-on-mount,
+ * re-measure-after-fonts behaviour and the same hidden, positioned probe. */
+export function useMeasuredLayout(content: LayoutProbe): { heights: LayoutHeights | null; ready: boolean; probe: ReactNode } {
   const headerRef = useRef<HTMLDivElement>(null);
   const buyerRef = useRef<HTMLDivElement>(null);
-  const theadRef = useRef<HTMLTableSectionElement>(null);
-  const rowRef = useRef<HTMLTableRowElement>(null);
-  const continuedRef = useRef<HTMLDivElement>(null);
+  const contHeaderRef = useRef<HTMLDivElement>(null);
+  const tableWrapRef = useRef<HTMLDivElement>(null);
+  const tbodyRef = useRef<HTMLTableSectionElement>(null);
+  const contFooterRef = useRef<HTMLDivElement>(null);
   const closingRef = useRef<HTMLDivElement>(null);
-  const [heights, setHeights] = useState<MeasuredHeights | null>(null);
-  // Distinct from `heights !== null` — see below. The PDF route should
-  // only treat the layout as settled once `ready` is true.
+  const [heights, setHeights] = useState<LayoutHeights | null>(null);
   const [ready, setReady] = useState(false);
 
   useLayoutEffect(() => {
-    const measure = () =>
+    const h = (el: Element | null | undefined) => el?.getBoundingClientRect().height ?? 0;
+    const measure = () => {
+      const rows = Array.from(tbodyRef.current?.rows ?? []).map((r) => h(r));
       setHeights({
-        header: headerRef.current?.getBoundingClientRect().height ?? 0,
-        buyer: buyerRef.current?.getBoundingClientRect().height ?? 0,
-        thead: theadRef.current?.getBoundingClientRect().height ?? 0,
-        row: rowRef.current?.getBoundingClientRect().height ?? 0,
-        continued: continuedRef.current?.getBoundingClientRect().height ?? 0,
-        closing: closingRef.current?.getBoundingClientRect().height ?? 0,
+        header: h(headerRef.current),
+        buyer: h(buyerRef.current),
+        contHeader: h(contHeaderRef.current),
+        // Everything in the items block that isn't a row: column headings,
+        // the wrapper's rule, the table's own margin.
+        thead: h(tableWrapRef.current) - rows.reduce((s, x) => s + x, 0),
+        rows,
+        contFooter: h(contFooterRef.current),
+        closing: h(closingRef.current),
       });
-
-    // Measure immediately — keeps a real (non-PDF) viewer's flash-of-
-    // wrong-pagination window as short as possible. But `next/font`'s
-    // self-hosted webfonts still land via `font-display: swap`: the very
-    // first paint can use the browser's own fallback font, whose line
-    // height/character widths don't perfectly match the real font despite
-    // next/font's size-adjust metrics override, until the real font file
-    // finishes loading and the browser swaps it in — a swap that can
-    // easily land after this synchronous measurement already ran,
-    // especially on a cold Playwright context with nothing cached. A
-    // measurement taken against the fallback font's metrics can silently
-    // under- or over-count how much content fits per page, which is
-    // exactly the kind of mismatch that makes a physical page overflow
-    // later. So this measures again once `document.fonts.ready` resolves
-    // (real fonts guaranteed loaded and applied) and only *then* flips
-    // `ready` — see the `data-pdf-ready` marker at each caller, which
-    // gates on `ready`, not merely on `heights` being non-null.
+    };
     measure();
     let cancelled = false;
     const fontsReady = typeof document !== 'undefined' && document.fonts ? document.fonts.ready : Promise.resolve();
@@ -290,33 +217,35 @@ export function useMeasuredSections(content: ProbeContent): { heights: MeasuredH
     return () => {
       cancelled = true;
     };
-    // Measure once on mount only — see the doc comment above.
+    // Measure once on mount only — see useMeasuredSections.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Unmounted as soon as the final measurement is in — it has nothing left
-  // to do, and while mounted it's a second, hidden copy of the invoice's
-  // text sitting under page 1. (Hidden by inline visibility alone it wasn't
-  // even reliably hidden: `.invoice-print *` in globals.css sets
-  // `visibility: visible` on every descendant, which beats an inherited
-  // `hidden` — so its text could end up in the PDF. `data-measure-probe`
-  // gets an !important hide in globals.css for the moments it does exist.)
   const probe = ready ? null : (
     <div
       aria-hidden="true"
       data-measure-probe=""
       style={{ position: 'absolute', visibility: 'hidden', top: 0, left: 0, width: '100%', zIndex: -1, pointerEvents: 'none' }}
     >
+      <div className={content.frameClassName}>
       <div ref={headerRef}>{content.header}</div>
       <div ref={buyerRef}>{content.buyer}</div>
-      <table className={content.itemsTableClassName} style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead ref={theadRef}>{content.itemsTableHead}</thead>
-        <tbody>
-          <tr ref={rowRef}>{content.itemRow}</tr>
-        </tbody>
-      </table>
-      <div ref={continuedRef}>{content.continuedFooter}</div>
+      <div ref={contHeaderRef}>{content.contHeader}</div>
+      <div ref={tableWrapRef} className={content.itemsWrapClassName} style={{ display: 'flow-root' }}>
+        <table className={content.itemsTableClassName} style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>{content.itemsTableHead}</thead>
+          <tbody ref={tbodyRef}>
+            {content.rows.map((cells, k) => (
+              <tr key={k} className={content.rowClassName}>
+                {cells}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div ref={contFooterRef}>{content.contFooter}</div>
       <div ref={closingRef}>{content.closing}</div>
+      </div>
     </div>
   );
 

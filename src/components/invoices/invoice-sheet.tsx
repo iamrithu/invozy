@@ -4,7 +4,8 @@ import { Minus, Plus, Trash2 } from 'lucide-react';
 import { computeTotals, fmtInr, formatInvoiceDate, formatUnit, type TotalsResult } from '@/lib/gst';
 import { numberToWords } from '@/lib/number-to-words';
 import { gstStateCode } from '@/lib/gst-state-codes';
-import { computeCapacities, paginateLines, useMeasuredSections, USABLE_MM, USABLE_PX } from './print-pagination';
+import { mmToPx, pageBudgets, planOptions, planPages, useMeasuredLayout } from './print-pagination';
+import { normalizePdfLayout, type PdfLayout } from '@/lib/pdf-layout';
 
 export type InvoiceSheetCompany = {
   name: string;
@@ -31,6 +32,8 @@ export type InvoiceSheetCompany = {
   /** Whether the PDF prints discounts — undefined behaves as "on" (see printedLines). */
   pdfShowItemDiscount?: boolean;
   pdfShowBillDiscount?: boolean;
+  /** Company → PDF layout (margins, row spacing, rows per page…). */
+  pdfLayout?: PdfLayout;
 };
 
 export type InvoiceSheetCustomer = {
@@ -183,7 +186,7 @@ export function clampDiscount(raw: string): number {
 // ---------------------------------------------------------------------------
 
 /** The items table's header row — shared between the real table and the
- * hidden measurement probe (see useMeasuredSections) so the probe measures
+ * hidden measurement probe (see useMeasuredLayout) so the probe measures
  * the exact markup that actually gets printed. */
 function modernTheadRow({ editable, showDisc }: { editable: boolean; showDisc: boolean }) {
   if (editable) {
@@ -237,10 +240,15 @@ function modernRowCells(
 
   const cellCls = editable ? 'whitespace-nowrap py-2 pr-1.5' : 'whitespace-nowrap border border-ink px-2 py-1.5';
 
+  // Printed, the item name wraps (the number columns never do), so a long
+  // name makes its row taller — which the page planner measures — instead
+  // of pushing the table past the paper's right edge.
+  const nameCls = editable ? cellCls : 'w-full border border-ink px-2 py-1.5 [overflow-wrap:anywhere]';
+
   return (
     <>
-      <td className={cellCls}>
-        <span className="inline-flex items-center gap-1.5">
+      <td className={nameCls}>
+        <span className={editable ? 'inline-flex items-center gap-1.5' : undefined}>
           {l.name}
           {editable && !l.productId && (
             <span title="Not from your product catalog" className="rounded-sm2 bg-surface-alt px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-ink-faint">
@@ -383,7 +391,7 @@ function ModernBuyerRow({ customer, editable }: SharedProps) {
 function ModernItemsTable({ company, lines, editable, showDisc, onUpdateLine, onIncrement, onDecrement, onRemoveLine }: SharedProps & { lines: InvoiceSheetLine[]; showDisc: boolean }) {
   return (
     <div className={editable ? 'overflow-x-auto' : 'flex-none overflow-x-auto'}>
-      <table className={`mt-4 w-full text-[12px] ${editable ? '' : 'border-collapse'}`}>
+      <table className={`mt-4 w-full text-[12px] ${editable ? '' : `border-collapse row-space-${normalizePdfLayout(company.pdfLayout).rowSpacing}`}`}>
         <thead>{modernTheadRow({ editable, showDisc })}</thead>
         <tbody>
           {lines.length === 0 ? (
@@ -394,7 +402,7 @@ function ModernItemsTable({ company, lines, editable, showDisc, onUpdateLine, on
             </tr>
           ) : (
             lines.map((l) => (
-              <tr key={l.lineId} className={editable ? 'border-b border-line' : ''}>
+              <tr key={l.lineId} className={editable ? 'border-b border-line' : 'pdf-item-row'}>
                 {modernRowCells(l, { editable, showDisc, currency: company.currency, onUpdateLine, onIncrement, onDecrement, onRemoveLine })}
               </tr>
             ))
@@ -565,24 +573,24 @@ export function InvoiceSheet(rawProps: {
   // builder always has the input.
   const showDisc = lines.some((l) => l.discount > 0);
 
-  // The longest name, not just the first line, gives the measurement probe
-  // a more conservative (safer) row-height reading.
-  const measureLine =
-    lines.length > 0
-      ? lines.reduce((longest, l) => (l.name.length > longest.name.length ? l : longest), lines[0])
-      : ({ lineId: '__measure__', name: 'Representative Item Name', unit: 'pcs', qty: 1, rate: 0, discount: 0 } satisfies InvoiceSheetLine);
+  const layout = normalizePdfLayout(props.company.pdfLayout);
+  const lineAmount = (l: InvoiceSheetLine) => l.qty * l.rate * (1 - l.discount / 100);
+  const itemsTotal = lines.reduce((sum, l) => sum + lineAmount(l), 0);
 
-  // Called unconditionally (rules of hooks), even in editable mode where
-  // its result goes unused.
-  const { heights, ready, probe } = useMeasuredSections({
+  // Measures this invoice's real sections — every row included — so
+  // planPages can fill each page and place the totals deliberately (see
+  // print-pagination.tsx). Called unconditionally (rules of hooks), even in
+  // editable mode where its result goes unused.
+  const { heights, ready, probe } = useMeasuredLayout({
     header: <ModernHeader {...props} />,
     buyer: <ModernBuyerRow {...props} />,
+    contHeader: <ModernContinuationHeader {...props} page={2} pageCount={9} broughtForward={itemsTotal} />,
+    itemsWrapClassName: 'flex-none',
     itemsTableHead: modernTheadRow({ editable: false, showDisc }),
-    itemsTableClassName: 'w-full border-collapse text-[12px]',
-    itemRow: modernRowCells(measureLine, { editable: false, showDisc, currency: props.company.currency }),
-    continuedFooter: (
-      <div className="flex justify-end border-t-2 border-ink pt-3 text-right text-[11px] font-bold text-ink-soft">Continued on page 2 of 3 →</div>
-    ),
+    itemsTableClassName: `mt-4 w-full text-[12px] border-collapse row-space-${layout.rowSpacing}`,
+    rows: lines.map((l) => modernRowCells(l, { editable: false, showDisc, currency: props.company.currency })),
+    rowClassName: 'pdf-item-row',
+    contFooter: <ModernContinuedStrip {...props} nextPage={2} pageCount={9} fromItem={1} toItem={lines.length} carried={itemsTotal} />,
     closing: <ModernClosing {...props} />,
   });
 
@@ -607,53 +615,116 @@ export function InvoiceSheet(rawProps: {
   // same wrapper for the measuring pass and the final paginated render
   // means the probe is guaranteed to measure at the same width the real
   // content ends up laid out at.
-  const capacities = heights ? computeCapacities(heights) : null;
-  const { pages } = capacities ? paginateLines(lines, capacities.perPage, capacities.singleCap, capacities.lastCap) : { pages: [] };
+  const plan = heights ? planPages(heights, planOptions(layout)) : [];
+  const fillTarget = pageBudgets(layout).fillPx;
+  const sumRows = (a: number, b: number) => (heights ? heights.rows.slice(a, b).reduce((x, y) => x + y, 0) : 0);
+  const amountUpTo = (end: number) => lines.slice(0, end).reduce((sum, l) => sum + lineAmount(l), 0);
 
   // The card look (border, shadow, rounded corners, padding) is for the
   // on-screen preview only — printed, the page margins are the frame.
   return (
     <div className="relative rounded-b-lg2 border border-t-0 border-line bg-white p-[26px] pt-[26px] text-ink-body shadow-card print:rounded-none print:border-0 print:p-0 print:shadow-none">
       {probe}
-      {/* Tells the PDF route's Playwright navigation the corrected,
-          measured-and-paginated layout has committed — see route.ts's
-          waitForSelector call. Only set once real pages exist, i.e. after
-          the measurement pass has committed — in practice this whole
-          branch is never actually painted before that, since
-          useLayoutEffect corrects it synchronously before the browser's
-          first paint. */}
-      {ready && <div data-pdf-ready="true" style={{ display: 'none' }} />}
-      {pages.map((pageLines, i) => {
-        const isLast = i === pages.length - 1;
-        const showBuyer = isLast ? pages.length === 1 : true;
-        // Explicit pixel height, not a `flex: 1` spacer growing into a
-        // `min-height` on its flex container — see the equivalent comment
-        // in invoice-sheet-classic.tsx for why.
-        const lastPageSpacerPx =
-          isLast && heights
-            ? Math.max(0, USABLE_PX - (heights.header + (showBuyer ? heights.buyer : 0) + heights.thead + pageLines.length * heights.row + heights.closing))
-            : 0;
+      {/* Tells the PDF renderer the measured, planned layout has committed;
+          data-page-plan records rows per page (+T = the page with totals). */}
+      {ready && (
+        <div
+          data-pdf-ready="true"
+          data-page-plan={plan.map((pg) => `${pg.end - pg.start}${pg.closing ? '+T' : ''}`).join('|')}
+          data-layout-mm={heights ? JSON.stringify({ ...heights, header: pxToMm(heights.header), buyer: pxToMm(heights.buyer), contHeader: pxToMm(heights.contHeader), thead: pxToMm(heights.thead), contFooter: pxToMm(heights.contFooter), closing: pxToMm(heights.closing), rows: heights.rows.map(pxToMm) }) : undefined}
+          style={{ display: 'none' }}
+        />
+      )}
+      {plan.map((pg, i) => {
+        const pageLines = lines.slice(pg.start, pg.end);
+        const isFirst = i === 0;
+        const isLast = pg.closing;
+        // With "fill" on (the default) the totals — or the "continued"
+        // strip — sit at the foot of every page, a page of totals alone
+        // included: an explicit-pixel spacer from measured heights (never a
+        // flex stretch, which could spill a few mm and print a blank page).
+        const used = heights
+          ? (isFirst ? heights.header + heights.buyer : heights.contHeader) +
+            (pageLines.length > 0 ? heights.thead : 0) +
+            sumRows(pg.start, pg.end) +
+            (isLast ? heights.closing : heights.contFooter)
+          : 0;
+        const spacerPx = layout.fillColumns && heights ? Math.max(0, Math.floor(fillTarget - used)) : 0;
         return (
-          <div key={i} className={`flex flex-col ${i > 0 ? 'mt-6' : ''} ${!isLast ? 'break-after-page' : ''}`}>
-            <div className="flex flex-1 flex-col" style={isLast ? { minHeight: `${USABLE_MM}mm` } : undefined}>
-              <ModernHeader {...props} />
-              {showBuyer && <ModernBuyerRow {...props} />}
+          <div key={i} className={`flex flex-col ${i > 0 ? 'mt-6 print:mt-0' : ''} ${!isLast ? 'break-after-page' : ''}`}>
+            <div className="flex flex-1 flex-col">
+              {isFirst ? (
+                <ModernHeader {...props} />
+              ) : (
+                <ModernContinuationHeader {...props} page={i + 1} pageCount={plan.length} broughtForward={layout.carryForward ? amountUpTo(pg.start) : null} />
+              )}
+              {isFirst && <ModernBuyerRow {...props} />}
               {pageLines.length > 0 && <ModernItemsTable {...props} lines={pageLines} showDisc={showDisc} />}
-              {/* flex-none — see the equivalent comment in
-                  invoice-sheet-classic.tsx: without it, Chromium's print-
-                  layout pass silently shrinks this (the only default-
-                  shrinkable child) toward zero instead of honoring its
-                  height. */}
-              {isLast && lastPageSpacerPx > 0 && <div className="flex-none" style={{ height: `${lastPageSpacerPx}px` }} />}
+              {/* flex-none: without it Chromium's print layout shrinks the
+                  spacer (the only shrinkable child) toward zero. */}
+              {spacerPx > 0 && <div className="flex-none" style={{ height: `${spacerPx}px` }} />}
               {isLast ? (
                 <ModernClosing {...props} />
               ) : (
-                <div className="flex justify-end border-t-2 border-ink pt-3 text-right text-[11px] font-bold text-ink-soft">Continued on page {i + 2} of {pages.length} →</div>
+                <ModernContinuedStrip
+                  {...props}
+                  nextPage={i + 2}
+                  pageCount={plan.length}
+                  fromItem={pg.start + 1}
+                  toItem={pg.end}
+                  carried={layout.carryForward ? amountUpTo(pg.end) : null}
+                />
               )}
             </div>
           </div>
         );
       })}
+    </div>
+  );
+}
+
+const pxToMm = (px: number) => Math.round((px / mmToPx(1)) * 10) / 10;
+
+/** Pages 2+ of a multi-page invoice: a slim header in place of the full
+ * letterhead and buyer block — which invoice, for whom, which page, and the
+ * items total brought forward. */
+function ModernContinuationHeader({ company, customer, invoiceNumber, date, page, pageCount, broughtForward }: SharedProps & { page: number; pageCount: number; broughtForward: number | null }) {
+  return (
+    <div className="flex flex-none items-end justify-between gap-4 border-b-2 border-ink pb-2">
+      <div className="min-w-0">
+        <div className="text-[10px] font-bold uppercase tracking-wide text-ink-faint">Tax invoice · continued</div>
+        <div className="truncate text-[13px] font-extrabold text-ink">
+          {company.name} · {invoiceNumber ?? '—'} · {formatInvoiceDate(date)}
+        </div>
+        {customer && <div className="truncate text-[11px] text-ink-soft">Bill to: {customer.shopName || customer.name}</div>}
+      </div>
+      <div className="flex-none text-right text-[11px]">
+        <div className="font-bold uppercase tracking-wide text-ink-faint">
+          Page {page} of {pageCount}
+        </div>
+        {broughtForward !== null && (
+          <div>
+            Brought forward: <span className="font-mono">{fmtInr(broughtForward, company.currency)}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The foot of every page but the last: which items were on it, where the
+ * invoice continues, and the items total carried forward (before tax). */
+function ModernContinuedStrip({ company, nextPage, pageCount, fromItem, toItem, carried }: SharedProps & { nextPage: number; pageCount: number; fromItem: number; toItem: number; carried: number | null }) {
+  return (
+    <div className="flex flex-none flex-wrap justify-between gap-x-3 gap-y-0.5 border-t-2 border-ink pt-2 text-[11px] font-bold text-ink-soft">
+      <span>
+        Items {fromItem}–{toItem} · continued on page {nextPage} of {pageCount} →
+      </span>
+      {carried !== null && (
+        <span>
+          Items total carried forward: <span className="font-mono">{fmtInr(carried, company.currency)}</span>
+        </span>
+      )}
     </div>
   );
 }

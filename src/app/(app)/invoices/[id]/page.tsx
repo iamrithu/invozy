@@ -23,7 +23,7 @@ export default async function InvoicePage({ params, searchParams }: { params: Pr
     <BuilderClient
       key={invoice.id}
       products={JSON.parse(JSON.stringify(products))}
-      company={JSON.parse(JSON.stringify({ ...toPublicCompany(company), pdfItemRows: settings.pdfItemRows }))}
+      company={JSON.parse(JSON.stringify({ ...toPublicCompany(company), pdfItemRows: settings.pdfItemRows, pdfLayout: settings.pdfLayout }))}
       editInvoice={invoice}
       initialMode={invoice.status === 'PAID' && edit !== '1' ? 'preview' : 'edit'}
     />

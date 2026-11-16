@@ -7,7 +7,7 @@ import { verifySignedToken } from '@/lib/signed-token';
 import { computeInvoiceTotals } from '@/lib/invoice-totals';
 import { isGstLayout } from '@/lib/invoice-template';
 import { qrDataUrl, upiQrDataUrl } from '@/lib/qr';
-import { PDF_PAGE } from '@/lib/pdf-browser';
+import { contentWidthMm, pageMarginCss } from '@/lib/pdf-layout';
 import { PAPER_STYLE } from '@/lib/paper-theme';
 import { InvoiceSheet } from '@/components/invoices/invoice-sheet';
 import { InvoiceSheetClassic } from '@/components/invoices/invoice-sheet-classic';
@@ -22,8 +22,9 @@ const isoDate = (d: Date) => d.toISOString().slice(0, 10);
 /**
  * What the PDF renderer (src/lib/invoice-pdf.ts) prints: just the invoice
  * sheet — no app shell, sidebar, tour or session fetch to wait on — laid
- * out at exactly the A4 content width (186mm) so the sheet's own page split
- * is measured at the width it prints at.
+ * out at exactly the A4 content width the company's PDF margins leave (186mm
+ * by default) so the sheet's own page split is measured at the width it
+ * prints at.
  *
  * Outside the (app) group and src/proxy.ts's matcher on purpose: the
  * headless browser has no session. Access is a short-lived signed
@@ -80,6 +81,7 @@ export default async function PrintInvoicePage({ params, searchParams }: { param
   // the live company settings (see schema.prisma's Invoice.cgstRate).
   const sheetCompany = {
     pdfItemRows: settings.pdfItemRows,
+    pdfLayout: settings.pdfLayout,
     name: company.name,
     address: company.address,
     pincode: company.pincode,
@@ -146,7 +148,8 @@ export default async function PrintInvoicePage({ params, searchParams }: { param
   };
 
   return (
-    <main className="print-doc invoice-sheet-mono mx-auto bg-white" style={{ ...PAPER_STYLE, width: `${PDF_PAGE.contentWidthMm}mm` }}>
+    <main className="print-doc invoice-sheet-mono mx-auto bg-white" style={{ ...PAPER_STYLE, width: `${contentWidthMm(settings.pdfLayout)}mm` }}>
+      <style>{pageMarginCss(settings.pdfLayout)}</style>
       {gstLayout ? (
         <InvoiceSheetClassic
           {...common}

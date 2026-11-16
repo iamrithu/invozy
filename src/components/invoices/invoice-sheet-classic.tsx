@@ -14,7 +14,10 @@ import {
 } from '@/lib/gst';
 import { numberToWords, amountToWordsWithPaise } from '@/lib/number-to-words';
 import { gstStateCode } from '@/lib/gst-state-codes';
-import { computeCapacities, paginateLinesUniform, useMeasuredSections, FRAME_FILL_PX } from './print-pagination';
+import { pageBudgets, planOptions, planPages, useMeasuredLayout, mmToPx } from './print-pagination';
+import { normalizePdfLayout, type PdfLayout } from '@/lib/pdf-layout';
+
+const pxToMm = (px: number) => Math.round((px / mmToPx(1)) * 10) / 10;
 import { clampDiscount, printedLines, totalsLadder, type TotalsLadder } from './invoice-sheet';
 import { addressLine, CleanHeader, CLEAN_FILL, CLEAN_LABEL, CLEAN_RULE, CLEAN_SOFT, plainAmount } from './clean-header';
 
@@ -50,6 +53,8 @@ export type ClassicCompany = {
    * (default), a line between rows, or light alternate shading. From the
    * AppSetting table (src/lib/settings.ts); see `.doc-rows-*` in globals.css. */
   pdfItemRows?: 'none' | 'lines' | 'zebra';
+  /** Company → PDF layout (margins, row spacing, rows per page…). */
+  pdfLayout?: PdfLayout;
   /** PDF section toggles from Company settings — undefined behaves as "off" (hidden). */
   pdfShowBankDetails?: boolean;
   pdfShowHsnSummary?: boolean;
@@ -179,7 +184,8 @@ export type InvoiceSheetClassicProps = {
 // page 1, dumping the remaining content onto a near-empty page.
 //
 // The page split itself is computed from this invoice's *actual* rendered
-// section heights (see print-pagination.tsx's useMeasuredSections), not
+// section heights — every row included (see print-pagination.tsx's
+// useMeasuredLayout and planPages: fill each page, plan the totals) — not
 // hardcoded mm guesses — a static guess only holds until some company's
 // real content (a long wrapping address, a long note, HSN summary on)
 // doesn't match it, at which point the true content overflows the assumed
@@ -482,37 +488,36 @@ export function InvoiceSheetClassic(props: InvoiceSheetClassicProps) {
   const Items = isClean ? CleanItemsTable : ClassicItemsTable;
   const Closing = isClean ? CleanClosing : ClassicClosing;
 
-  // The longest name in the invoice, not just the first line, gives the
-  // measurement probe a more conservative (safer) row-height reading —
-  // a rare unusually-long product name shouldn't be able to skew the
-  // split if it happens to land anywhere other than line 1.
-  const measureLine =
-    lines.length > 0
-      ? lines.reduce((longest, l) => (l.name.length > longest.name.length ? l : longest), lines[0])
-      : ({ lineId: '__measure__', name: 'Representative Item Name', unit: 'pcs', qty: 1, rate: 0, discount: 0 } satisfies ClassicLine);
   const printCols: ColumnCfg = { ...cols, editable: false, showDisc: anyLineDiscount };
-
-  // Called unconditionally (rules of hooks) even in editable mode, where
-  // its result is simply unused — every real call site passes a fixed,
-  // never-toggled `editable` prop, but keeping the hook call itself
-  // unconditional avoids relying on that.
-  const { heights, ready, probe } = useMeasuredSections({
-    header: <Header {...shared} />,
-    buyer: <Buyer {...shared} />,
-    itemsTableHead: theadRow(printCols),
-    itemsTableClassName: isClean ? CLEAN_ITEMS_TABLE : CLASSIC_ITEMS_TABLE,
-    itemRow: rowCells(measureLine, 1, { ...printCols, company, last: false }),
-    // No "Continued on Page N" footer is rendered between pages anymore —
-    // nothing to measure/reserve room for.
-    continuedFooter: null,
-    closing: <Closing {...shared} />,
-  });
+  const layout = normalizePdfLayout(company.pdfLayout);
+  const lineAmount = (l: ClassicLine) => l.qty * l.rate * (1 - l.discount / 100);
+  const itemsTotal = lines.reduce((sum, l) => sum + lineAmount(l), 0);
 
   // CLEAN's one-weight/one-family rule (`.invoice-clean` in globals.css) and
   // base size sit on the outermost wrapper so the measurement probe gets
   // them too.
   const typeCls = isClean ? 'invoice-clean text-[10.5px] leading-[1.45]' : 'text-[11.5px] leading-normal';
   const frameCls = isClean ? `border ${CLEAN_RULE}` : 'border border-ink';
+
+  // Measures this invoice's real sections — letterhead, buyer block, the
+  // slim header used on pages 2+, the column headings, EVERY item row (a
+  // long name wraps), the "continued" strip and the closing block — so
+  // planPages can fill each page and place the totals deliberately.
+  // Called unconditionally (rules of hooks); unused while editing.
+  const { heights, ready, probe } = useMeasuredLayout({
+    header: <Header {...shared} />,
+    buyer: <Buyer {...shared} />,
+    contHeader: <ContinuationHeader {...shared} page={2} pageCount={9} broughtForward={itemsTotal} />,
+    itemsTableHead: theadRow(printCols),
+    itemsWrapClassName: isClean ? `flex-none border-t ${CLEAN_RULE}` : 'flex-none',
+    itemsTableClassName: `${isClean ? `${CLEAN_ITEMS_TABLE} doc-rows-${company.pdfItemRows ?? 'none'}` : CLASSIC_ITEMS_TABLE} row-space-${layout.rowSpacing}`,
+    rows: lines.map((l, k) => rowCells(l, k + 1, { ...printCols, company, last: false })),
+    rowClassName: isClean ? 'clean-item-row pdf-item-row' : 'pdf-item-row border-b border-ink',
+    contFooter: <ContinuedStrip {...shared} nextPage={2} pageCount={9} fromSerial={1} toSerial={lines.length} carried={itemsTotal} />,
+    closing: <Closing {...shared} />,
+    frameClassName: frameCls,
+  });
+
 
   if (editable) {
     return (
@@ -537,59 +542,121 @@ export function InvoiceSheetClassic(props: InvoiceSheetClassicProps) {
   // same wrapper for the measuring pass and the final paginated render
   // means the probe is guaranteed to measure at the same width the real
   // content ends up laid out at.
-  const capacities = heights ? computeCapacities(heights) : null;
-  const { pages } = capacities ? paginateLinesUniform(lines, capacities.perPage) : { pages: [] };
-  let serial = 0;
+  const plan = heights ? planPages(heights, planOptions(layout)) : [];
+  const fillTarget = pageBudgets(layout).fillPx;
+  const sumRows = (a: number, b: number) => (heights ? heights.rows.slice(a, b).reduce((x, y) => x + y, 0) : 0);
+  const amountUpTo = (end: number) => lines.slice(0, end).reduce((sum, l) => sum + lineAmount(l), 0);
 
   return (
     <div
       className={`relative rounded-b-lg2 border border-t-0 border-line bg-white p-5 text-ink-body shadow-card print:rounded-none print:border-none print:p-0 print:shadow-none ${typeCls}`}
     >
       {probe}
-      {/* Tells the PDF renderer (src/lib/invoice-pdf.ts) the corrected,
-          measured-and-paginated layout has committed. Only set once real
-          pages exist — see the equivalent spot in invoice-sheet.tsx. */}
-      {ready && <div data-pdf-ready="true" style={{ display: 'none' }} />}
-      {pages.map((pageLines, i) => {
-        const startSerial = serial;
-        serial += pageLines.length;
-        const isLast = i === pages.length - 1;
-        // Non-last pages always repeat the buyer block (buyer info hasn't
-        // appeared yet otherwise); the true last page only shows it when
-        // this is genuinely the only page — a multi-page invoice's last
-        // page drops it to make room for the closing block instead (it
-        // already appeared on page 1).
-        const showBuyer = isLast ? pages.length === 1 : true;
-        // CLEAN's frame runs the item columns down to the closing block, so
-        // a short invoice still reads as one full ruled page (as on paper
-        // stationery). Only when everything provably fits under
-        // FRAME_FILL_PX — explicit pixels from measured heights (+2 for the
-        // frame's own borders), never a flex/min-height stretch, which is
-        // what used to spill a few mm over and print an extra blank page.
-        // Otherwise no filler at all, and the closing flows on naturally as
-        // in CLASSIC.
-        const fillPx =
-          isClean && isLast && heights
-            ? Math.floor(FRAME_FILL_PX - (heights.header + (showBuyer ? heights.buyer : 0) + heights.thead + pageLines.length * heights.row + heights.closing + 2))
-            : 0;
+      {/* Tells the PDF renderer (src/lib/invoice-pdf.ts) the measured,
+          planned layout has committed. data-page-plan records rows per page
+          (+T = the page with the totals) for checking a layout. */}
+      {ready && heights && (
+        <div
+          data-pdf-ready="true"
+          data-page-plan={plan.map((pg) => `${pg.end - pg.start}${pg.closing ? '+T' : ''}`).join('|')}
+          data-layout-mm={JSON.stringify({
+            header: pxToMm(heights.header),
+            buyer: pxToMm(heights.buyer),
+            contHeader: pxToMm(heights.contHeader),
+            thead: pxToMm(heights.thead),
+            rows: heights.rows.map(pxToMm),
+            contFooter: pxToMm(heights.contFooter),
+            closing: pxToMm(heights.closing),
+          })}
+          style={{ display: 'none' }}
+        />
+      )}
+      {plan.map((pg, i) => {
+        const pageLines = lines.slice(pg.start, pg.end);
+        const isFirst = i === 0;
+        const isLast = pg.closing;
+        // With "fill" on (the default) the totals — or the "continued"
+        // strip — sit at the foot of every page, a page of totals alone
+        // included; the ruled columns run down to them, as on printed
+        // stationery. The filler is the page height left over after this
+        // page's measured sections (explicit pixels, never a stretch).
+        const used = heights
+          ? (isFirst ? heights.header + heights.buyer : heights.contHeader) +
+            (pageLines.length > 0 ? heights.thead : 0) +
+            sumRows(pg.start, pg.end) +
+            (isLast ? heights.closing : heights.contFooter) +
+            2
+          : 0;
+        const room = layout.fillColumns && heights ? Math.floor(fillTarget - used) : 0;
+        const fillPx = room > 12 ? room : 0;
         return (
           <div key={i} className={`invoice-page flex flex-col ${i > 0 ? 'mt-6 print:mt-0' : ''} ${!isLast ? 'print:break-after-page ' : ''}`}>
             <div className={`invoice-page-inner flex flex-1 flex-col ${frameCls}`}>
-              <Header {...shared} />
-              {showBuyer && <Buyer {...shared} />}
-              {pageLines.length > 0 && <Items {...shared} lines={pageLines} startSerial={startSerial} fillPx={fillPx > 12 ? fillPx : 0} />}
-              {/* The closing block (totals/HSN/bank/signature)
-                  on the true last page flows in normal document order right
-                  after the item table. Every sub-section inside it has its
-                  own `break-inside-avoid`, so if it doesn't all fit on this
-                  physical page, Chromium's native print pagination keeps
-                  each section intact and continues the rest — typically
-                  just the signature block — at the top of a following page. */}
-              {isLast && <Closing {...shared} />}
+              {isFirst ? (
+                <Header {...shared} />
+              ) : (
+                <ContinuationHeader {...shared} page={i + 1} pageCount={plan.length} broughtForward={layout.carryForward ? amountUpTo(pg.start) : null} />
+              )}
+              {isFirst && <Buyer {...shared} />}
+              {pageLines.length > 0 && <Items {...shared} lines={pageLines} startSerial={pg.start} fillPx={fillPx} />}
+              {/* flex-none: Chromium's print layout would otherwise shrink it. */}
+              {pageLines.length === 0 && fillPx > 0 && <div aria-hidden="true" className="flex-none" style={{ height: fillPx }} />}
+              {isLast ? (
+                <Closing {...shared} />
+              ) : (
+                <ContinuedStrip
+                  {...shared}
+                  nextPage={i + 2}
+                  pageCount={plan.length}
+                  fromSerial={pg.start + 1}
+                  toSerial={pg.end}
+                  carried={layout.carryForward ? amountUpTo(pg.end) : null}
+                />
+              )}
             </div>
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** Pages 2+ of a multi-page invoice: a slim header in place of the full
+ * letterhead and buyer block — which invoice, for whom, which page, and the
+ * items total brought forward from the pages before. */
+function ContinuationHeader(p: SharedProps & { page: number; pageCount: number; broughtForward: number | null }) {
+  const clean = p.variant === 'clean';
+  const label = clean ? CLEAN_LABEL : 'block text-[9px] uppercase tracking-[0.07em] text-ink-soft';
+  return (
+    <div className={`grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 px-2.5 py-2 ${clean ? '' : 'border-b border-ink'}`}>
+      <div className="min-w-0">
+        <span className={label}>Tax invoice · continued</span>
+        <span className="block truncate text-[12px]">
+          {p.company.name} · No. {p.invoiceNumber} · {formatInvoiceDate(p.date)}
+        </span>
+        {p.customer && <span className="block truncate">Bill to: {p.customer.shopName || p.customer.name}</span>}
+      </div>
+      <div className="text-right">
+        <span className={label}>
+          Page {p.page} of {p.pageCount}
+        </span>
+        {p.broughtForward !== null && <span className="block whitespace-nowrap">Brought forward: {plainAmount(p.broughtForward, p.company.currency)}</span>}
+      </div>
+    </div>
+  );
+}
+
+/** The foot of every page but the last: which items were on it, where the
+ * invoice continues, and the items total carried forward (before tax — the
+ * totals on the last page add the taxes). */
+function ContinuedStrip(p: SharedProps & { nextPage: number; pageCount: number; fromSerial: number; toSerial: number; carried: number | null }) {
+  const clean = p.variant === 'clean';
+  return (
+    <div className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 border-t px-2.5 py-1.5 ${clean ? CLEAN_RULE : 'border-ink'}`}>
+      <span>
+        Items {p.fromSerial}–{p.toSerial} · continued on page {p.nextPage} of {p.pageCount} →
+      </span>
+      {p.carried !== null && <span className="whitespace-nowrap">Items total carried forward: {plainAmount(p.carried, p.company.currency)}</span>}
     </div>
   );
 }
@@ -873,11 +940,11 @@ function ClassicBuyerRow(p: SharedProps) {
 /** The line-items grid. Print mode takes a `lines`/`startSerial` slice for
  * just this physical page; editable mode always gets the whole list (never
  * paginated — see the component doc comment). */
-function ClassicItemsTable({ company, lines, editable, cols, onUpdateLine, onIncrement, onDecrement, onRemoveLine, startSerial }: ItemsProps) {
+function ClassicItemsTable({ company, lines, editable, cols, onUpdateLine, onIncrement, onDecrement, onRemoveLine, startSerial, fillPx = 0 }: ItemsProps) {
   const base = startSerial ?? 0;
   return (
     <div className="flex-none overflow-x-auto print:overflow-visible">
-      <table className={`${CLASSIC_ITEMS_TABLE} print:min-w-0 ${editable ? 'min-w-[720px]' : 'min-w-[640px]'}`}>
+      <table className={`${CLASSIC_ITEMS_TABLE} row-space-${normalizePdfLayout(company.pdfLayout).rowSpacing} print:min-w-0 ${editable ? 'min-w-[720px]' : 'min-w-[640px]'}`}>
         <thead>{theadRow(cols)}</thead>
         <tbody>
           {lines.length === 0 ? (
@@ -892,11 +959,19 @@ function ClassicItemsTable({ company, lines, editable, cols, onUpdateLine, onInc
               return (
                 // No bottom rule on the page's last row: the closing block's
                 // top rule (or the page frame) is that edge.
-                <tr key={l.lineId} className={last ? '' : editable ? 'border-b border-line' : 'border-b border-ink'}>
+                <tr key={l.lineId} className={`pdf-item-row ${last ? '' : editable ? 'border-b border-line' : 'border-b border-ink'}`}>
                   {rowCells(l, base + i + 1, { ...cols, company, last, onUpdateLine, onIncrement, onDecrement, onRemoveLine })}
                 </tr>
               );
             })
+          )}
+          {/* The column lines continue down to the totals (see fillPx). */}
+          {fillPx > 0 && (
+            <tr aria-hidden="true">
+              {Array.from({ length: columnCount(cols) }, (_, k) => (
+                <td key={k} style={{ height: fillPx }} className={k < columnCount(cols) - 1 ? 'border-r border-ink' : ''} />
+              ))}
+            </tr>
           )}
         </tbody>
       </table>
@@ -1230,7 +1305,7 @@ function CleanItemsTable({ company, lines, editable, cols, onUpdateLine, onIncre
   const n = columnCount(cols);
   return (
     <div className={`flex-none overflow-x-auto border-t ${CLEAN_RULE} print:overflow-visible`}>
-      <table className={`${CLEAN_ITEMS_TABLE} doc-rows-${company.pdfItemRows ?? 'none'} print:min-w-0 ${editable ? 'min-w-[680px]' : ''}`}>
+      <table className={`${CLEAN_ITEMS_TABLE} doc-rows-${company.pdfItemRows ?? 'none'} row-space-${normalizePdfLayout(company.pdfLayout).rowSpacing} print:min-w-0 ${editable ? 'min-w-[680px]' : ''}`}>
         <thead>{theadRow(cols)}</thead>
         <tbody>
           {lines.length === 0 ? (
@@ -1241,7 +1316,7 @@ function CleanItemsTable({ company, lines, editable, cols, onUpdateLine, onIncre
             </tr>
           ) : (
             lines.map((l, i) => (
-              <tr key={l.lineId} className="clean-item-row">
+              <tr key={l.lineId} className="clean-item-row pdf-item-row">
                 {rowCells(l, base + i + 1, { ...cols, company, last: i === lines.length - 1 && !fillPx, onUpdateLine, onIncrement, onDecrement, onRemoveLine })}
               </tr>
             ))
