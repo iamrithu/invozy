@@ -118,22 +118,23 @@ model Company {
 /// A login for the company — created only by `npm run setup` (there is no
 /// in-app signup). Every user has full access to the one company.
 model User {
-  id           String               @id @default(cuid())
-  email        String?              @unique
-  phone        String?              @unique
-  passwordHash String
-  createdAt    DateTime             @default(now())
-  onboardedAt  DateTime?
-  resetTokens  PasswordResetToken[]
+  id                String               @id @default(cuid())
+  email             String?              @unique
+  phone             String?              @unique
+  passwordHash      String
+  createdAt         DateTime             @default(now())
+  onboardedAt       DateTime?
+  resetTokens       PasswordResetToken[]
   // OWNER (everyone created by `npm run setup`) can do everything; STAFF
   // can bill, take payments and receive stock, but can't delete, change
   // company settings or manage logins — see src/lib/session.ts requireOwner.
-  name         String?
-  role         UserRole             @default(OWNER)
-  active       Boolean              @default(true)
-  activities   ActivityLog[]
-  movements    StockMovement[]
-  refunds      Refund[]
+  name              String?
+  role              UserRole             @default(OWNER)
+  active            Boolean              @default(true)
+  activities        ActivityLog[]
+  movements         StockMovement[]
+  notificationReads NotificationRead[]
+  refunds           Refund[]
 }
 
 /// One row per login identifier (email/phone) — tracks recent failures so repeated wrong passwords lock the identifier
@@ -765,4 +766,29 @@ enum TransportMode {
   RAIL
   AIR
   SHIP
+}
+
+/// Which notification (src/actions/notifications.ts) each login has read,
+/// at which signature — a notification's signature changes when the data
+/// behind it changes (a new overdue invoice), which makes it unread again.
+/// Per login, so the owner's phone and laptop agree on the badge.
+model NotificationRead {
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notificationId String
+  signature      String
+  readAt         DateTime @default(now())
+
+  @@id([userId, notificationId])
+}
+
+/// Small company-wide settings that don't warrant their own Company column
+/// (monthly sales target, PDF item-row style, daily summary opt-outs…) —
+/// typed and defaulted in src/lib/settings.ts. A separate table rather than
+/// new Company columns so a deploy that lands before `db:deploy` can't break
+/// every Company query: code reading this table falls back to defaults.
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @default(now()) @updatedAt
 }
