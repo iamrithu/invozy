@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Receipt, Copy, Trash2, Pencil, IndianRupee, Filter, Plus, SlidersHorizontal, X, Download, MoreHorizontal, MessageCircle, FileMinus } from 'lucide-react';
+import { Receipt, Copy, Trash2, Pencil, IndianRupee, Filter, Plus, SlidersHorizontal, X, Download, MoreHorizontal, MessageCircle, FileMinus, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Input } from '@/components/ui/input';
@@ -198,7 +198,7 @@ export function InvoicesClient({
     <div>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="flex items-center gap-2 text-[18px] sm:text-[20px] font-extrabold text-ink">
+          <h1 className="flex items-center gap-2 text-[16px] sm:text-[17px] font-extrabold text-ink">
             <Receipt size={18} className="text-brand" /> Invoices
           </h1>
           <p className="mt-1 text-[12px] text-ink-faint">Click an invoice to open it. Paid invoices open as a preview first.</p>
@@ -216,9 +216,15 @@ export function InvoicesClient({
               </Link>
             </Button>
           )}
+          <Button asChild variant="outline">
+            <Link href="/orders/new?quick=1">
+              <Zap size={13} /> Quick sale
+            </Link>
+          </Button>
+          {/* Invoices are generated from orders. */}
           <Button asChild>
-            <Link href="/invoices/new">
-              <Plus size={13} /> New invoice
+            <Link href="/orders/new">
+              <Plus size={13} /> New order
             </Link>
           </Button>
         </div>

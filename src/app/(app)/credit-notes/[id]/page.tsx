@@ -31,7 +31,7 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
 
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="flex items-center gap-2 text-[18px] sm:text-[20px] font-extrabold text-ink">
+          <h1 className="flex items-center gap-2 text-[16px] sm:text-[17px] font-extrabold text-ink">
             <FileMinus size={18} className="text-brand" /> <span className="font-mono">{note.number}</span>
           </h1>
           <p className="mt-1 text-[12px] text-ink-faint">

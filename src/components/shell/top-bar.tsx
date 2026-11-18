@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
-import { Search, Plus, Building2, ChevronDown, Package, Users, Receipt, LogOut, UserCog, Compass, UsersRound, History, CreditCard } from 'lucide-react';
+import { Search, Plus, Building2, ChevronDown, Package, Users, Receipt, LogOut, UserCog, Compass, UsersRound, History, CreditCard, Zap } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
 import { CommandPalette } from '@/components/shell/command-palette';
 import { NotificationsBell } from '@/components/shell/notifications-bell';
@@ -48,7 +48,7 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
   }
 
   return (
-    <header className="sticky top-0 z-40 grid h-[52px] flex-shrink-0 grid-cols-[auto_1fr_auto] items-center gap-1.5 border-b border-line bg-surface px-2.5 sm:h-[61px] sm:gap-4 sm:px-5 print:hidden">
+    <header className="sticky top-0 z-40 grid h-[52px] flex-shrink-0 grid-cols-[auto_1fr_auto] items-center gap-1.5 border-b border-line bg-surface px-2.5 sm:h-[54px] sm:gap-4 sm:px-5 print:hidden">
       <Link href="/dashboard" className="flex min-w-0 items-center gap-1.5 sm:gap-2.5">
         <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center overflow-hidden rounded-sm2 bg-brand text-white sm:h-8 sm:w-8">
           {company.logoUrl ? (
@@ -145,13 +145,14 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
         <NotificationsBell />
 
         <div className="flex flex-shrink-0" data-tour="new-invoice">
+          {/* Every sale starts as an order; its invoice is generated from it. */}
           <Link
-            href="/invoices/new"
+            href="/orders/new"
             className="flex items-center gap-1.5 rounded-l-sm2 border-r border-white/25 bg-brand px-2 py-1.5 text-[13px] font-bold text-white transition-colors hover:bg-brand-dark sm:px-4 sm:py-2"
           >
             <Plus size={14} className="sm:hidden" />
             <Plus size={15} className="hidden sm:block" />
-            <span className="hidden sm:inline">New invoice</span>
+            <span className="hidden sm:inline">New order</span>
           </Link>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -164,6 +165,13 @@ export function TopBar({ company }: { company: { name: string; logoUrl: string |
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => router.push('/orders/new?quick=1')}>
+                <Zap size={14} /> Quick sale
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => router.push('/invoices/new')}>
+                <Receipt size={14} /> Invoice without an order
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setAddProductOpen(true)}>
                 <Package size={14} /> Add product
               </DropdownMenuItem>

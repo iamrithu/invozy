@@ -97,7 +97,7 @@ export function ReportsClient({ seed, currency }: { seed?: OverviewSeed; currenc
     <div>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3 print:hidden">
         <div>
-          <h1 className="flex items-center gap-2 text-[18px] font-extrabold text-ink sm:text-[20px]">
+          <h1 className="flex items-center gap-2 text-[16px] font-extrabold text-ink sm:text-[17px]">
             <BarChart3 size={18} className="text-brand" /> Reports
           </h1>
           <p className="mt-1 text-[12.5px] text-ink-faint">Sent and paid invoices, GST included — the same figures as the Dashboard. Switch on Include drafts to add drafts in.</p>

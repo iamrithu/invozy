@@ -49,6 +49,9 @@ export type NotificationItem = {
   href: string;
   hrefLabel: string;
   entries: NotificationEntry[];
+  /** How many things this covers when `entries` is only a sample (stock
+   * lists five products). Read by the sidebar's Stock badge. */
+  count?: number;
 };
 
 function sig(parts: (string | number)[]): string {
@@ -149,6 +152,7 @@ export async function getNotifications(): Promise<NotificationsResult> {
       signature: sig([stock.out, stock.low, ...stock.lowItems.map((p) => `${p.id}:${p.status}`)]),
       href: `/inventory?status=${stock.out > 0 ? 'out' : 'low'}`,
       hrefLabel: 'Inventory',
+      count: stock.out + stock.low,
       entries: stock.lowItems.map((p) => ({
         id: p.id,
         label: p.name,

@@ -3,7 +3,22 @@ import { prisma } from './prisma';
 export type ActivityEntry = {
   userId?: string | null;
   action: string;
-  entityType: 'invoice' | 'customer' | 'product' | 'stock' | 'payment' | 'credit-note' | 'purchase' | 'supplier' | 'company' | 'user';
+  entityType:
+    | 'invoice'
+    | 'customer'
+    | 'product'
+    | 'stock'
+    | 'payment'
+    | 'credit-note'
+    | 'purchase'
+    | 'supplier'
+    | 'company'
+    | 'user'
+    | 'category'
+    | 'order'
+    | 'coupon'
+    | 'customer-group'
+    | 'store';
   entityId?: string | null;
   summary: string;
 };

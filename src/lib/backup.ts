@@ -80,6 +80,7 @@ export async function buildBackup(): Promise<{ gz: Buffer; counts: Record<string
     })
   );
 
+  tables.Category = await readAll((c) => prisma.category.findMany(after(c)));
   tables.Product = await readAll((c) => prisma.product.findMany(after(c)));
   tables.ProductPriceTier = await readAll((c) => prisma.productPriceTier.findMany(after(c)));
   tables.Customer = await readAll((c) => prisma.customer.findMany(after(c)));
@@ -96,6 +97,13 @@ export async function buildBackup(): Promise<{ gz: Buffer; counts: Record<string
   tables.CreditNoteItem = await readAll((c) => prisma.creditNoteItem.findMany(after(c)));
   tables.Refund = await readAll((c) => prisma.refund.findMany(after(c)));
   tables.StockMovement = await readAll((c) => prisma.stockMovement.findMany(after(c)));
+  tables.CustomerGroup = await readAll((c) => prisma.customerGroup.findMany(after(c)));
+  tables.Coupon = await readAll((c) => prisma.coupon.findMany(after(c)));
+  tables.DeliveryZone = await readAll((c) => prisma.deliveryZone.findMany(after(c)));
+  tables.Order = await readAll((c) => prisma.order.findMany(after(c)));
+  tables.OrderItem = await readAll((c) => prisma.orderItem.findMany(after(c)));
+  tables.OrderEvent = await readAll((c) => prisma.orderEvent.findMany(after(c)));
+  tables.CouponRedemption = await readAll((c) => prisma.couponRedemption.findMany(after(c)));
   tables.ActivityLog = await readAll((c) => prisma.activityLog.findMany(after(c)));
 
   const counts = Object.fromEntries(Object.entries(tables).map(([k, v]) => [k, v.length]));

@@ -67,7 +67,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               to use the full printed page. min-w-0 keeps a wide table
               scrolling inside its own box instead of widening the page
               (which made phones zoom out and full-screen sheets overflow). */}
-          <main className="mx-auto w-full min-w-0 max-w-[1220px] flex-1 px-4 py-5 pb-24 md:px-6 md:pb-5 print:max-w-none print:p-0">{children}</main>
+          <main className="mx-auto w-full min-w-0 max-w-[1280px] flex-1 px-4 py-4 pb-24 md:px-5 md:pb-5 print:max-w-none print:p-0">{children}</main>
         </div>
         <BottomNav />
       </div>

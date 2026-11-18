@@ -14,6 +14,8 @@ export const MODULES = [
   { key: 'returns', label: 'Returns & credit notes', description: 'Sales returns, credit notes, refunds and credit adjustments.', paths: ['/credit-notes'] },
   { key: 'reports', label: 'Reports & exports', description: 'Sales, GST, receivables and collections reports; CSV, GSTR-1 and Tally exports.', paths: ['/reports', '/api/export'] },
   { key: 'team', label: 'Team logins', description: 'Extra owner and staff logins for the company.', paths: ['/team'] },
+  { key: 'marketing', label: 'Coupons & discounts', description: 'Coupon codes, automatic discounts and Buy X get Y schemes on orders.', paths: ['/coupons', '/discounts'] },
+  { key: 'storefront', label: 'Online store', description: 'A public web store where customers place orders, with delivery zones.', paths: ['/storefront', '/delivery-zones'] },
 ] as const;
 
 export type ModuleKey = (typeof MODULES)[number]['key'];

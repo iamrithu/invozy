@@ -10,6 +10,18 @@ import { logActivity } from '@/lib/activity';
 import { applyMovement } from '@/lib/stock';
 import { needsPackSize } from '@/lib/stock-units';
 import { assertCanCreate } from '@/lib/subscription-guard';
+import { resolveCategoryForProduct } from '@/lib/categories';
+
+/** A validation failure found inside a transaction (so the transaction rolls
+ * back) that belongs to one form field. */
+class FieldError extends Error {
+  constructor(
+    readonly field: string,
+    message: string
+  ) {
+    super(message);
+  }
+}
 
 const MAX_IMAGES = 6;
 
@@ -185,19 +197,18 @@ export async function listProductsPage(opts?: {
 }
 
 /** Powers the category combobox (create/edit forms) and the list page's
- * filter chips — categories are just whatever string a product was tagged
- * with (no separate category table to manage), grouped here via a plain
- * DISTINCT query so the same spelling gets reused instead of drifting
- * ("Milk" vs "milk" vs "Milks") across a growing catalog. */
+ * filter chips: the company's active categories (Catalog › Categories), in
+ * store order. Typing a new name in the form creates the category on save
+ * (src/lib/categories.ts), so the list stays the single source of names. */
 export async function getProductCategories() {
   await requireUser();
-  const rows = await prisma.product.findMany({
-    select: { category: true },
-    distinct: ['category'],
-    orderBy: { category: 'asc' },
-    take: 100,
+  const rows = await prisma.category.findMany({
+    where: { deletedAt: null, status: 'ACTIVE' },
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    select: { name: true },
+    take: 200,
   });
-  return rows.map((r) => r.category).filter(Boolean);
+  return rows.map((r) => r.name);
 }
 
 /** Creates the product with its pricing options, photos and — when the
@@ -230,9 +241,14 @@ export async function createProduct(_prev: ProductFormState, formData: FormData)
     const user = await requireUser();
     uploaded = await uploadNewImages(formData, MAX_IMAGES);
     const product = await prisma.$transaction(async (tx) => {
+      // The typed category name → its managed Category (created when new).
+      const cat = await resolveCategoryForProduct(tx, parsed.data.category);
+      if ('error' in cat) throw new FieldError('category', cat.error);
       const created = await tx.product.create({
         data: {
           ...parsed.data,
+          category: cat.category.name,
+          categoryId: cat.category.id,
           unit: primary.unit,
           price: primary.price,
           packQty: parsed.data.packQty ?? null,
@@ -256,6 +272,7 @@ export async function createProduct(_prev: ProductFormState, formData: FormData)
     return { id: product.id };
   } catch (e) {
     await Promise.all(uploaded.map(deleteUploadedImage));
+    if (e instanceof FieldError) return { error: e.message, fieldErrors: { [e.field]: e.message } };
     return toActionError(e);
   }
 }
@@ -278,7 +295,7 @@ export async function updateProduct(id: string, _prev: ProductFormState, formDat
     const stock = parseStock(formData);
     if ('error' in stock) return { error: stock.error, fieldErrors: { [stock.field]: stock.error } };
     const user = await requireUser();
-    const existing = await prisma.product.findUnique({ where: { id }, select: { images: true, trackStock: true, unit: true } });
+    const existing = await prisma.product.findUnique({ where: { id }, select: { images: true, trackStock: true, unit: true, categoryId: true } });
     if (!existing) {
       return { error: 'Product not found. It may have been deleted.' };
     }
@@ -307,10 +324,15 @@ export async function updateProduct(id: string, _prev: ProductFormState, formDat
       // simplest correct way to keep ProductPriceTier in sync with the form's
       // full tier list on every save.
       await tx.productPriceTier.deleteMany({ where: { productId: id } });
+      // A product may keep a category that has since been disabled.
+      const cat = await resolveCategoryForProduct(tx, parsed.data.category, existing.categoryId);
+      if ('error' in cat) throw new FieldError('category', cat.error);
       return tx.product.update({
         where: { id },
         data: {
           ...parsed.data,
+          category: cat.category.name,
+          categoryId: cat.category.id,
           unit: primary.unit,
           price: primary.price,
           packQty: parsed.data.packQty ?? null,
@@ -332,6 +354,7 @@ export async function updateProduct(id: string, _prev: ProductFormState, formDat
     return { id };
   } catch (e) {
     await Promise.all(uploaded.map(deleteUploadedImage));
+    if (e instanceof FieldError) return { error: e.message, fieldErrors: { [e.field]: e.message } };
     return toActionError(e);
   }
 }

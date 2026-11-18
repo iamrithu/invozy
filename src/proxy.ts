@@ -26,6 +26,20 @@ export const config = {
     '/activity/:path*',
     '/team/:path*',
     '/billing/:path*',
+    '/settings/:path*',
+    // Planned screens from the grouped sidebar (src/lib/nav.ts). They show
+    // a Coming soon page today; listed here so they're guarded the same way
+    // once they become real.
+    '/orders/:path*',
+    '/payments/:path*',
+    '/customer-groups/:path*',
+    '/delivery-routes/:path*',
+    '/categories/:path*',
+    '/price-lists/:path*',
+    '/coupons/:path*',
+    '/discounts/:path*',
+    '/storefront/:path*',
+    '/delivery-zones/:path*',
     // The platform admin panel (role-checked in src/auth.config.ts; the
     // admin layout and every admin action re-check it).
     '/admin/:path*',

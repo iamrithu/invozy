@@ -370,7 +370,7 @@ export function ProductFormDialog({
             <FormField label="Product name" required htmlFor="product-name" span={4} error={fe('name')}>
               <Input id="product-name" name="name" defaultValue={product?.name ?? prefill?.name} placeholder="e.g. CM - American Sundae 12*100ml" autoComplete="off" className={cn(fe('name') && invalidClass)} />
             </FormField>
-            <FormField label="Category" required htmlFor="product-category" span={2} error={fe('category')}>
+            <FormField label="Category" required htmlFor="product-category" span={2} error={fe('category')} help="Pick one, or type a new name to create it.">
               <CategoryCombobox id="product-category" name="category" value={category} onChange={setCategory} hideLabel invalid={!!fe('category')} />
             </FormField>
             {categories.length > 0 && (

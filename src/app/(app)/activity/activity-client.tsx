@@ -21,9 +21,11 @@ import { useNow } from '@/components/activity/use-now';
  * a product's stock moves) so the row of chips stays short. */
 const GROUPS: { key: string; label: string; types?: ActivityEntityType[] }[] = [
   { key: 'all', label: 'Everything' },
+  { key: 'orders', label: 'Orders', types: ['order'] },
   { key: 'invoices', label: 'Invoices & payments', types: ['invoice', 'payment'] },
-  { key: 'customers', label: 'Customers', types: ['customer'] },
-  { key: 'stock', label: 'Products & stock', types: ['product', 'stock'] },
+  { key: 'customers', label: 'Customers', types: ['customer', 'customer-group'] },
+  { key: 'stock', label: 'Products & stock', types: ['product', 'category', 'stock'] },
+  { key: 'marketing', label: 'Coupons & web store', types: ['coupon', 'store'] },
   { key: 'purchases', label: 'Purchases', types: ['purchase', 'supplier'] },
   { key: 'credit-notes', label: 'Credit notes', types: ['credit-note'] },
   { key: 'settings', label: 'Settings & logins', types: ['company', 'user'] },
@@ -73,7 +75,7 @@ export function ActivityClient({ initialData, people, pageSize }: { initialData:
   return (
     <div>
       <div className="mb-4">
-        <h1 className="flex items-center gap-2 text-[18px] sm:text-[20px] font-extrabold text-ink">
+        <h1 className="flex items-center gap-2 text-[16px] sm:text-[17px] font-extrabold text-ink">
           <History size={18} className="text-brand" /> Activity log
         </h1>
         <p className="mt-1 text-[12px] text-ink-faint">Who did what, and when — every invoice, payment, stock and login change, newest first.</p>

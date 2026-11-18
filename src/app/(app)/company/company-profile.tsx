@@ -281,7 +281,7 @@ export function CompanyProfile({ company: co, pdfItemRows = 'none', pdfLayout = 
               <div className="space-y-4">
                 <div className="rounded-lg2 border border-line bg-bg px-3.5 py-3">
                   <div className="text-[11px] font-bold uppercase tracking-wide text-ink-faint">Next invoice</div>
-                  <div className="mt-0.5 break-all font-mono text-[18px] font-extrabold text-ink sm:text-[20px]">
+                  <div className="mt-0.5 break-all font-mono text-[16px] font-extrabold text-ink sm:text-[17px]">
                     {co.invoicePrefix}/{co.invoiceFY}/{String(co.nextInvoiceNo).padStart(4, '0')}
                   </div>
                 </div>
@@ -650,7 +650,7 @@ function JumpList({ active }: { active: SectionId }) {
       <nav
         ref={chipsRef}
         aria-label="Company sections"
-        className="sticky top-[52px] z-30 -mx-4 mb-4 flex gap-1.5 overflow-x-auto border-b border-line bg-bg px-4 py-2 sm:top-[61px] md:-mx-6 md:px-6 lg:hidden"
+        className="sticky top-[52px] z-30 -mx-4 mb-4 flex gap-1.5 overflow-x-auto border-b border-line bg-bg px-4 py-2 sm:top-[54px] md:-mx-6 md:px-6 lg:hidden"
       >
         {SECTIONS.map((s) => (
           <a

@@ -1,4 +1,4 @@
-import { Boxes, Building2, Factory, FileMinus, Package, Receipt, Truck, UserCog, Users, Wallet, Activity, type LucideIcon } from 'lucide-react';
+import { Boxes, Building2, Factory, FileMinus, FolderTree, Package, Receipt, ShoppingBag, Store, TicketPercent, Truck, UserCog, Users, UsersRound, Wallet, Activity, type LucideIcon } from 'lucide-react';
 
 /** Display helpers shared by the Activity log screen and ActivityTimeline —
  * one place that knows how each logged entity type looks and where it
@@ -19,6 +19,11 @@ const ENTITY_META: Record<string, EntityMeta> = {
   supplier: { label: 'Supplier', icon: Factory, list: '/suppliers' },
   company: { label: 'Company', icon: Building2, list: '/company' },
   user: { label: 'Login', icon: UserCog, list: '/team' },
+  category: { label: 'Category', icon: FolderTree, list: '/categories' },
+  order: { label: 'Order', icon: ShoppingBag, list: '/orders', detail: (id) => `/orders/${id}` },
+  coupon: { label: 'Coupon', icon: TicketPercent, list: '/coupons' },
+  'customer-group': { label: 'Customer group', icon: UsersRound, list: '/customer-groups' },
+  store: { label: 'Web store', icon: Store, list: '/storefront' },
 };
 
 const FALLBACK: EntityMeta = { label: 'Activity', icon: Activity, list: '/activity' };

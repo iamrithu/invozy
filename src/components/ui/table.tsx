@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 // and widen the whole page.
 const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(({ className, ...props }, ref) => (
   <div className="relative w-full overflow-auto rounded-lg2 border border-line">
-    <table ref={ref} className={cn('w-full caption-bottom text-[12.5px]', className)} {...props} />
+    <table ref={ref} className={cn('w-full caption-bottom text-[12px]', className)} {...props} />
   </div>
 ));
 Table.displayName = 'Table';
@@ -37,14 +37,14 @@ TableRow.displayName = 'TableRow';
 const TableHead = React.forwardRef<HTMLTableCellElement, React.ThHTMLAttributes<HTMLTableCellElement>>(({ className, ...props }, ref) => (
   <th
     ref={ref}
-    className={cn('h-10 px-2.5 text-left align-middle text-[11px] font-bold uppercase tracking-wide text-ink-faint', className)}
+    className={cn('h-9 px-2.5 text-left align-middle text-[10.5px] font-bold uppercase tracking-wide text-ink-faint', className)}
     {...props}
   />
 ));
 TableHead.displayName = 'TableHead';
 
 const TableCell = React.forwardRef<HTMLTableCellElement, React.TdHTMLAttributes<HTMLTableCellElement>>(({ className, ...props }, ref) => (
-  <td ref={ref} className={cn('p-2.5 align-middle', className)} {...props} />
+  <td ref={ref} className={cn('px-2.5 py-2 align-middle', className)} {...props} />
 ));
 TableCell.displayName = 'TableCell';
 

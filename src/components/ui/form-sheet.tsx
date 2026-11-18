@@ -355,12 +355,12 @@ export const AffixInput = forwardRef<
 >(({ before, after, invalid, className, ...props }, ref) => (
   <div
     className={cn(
-      'form-affix flex h-9 w-full overflow-hidden rounded-sm2 border bg-surface transition-colors focus-within:border-primary',
+      'form-affix flex h-8 w-full overflow-hidden rounded-sm2 border bg-surface transition-colors focus-within:border-primary',
       invalid ? 'border-destructive focus-within:border-destructive' : 'border-border'
     )}
   >
     {before && <span className="flex flex-shrink-0 items-center border-r border-border bg-surface-alt px-2.5 text-[12px] font-semibold text-ink-soft">{before}</span>}
-    <input ref={ref} aria-invalid={invalid || undefined} className={cn('h-full min-w-0 flex-1 bg-transparent px-3 text-[13px] text-ink outline-none placeholder:text-ink-faint', className)} {...props} />
+    <input ref={ref} aria-invalid={invalid || undefined} className={cn('h-full min-w-0 flex-1 bg-transparent px-2.5 text-[12.5px] text-ink outline-none placeholder:text-ink-faint', className)} {...props} />
     {after && <span className="flex flex-shrink-0 items-center border-l border-border bg-surface-alt px-2.5 text-[12px] font-semibold text-ink-soft">{after}</span>}
   </div>
 ));
@@ -368,7 +368,7 @@ AffixInput.displayName = 'AffixInput';
 
 /** Shared look for native <select>s inside a form sheet. */
 export const selectClass =
-  'h-9 w-full rounded-sm2 border border-border bg-surface px-2.5 text-[13px] text-ink outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60';
+  'h-8 w-full rounded-sm2 border border-border bg-surface px-2.5 text-[12.5px] text-ink outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60';
 
 /** Error outline for an Input/Textarea. */
 export const invalidClass = 'border-destructive focus:border-destructive';

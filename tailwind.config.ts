@@ -69,20 +69,20 @@ const config: Config = {
         },
       },
       fontFamily: {
-        // IBM Plex Sans/Mono (src/app/layout.tsx) — used app-wide including
-        // the printed/PDF invoices (Playwright renders the same page/CSS
-        // for those). `mono` now has a real monospace face — every
-        // `font-mono`/`.font-tabular` use (amounts, GSTINs, invoice
-        // numbers) previously just re-rendered the sans font.
+        // `sans` is the screen UI face, Geist (--font-ui, see
+        // src/app/layout.tsx). Printed/PDF documents don't use it: they're
+        // pinned to IBM Plex Sans in globals.css so their measured layout
+        // never shifts. `mono` is IBM Plex Mono for amounts, GSTINs and
+        // invoice numbers.
         //
         // Every invoice prints the ₹ symbol on every line item — a wider
         // fallback chain (not just the bare 'system-ui'/'sans-serif'
         // generics) gives the browser more chances to find a real ₹ glyph
-        // if IBM Plex Sans's self-hosted font file ever lacks one for a
+        // if the self-hosted font file ever lacks one for a
         // given weight, particularly inside the PDF route's serverless
         // Chromium, which ships its own minimal, self-contained font
         // bundle rather than a full desktop font set.
-        sans: ['var(--font-plex-sans)', 'system-ui', 'Noto Sans', 'Helvetica Neue', 'Arial', 'sans-serif'],
+        sans: ['var(--font-ui)', 'system-ui', 'Noto Sans', 'Helvetica Neue', 'Arial', 'sans-serif'],
         mono: ['var(--font-plex-mono)', 'ui-monospace', 'Noto Sans Mono', 'Consolas', 'monospace'],
       },
       // Boxy with a standard "md" corner (Tailwind's own rounded-md value)

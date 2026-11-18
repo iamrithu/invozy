@@ -62,7 +62,7 @@ export function CreditNotesClient({ initialData, initialDate }: { initialData: {
     <div>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="flex items-center gap-2 text-[18px] sm:text-[20px] font-extrabold text-ink">
+          <h1 className="flex items-center gap-2 text-[16px] sm:text-[17px] font-extrabold text-ink">
             <FileMinus size={18} className="text-brand" /> Credit notes
           </h1>
           <p className="mt-1 text-[12px] text-ink-faint">Goods taken back and price corrections. Each one lowers what its invoice&apos;s customer owes.</p>

@@ -14,7 +14,7 @@ const ALLOWED_TYPES: Record<string, string> = {
 // Reference documents (a purchase's bill copies) can also be PDFs.
 const DOCUMENT_TYPES: Record<string, string> = { ...ALLOWED_TYPES, 'application/pdf': 'pdf' };
 
-export type UploadKind = 'products' | 'customers' | 'company' | 'signature' | 'purchases';
+export type UploadKind = 'products' | 'customers' | 'company' | 'signature' | 'purchases' | 'categories';
 
 /** Vercel's serverless functions have a read-only filesystem (aside from
  * /tmp, which doesn't persist or get served publicly) — writing to

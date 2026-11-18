@@ -11,6 +11,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
+    "db:deploy:local": "node --env-file=.env.local node_modules/prisma/build/index.js migrate deploy",
     "db:studio": "prisma studio",
     "create-company": "tsx scripts/create-company.ts",
     "admin-totp": "tsx scripts/admin-totp.ts",

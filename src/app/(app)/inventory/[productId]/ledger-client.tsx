@@ -77,7 +77,7 @@ export function LedgerClient({ productId, initialData }: { productId: string; in
 
       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
         <div className="min-w-0 space-y-1.5">
-          <h1 className="text-[18px] sm:text-[20px] font-extrabold leading-tight text-ink">{product.name}</h1>
+          <h1 className="text-[16px] sm:text-[17px] font-extrabold leading-tight text-ink">{product.name}</h1>
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[12px] text-ink-soft">
             <span>{product.category}</span>
             <Dot />

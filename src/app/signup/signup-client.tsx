@@ -33,7 +33,15 @@ export function SignupClient({ turnstileSiteKey = null }: { turnstileSiteKey?: s
     setFieldErrors({});
     setPending(true);
 
-    const result = await signUp({}, formData);
+    // signUp returns expected failures as { error }; anything it throws (a
+    // database or network failure) would otherwise leave the button stuck on
+    // pending with an unhandled rejection.
+    let result: Awaited<ReturnType<typeof signUp>>;
+    try {
+      result = await signUp({}, formData);
+    } catch {
+      result = { error: 'Something went wrong creating your workspace. Please try again.' };
+    }
     if (result.error || !result.identifier) {
       setPending(false);
       setError(result.error);

@@ -22,7 +22,7 @@ export default async function NewCreditNotePage({ searchParams }: { searchParams
       <Link href="/credit-notes" className="mb-3 inline-flex items-center gap-1.5 text-[12px] font-bold text-ink-faint hover:text-ink">
         <ArrowLeft size={13} /> Credit notes
       </Link>
-      <h1 className="flex items-center gap-2 text-[18px] sm:text-[20px] font-extrabold text-ink">
+      <h1 className="flex items-center gap-2 text-[16px] sm:text-[17px] font-extrabold text-ink">
         <FileMinus size={18} className="text-brand" /> New credit note
       </h1>
       <p className="mb-4 mt-1 text-[12px] text-ink-faint">Which invoice is it for? Goods returned or a price corrected are always credited against the invoice they were billed on.</p>

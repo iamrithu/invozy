@@ -12,7 +12,7 @@ export default async function CompanyPage() {
   return (
     <div>
       <div className="mb-4">
-        <h1 className="flex items-center gap-2 text-[18px] font-extrabold text-ink sm:text-[20px]">
+        <h1 className="flex items-center gap-2 text-[16px] font-extrabold text-ink sm:text-[17px]">
           <Building2 size={18} className="text-brand" /> Company profile
         </h1>
         <p className="mt-1 text-[12px] text-ink-faint">Everything here prints on your invoices. Tap Edit on any section to change it in place.</p>

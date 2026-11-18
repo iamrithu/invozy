@@ -115,7 +115,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     <div className="space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[20px] font-extrabold text-ink">{greeting()}</h1>
+          <h1 className="text-[17px] font-extrabold text-ink">{greeting()}</h1>
           <p className="mt-0.5 text-[12px] text-ink-faint">
             {company.name} · {todayText}
           </p>
@@ -436,7 +436,7 @@ function GettingStarted() {
   const steps = [
     { href: '/products', icon: Package, label: 'Add a product', desc: 'Your catalog — what you sell, and at what price' },
     { href: '/customers', icon: Users, label: 'Add a customer', desc: "Who you're billing, and their GST state" },
-    { href: '/invoices/new', icon: Receipt, label: 'Create your first invoice', desc: 'Pick a customer, add products, and send it' },
+    { href: '/orders/new', icon: Receipt, label: 'Take your first order', desc: 'Pick a customer and add products; the invoice is generated from the order' },
   ];
   return (
     <div className="rounded-xl2 border border-brand bg-brand-light p-4">

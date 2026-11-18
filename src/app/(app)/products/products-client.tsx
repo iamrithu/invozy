@@ -63,7 +63,8 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
   const searchParams = useSearchParams();
   const [searchInput, setSearchInput] = useState('');
   const search = useDebouncedValue(searchInput, 300);
-  const [category, setCategory] = useState('all');
+  // Arriving from Categories ("N products" link) opens filtered.
+  const [category, setCategory] = useState(() => searchParams.get('category') || 'all');
   const [liveOnly, setLiveOnly] = useState(false);
   const [sort, setSort] = useState<ProductSort>('name');
   const [page, setPage] = useState(1);
@@ -152,10 +153,10 @@ export function ProductsClient({ initialData }: { initialData: { items: Product[
     <div>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="flex items-center gap-2 text-[18px] sm:text-[20px] font-extrabold text-ink">
+          <h1 className="flex items-center gap-2 text-[16px] sm:text-[17px] font-extrabold text-ink">
             <Package size={18} className="text-brand" /> Products
           </h1>
-          <p className="mt-1 text-[12px] text-ink-faint">Your catalog of ice products, prices and units — what shows up when building an invoice.</p>
+          <p className="mt-1 text-[12px] text-ink-faint">Your catalog of ice products, prices and units — what you pick from when taking an order.</p>
         </div>
         <Button onClick={() => setAddOpen(true)}>
           <Plus size={13} /> Add product

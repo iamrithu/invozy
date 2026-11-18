@@ -7,7 +7,7 @@ import { buildMonthlyReportPdf } from './monthly-report-pdf';
 import { isModuleEnabled } from './modules';
 import { effectiveDisabledModules, ENTITLEMENT_SELECT, subscriptionView } from './entitlements';
 import { buildBackup, storeBackup } from './backup';
-import { sweepOrphanUploads } from './uploads';
+import { deleteUploadedImage, sweepOrphanUploads } from './uploads';
 import { APP_NAME } from './brand';
 
 // What the scheduled jobs do for ONE company. Each runs inside
@@ -54,7 +54,24 @@ export async function runDailyJob(origin: string, today: string): Promise<{ sent
     sent = recipients.length - failed;
   }
   const reminder = await sendSubscriptionReminder(company, owners.map((o) => o.email), origin);
+  await housekeeping().catch((e) => console.error('Daily housekeeping failed', e));
   return { sent, failed, reminder };
+}
+
+const TRASH_DAYS = 30;
+
+/** Tidy-ups that run once a day per company. Categories that have sat in
+ * Trash for 30 days are deleted for good (only when no product uses them),
+ * which frees their slugs. Their images go too. */
+async function housekeeping(): Promise<void> {
+  const cutoff = new Date(Date.now() - TRASH_DAYS * 24 * 3600 * 1000);
+  const stale = await prisma.category.findMany({
+    where: { deletedAt: { lt: cutoff }, products: { none: {} } },
+    select: { id: true, imageUrl: true },
+  });
+  if (!stale.length) return;
+  await prisma.category.deleteMany({ where: { id: { in: stale.map((c) => c.id) } } });
+  await Promise.all(stale.filter((c) => c.imageUrl).map((c) => deleteUploadedImage(c.imageUrl!)));
 }
 
 const REMINDER_KEY = 'billing.lastReminder';

@@ -109,7 +109,7 @@ body {
 }
 
 /* The invoice builder (src/app/(app)/invoices/new/builder-client.tsx) opts
-   out of the shared app shell's centered max-w-[1220px] column (see
+   out of the shared app shell's centered max-w-[1280px] column (see
    (app)/layout.tsx) — it needs the full content width beside the sidebar so
    the left "bill to / add products" panel can stay narrow while the
    invoice sheet itself gets real room, unlike every other page which keeps
@@ -301,6 +301,15 @@ main:has(> .invoice-builder-root) {
   font-family: var(--font-plex-sans), 'IBM Plex Sans', system-ui, sans-serif !important;
   font-variant-numeric: tabular-nums;
 }
+/* Every other printed document (credit notes, receipts, statements, the
+   monthly report, the loading sheet: src/app/print, `.print-doc`) stays on
+   IBM Plex Sans while the screens use Geist (src/app/layout.tsx).
+   Re-pointing --font-ui here switches any `font-sans` inside as well;
+   `font-mono` stays Plex Mono. */
+.print-doc {
+  --font-ui: var(--font-plex-sans);
+  font-family: var(--font-plex-sans), 'IBM Plex Sans', system-ui, sans-serif;
+}
 
 /* CLEAN template (invoice-sheet-classic.tsx variant="clean"): one weight
    and one family for every piece of text, hierarchy by size alone — so no
@@ -373,27 +382,107 @@ main:has(> .invoice-builder-root) {
 }
 
 /* ── Public landing page (src/components/landing/landing-page.tsx) ──────
-   Everything is scoped to `.landing`. Motion is CSS only and switched off
-   entirely under prefers-reduced-motion; the scroll reveals only run where
-   the browser supports scroll-driven animations — elsewhere the content
-   simply shows. */
-.landing-gradient-text {
-  background: linear-gradient(100deg, hsl(var(--brand)) 0%, #f97316 55%, #ec4899 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+   Motion is CSS plus a small observer (LandingMotion in
+   landing-interactive.tsx) and is switched off entirely under
+   prefers-reduced-motion. */
+/* Faint square grid behind the hero, fading out towards the fold. */
+.landing-grid {
+  background-image: linear-gradient(rgb(15 17 21 / 0.05) 1px, transparent 1px), linear-gradient(90deg, rgb(15 17 21 / 0.05) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 60%);
+  mask-image: linear-gradient(180deg, #000 0%, transparent 60%);
 }
-.landing-dots {
-  background-image: radial-gradient(hsl(var(--ink) / 0.09) 1px, transparent 1.2px);
-  background-size: 22px 22px;
+/* Dot texture for dark panels; sits under the panel's own content. */
+.landing-dots-dark {
+  background-image: radial-gradient(rgb(255 255 255 / 0.07) 1px, transparent 1.3px);
+  background-size: 18px 18px;
 }
-.landing-dots-light {
-  background-image: radial-gradient(rgb(255 255 255 / 0.35) 1px, transparent 1.2px);
-  background-size: 22px 22px;
+/* Dot texture for the brand call-to-action panel. */
+.landing-dots-white {
+  background-image: radial-gradient(rgb(255 255 255 / 0.2) 1px, transparent 1.3px);
+  background-size: 20px 20px;
+  -webkit-mask-image: linear-gradient(110deg, transparent 30%, #000);
+  mask-image: linear-gradient(110deg, transparent 30%, #000);
 }
-.landing-cta {
-  background: radial-gradient(120% 140% at 0% 0%, #f97316 0%, transparent 45%), radial-gradient(120% 140% at 100% 100%, #db2777 0%, transparent 50%),
-    hsl(var(--brand-dark));
+/* The product shot leans back like a screen on a desk, and straightens as
+   it scrolls into view (LandingMotion sets --tilt). */
+.landing-tilt {
+  transform: perspective(2400px) rotateX(var(--tilt, 6deg));
+  transform-origin: 50% 0%;
+  transition: transform 0.15s linear;
+}
+/* Hero headline words: each sits in its own clipping box so it can rise
+   into view (the padding keeps descenders from being cut). */
+.landing-word {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: bottom;
+  padding-bottom: 0.12em;
+  margin-bottom: -0.12em;
+}
+.landing-word > span {
+  display: inline-block;
+}
+/* Edges of the "Built for" marquee fade out. */
+.landing-marquee-mask {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
+}
+
+/* Cards: hover lift/shadow timing (the lift itself is a Tailwind class). */
+.landing-card {
+  transition-property: transform, box-shadow, border-color, background-color;
+  transition-duration: 0.5s, 0.5s, 0.3s, 0.3s;
+  transition-timing-function: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+/* Pointer spotlight: a soft glow under the content plus a thin light on the
+   border, both centred on the cursor. LandingMotion sets --mx/--my; dark
+   cards override --spot with a light tint. */
+.landing-spot {
+  position: relative;
+  isolation: isolate;
+  --spot: hsl(var(--brand) / 0.1);
+  --spot-edge: hsl(var(--brand) / 0.6);
+}
+.landing-spot::before,
+.landing-spot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+.landing-spot::after {
+  z-index: -1;
+  background: radial-gradient(440px circle at var(--mx, 50%) var(--my, 0%), var(--spot), transparent 55%);
+}
+.landing-spot::before {
+  z-index: 2;
+  padding: 1.5px;
+  background: radial-gradient(260px circle at var(--mx, 50%) var(--my, 0%), var(--spot-edge), transparent 65%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+.landing-spot:hover::before,
+.landing-spot:hover::after {
+  opacity: 1;
+}
+/* A light sweep across primary buttons on hover. */
+.landing-shine {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.landing-shine::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 30%, rgb(255 255 255 / 0.35) 50%, transparent 70%);
+  translate: -120% 0;
 }
 /* A QR-like pattern for mock-ups (not a scannable code). */
 .landing-qr {
@@ -404,63 +493,263 @@ main:has(> .invoice-builder-root) {
     repeating-conic-gradient(#111827 0 25%, #ffffff 0 50%) 0 0 / 18% 18%;
   background-color: #fff;
 }
-.landing-marquee-mask {
-  mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
-}
 
+/* All motion below is skipped under prefers-reduced-motion. Entrance and
+   float animations use the `translate`/`scale` properties, never `transform`,
+   so a finished animation can't pin the transform and cancel a hover lift. */
 @media (prefers-reduced-motion: no-preference) {
-  @keyframes landing-rise {
-    from { opacity: 0; transform: translateY(18px); }
-    to { opacity: 1; transform: none; }
+  html:has(.landing) {
+    scroll-behavior: smooth;
   }
-  @keyframes landing-float {
-    from { transform: translateY(0); }
-    to { transform: translateY(-10px); }
+
+  @keyframes landing-rise {
+    from { opacity: 0; translate: 0 22px; }
+    to { opacity: 1; translate: 0 0; }
   }
   @keyframes landing-blob {
     0% { transform: translate(0, 0) scale(1); }
     50% { transform: translate(30px, -20px) scale(1.08); }
     100% { transform: translate(-20px, 15px) scale(0.96); }
   }
-  @keyframes landing-marquee {
-    to { transform: translateX(calc(-50% - 6px)); }
-  }
-  @keyframes landing-grow {
-    from { transform: scaleX(0); }
-  }
-  @keyframes landing-bar {
-    from { transform: scaleY(0.1); }
+  @keyframes landing-float {
+    from { translate: 0 0; }
+    to { translate: 0 -12px; }
   }
   @keyframes landing-draw {
     from { stroke-dashoffset: 1; }
     to { stroke-dashoffset: 0; }
   }
-  .landing-rise { animation: landing-rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-  .landing-rise-late { animation: landing-rise 0.9s 0.15s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-  .landing-float { animation: landing-float 3.2s ease-in-out infinite alternate; }
-  .landing-float-2 { animation-duration: 3.8s; animation-delay: -1.2s; }
-  .landing-float-3 { animation-duration: 4.4s; animation-delay: -2.1s; }
+  @keyframes landing-marquee {
+    to { transform: translateX(-50%); }
+  }
+  @keyframes landing-bar {
+    from { scale: 1 0.08; }
+    to { scale: 1 1; }
+  }
+  @keyframes landing-pop {
+    from { opacity: 0; translate: 0 12px; scale: 0.98; }
+    to { opacity: 1; translate: 0 0; scale: 1; }
+  }
+  @keyframes landing-progress {
+    from { scale: 0 1; }
+    to { scale: 1 1; }
+  }
+
+  .landing-rise { animation: landing-rise 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .landing-rise-late { animation: landing-rise 1s 0.3s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
   .landing-blob { animation: landing-blob 16s ease-in-out infinite alternate; }
   .landing-blob-2 { animation-duration: 20s; animation-delay: -6s; }
   .landing-blob-3 { animation-duration: 18s; animation-delay: -11s; }
-  .landing-marquee { animation: landing-marquee 42s linear infinite; }
+  .landing-float { animation: landing-float 3.6s ease-in-out infinite alternate; }
+  .landing-float-2 { animation-duration: 4.3s; animation-delay: -1.5s; }
+  .landing-float-3 { animation-duration: 5s; animation-delay: -2.7s; }
+  .landing-draw { stroke-dasharray: 1; animation: landing-draw 1.1s 0.8s cubic-bezier(0.6, 0, 0.2, 1) both; }
+  .landing-marquee { animation: landing-marquee 38s linear infinite; }
   .landing-marquee:hover { animation-play-state: paused; }
-  .landing-fill { transform-origin: left; animation: landing-grow 1.4s 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-  .landing-grow { transform-origin: left; animation: landing-grow 1.1s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-  .landing-bar { transform-origin: bottom; animation: landing-bar 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-  .landing-draw { stroke-dasharray: 1; animation: landing-draw 1.8s 0.3s ease-out both; }
+  .landing-bar { transform-origin: bottom; animation: landing-bar 1s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .landing-pop { animation: landing-pop 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .landing-progress { transform-origin: left; animation: landing-progress var(--dur, 6s) linear both; }
+  .landing-shine::after { transition: translate 0.75s cubic-bezier(0.2, 0.7, 0.2, 1); }
+  .landing-shine:hover::after { translate: 120% 0; }
+  .landing details[open] > .landing-answer { animation: landing-pop 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 
-  /* `translate`, not `transform`: a finished reveal must not pin the
-     transform and cancel the cards' hover lift. */
-  @keyframes landing-reveal {
-    from { opacity: 0; translate: 0 22px; }
+  /* Hero headline: each word rises out of its own mask. */
+  @keyframes landing-word-up {
+    from { translate: 0 105%; }
+    to { translate: 0 0; }
+  }
+  .landing-word > span { animation: landing-word-up 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+
+  /* A dot runs along the order-to-invoice arrow. */
+  @keyframes landing-flow {
+    0% { translate: 0 0; opacity: 0; }
+    15%, 80% { opacity: 1; }
+    100% { translate: 30px 0; opacity: 0; }
+  }
+  .landing-flow-dot { animation: landing-flow 1.6s cubic-bezier(0.45, 0, 0.25, 1) infinite; }
+
+  /* Hero layers ease after the pointer (HeroParallax); the floating header's
+     section pill slides between links. */
+  .landing [data-parallax] { transition: transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1); }
+  .landing-nav-pill { transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), width 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease; }
+
+  /* FAQ answers open and close with a smooth height change where the
+     browser can animate details content; elsewhere they simply appear. */
+  .landing details {
+    interpolate-size: allow-keywords;
+  }
+  .landing details::details-content {
+    block-size: 0;
+    overflow-y: clip;
+    transition: block-size 0.4s cubic-bezier(0.2, 0.7, 0.2, 1), content-visibility 0.4s allow-discrete;
+  }
+  .landing details[open]::details-content {
+    block-size: auto;
+  }
+
+  /* Scroll reveals. LandingMotion sets data-motion on the page, then data-in
+     on each .landing-reveal as it enters the viewport — so without
+     JavaScript nothing is ever hidden. Children of .landing-stagger arrive
+     one after another (--d). */
+  .landing[data-motion] .landing-reveal {
+    opacity: 0;
+    translate: 0 36px;
+    scale: 0.97;
+    transition-property: opacity, translate, scale, transform, box-shadow, border-color, background-color;
+    transition-duration: 0.9s, 0.9s, 0.9s, 0.5s, 0.5s, 0.3s, 0.3s;
+    transition-timing-function: cubic-bezier(0.2, 0.7, 0.2, 1);
+    transition-delay: var(--d, 0ms), var(--d, 0ms), var(--d, 0ms), 0s, 0s, 0s, 0s;
+  }
+  .landing[data-motion] .landing-reveal[data-in] {
+    opacity: 1;
+    translate: 0 0;
+    scale: 1;
+  }
+  .landing-stagger > :nth-child(2) { --d: 70ms; }
+  .landing-stagger > :nth-child(3) { --d: 140ms; }
+  .landing-stagger > :nth-child(4) { --d: 210ms; }
+  .landing-stagger > :nth-child(5) { --d: 280ms; }
+  .landing-stagger > :nth-child(6) { --d: 350ms; }
+  .landing-stagger > :nth-child(7) { --d: 420ms; }
+  .landing-stagger > :nth-child(8) { --d: 490ms; }
+  .landing-stagger > :nth-child(9) { --d: 560ms; }
+  .landing-stagger > :nth-child(10) { --d: 630ms; }
+  /* Progress bars inside a card fill once the card is in view. */
+  .landing[data-motion] .landing-reveal .landing-fill {
+    scale: 0 1;
+    transform-origin: left;
+    transition: scale 1.2s cubic-bezier(0.2, 0.7, 0.2, 1) calc(var(--d, 0ms) + 300ms);
+  }
+  .landing[data-motion] .landing-reveal[data-in] .landing-fill {
+    scale: 1 1;
+  }
+}
+
+/* ── All features gallery (FeatureGallery in landing-interactive.tsx) ────
+   A dark stage holding a row of group cards. On wide screens the stage pins
+   while scrolling moves the row sideways; elsewhere the row swipes. The
+   component sets --fg-inset/--fg-radius on the stage (it widens to the screen
+   edge while it fills the screen) and --p/--a on each card (signed and plain
+   distance from the focus point, 0 to 1), plus data-seen and data-active. */
+.landing-fg-stage {
+  clip-path: inset(0 var(--fg-inset, 12px) round var(--fg-radius, 32px));
+}
+@media (min-width: 640px) {
+  .landing-fg-stage {
+    clip-path: inset(0 var(--fg-inset, 24px) round var(--fg-radius, 40px));
+  }
+}
+/* The first card lines up with the page's content column. */
+.landing-fg-track {
+  padding-inline: max(24px, calc((100% - 1240px) / 2 + 24px));
+  scroll-padding-inline: max(24px, calc((100% - 1240px) / 2 + 24px));
+  scrollbar-width: none;
+}
+.landing-fg-rail {
+  scrollbar-width: none;
+}
+.landing-fg-track::-webkit-scrollbar,
+.landing-fg-rail::-webkit-scrollbar {
+  display: none;
+}
+/* Dot texture in each card's header, fading towards the bottom right. */
+.landing-fg-dots {
+  background-image: radial-gradient(rgb(15 17 21 / 0.1) 1px, transparent 1.3px);
+  background-size: 14px 14px;
+  -webkit-mask-image: linear-gradient(200deg, #000 10%, transparent 75%);
+  mask-image: linear-gradient(200deg, #000 10%, transparent 75%);
+}
+/* The big outlined group number. */
+.landing-fg-num {
+  color: transparent;
+  -webkit-text-stroke: 2px var(--fg-accent);
+  opacity: 0.2;
+}
+/* Cards away from the focus point are shaded (not faded: a see-through white
+   card on the dark stage turns a muddy grey). The component sets --a. */
+.landing-fg-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #0f1115;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes landing-fg-wiggle {
+    0% { rotate: 0deg; scale: 1; }
+    30% { rotate: -12deg; scale: 1.18; }
+    55% { rotate: 8deg; scale: 1.08; }
+    80% { rotate: -3deg; scale: 1.02; }
+    100% { rotate: 0deg; scale: 1; }
+  }
+  @keyframes landing-fg-bob {
+    from { translate: 0 0; rotate: -7deg; }
+    to { translate: 0 -10px; rotate: 7deg; }
+  }
+  @keyframes landing-fg-nudge {
+    0%, 100% { translate: 0 0; }
+    50% { translate: 6px 0; }
+  }
+  @keyframes landing-fg-word {
+    from { opacity: 0; translate: 0 40px; }
     to { opacity: 1; translate: 0 0; }
   }
-  @supports (animation-timeline: view()) {
-    .landing-reveal {
-      animation: landing-reveal linear both;
-      animation-timeline: view();
-      animation-range: entry 0% entry 40%;
-    }
+
+  .landing-fg-glow { transition: opacity 0.9s ease; }
+  .landing-fg-pill { transition: transform 0.55s cubic-bezier(0.2, 0.8, 0.2, 1), width 0.55s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease; }
+  .landing-fg-nudge { animation: landing-fg-nudge 1.4s ease-in-out infinite; }
+  .landing-fg-watermark { animation: landing-fg-word 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .landing-fg-float { animation: landing-fg-bob 3.6s ease-in-out infinite alternate; }
+
+  /* Cards turn gently towards the centre and settle as they reach it; the
+     outlined number drifts the other way. --p/--a are updated every frame
+     from the scroll position, so these carry no transition: one would make
+     the cards trail behind the row. No vertical drop either, so the row keeps
+     one clean baseline. */
+  .landing-fg-ready .landing-fg-card {
+    transform: perspective(1800px) rotateY(calc(var(--p, 0) * -9deg)) scale(calc(1 - var(--a, 0) * 0.07));
+    transition: box-shadow 0.6s ease;
+  }
+  .landing-fg-ready .landing-fg-card::after {
+    opacity: calc(var(--a, 0) * 0.32);
+  }
+  .landing-fg-ready .landing-fg-card[data-active] {
+    box-shadow: 0 40px 90px -36px var(--fg-glow), 0 30px 60px -30px rgb(0 0 0 / 0.7);
+  }
+  .landing-fg-ready .landing-fg-num {
+    translate: calc(var(--p, 0) * -40px) 0;
+  }
+  .landing-fg-ready .landing-fg-card[data-active] .landing-fg-icon {
+    animation: landing-fg-wiggle 0.9s cubic-bezier(0.3, 0.7, 0.3, 1) both;
+  }
+
+  /* Features slide in, one after another, the first time a card is seen,
+     and each icon springs in just behind its row. */
+  .landing-fg-ready .landing-fg-item {
+    opacity: 0;
+    translate: 26px 0;
+    transition-property: opacity, translate, background-color;
+    transition-duration: 0.6s, 0.7s, 0.3s;
+    transition-timing-function: cubic-bezier(0.2, 0.7, 0.2, 1);
+    transition-delay: calc(var(--i, 0) * 75ms + 120ms), calc(var(--i, 0) * 75ms + 120ms), 0s;
+  }
+  .landing-fg-ready [data-seen] .landing-fg-item {
+    opacity: 1;
+    translate: 0 0;
+  }
+  .landing-fg-ready .landing-fg-chip {
+    scale: 0.3;
+    rotate: -25deg;
+    transition-property: scale, rotate, transform;
+    transition-duration: 0.65s, 0.65s, 0.3s;
+    transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+    transition-delay: calc(var(--i, 0) * 75ms + 260ms), calc(var(--i, 0) * 75ms + 260ms), 0s;
+  }
+  .landing-fg-ready [data-seen] .landing-fg-chip {
+    scale: 1;
+    rotate: 0deg;
   }
 }

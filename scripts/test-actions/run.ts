@@ -370,6 +370,9 @@ async function main() {
   check('PDF discount switches save from the Company page', !pdfSave.error && !pdfRow.pdfShowItemDiscount && pdfRow.pdfShowBillDiscount && pdfRow.nextInvoiceNo === 42, { pdfSave, item: pdfRow.pdfShowItemDiscount, bill: pdfRow.pdfShowBillDiscount });
 
 
+  // ---- commerce: categories, orders, coupons, web store (commerce.ts)
+  await (await import('./commerce')).commerceTests({ prisma, check, asOwner, asStaff, form });
+
   // ---- tenancy: company B sees none of A's data and can't change any of it
   asOwner();
   const aInvoice = await prisma.invoice.findFirstOrThrow({ where: { status: { not: 'DRAFT' } }, orderBy: { createdAt: 'asc' } });

@@ -2,37 +2,18 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  LayoutDashboard,
-  Building2,
-  Package,
-  Users,
-  Receipt,
-  BarChart3,
-  Plus,
-  Search,
-  Boxes,
-  ShoppingCart,
-  Truck,
-  FileMinus,
-  Activity as ActivityIcon,
-  UserCog,
-  ClipboardList,
-} from 'lucide-react';
+import { Building2, Package, Users, Plus, Receipt, Search, ShoppingCart, UserCog, ClipboardList, Zap } from 'lucide-react';
 import { useGlobalSearch } from '@/hooks/use-global-search';
 import { fmtInr } from '@/lib/gst';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useModules } from '@/components/modules/modules-provider';
+import { useVisibleNav } from '@/components/shell/use-nav';
 
 type Action = { key: string; name: string; hint: string; icon: React.ReactNode; run: () => void };
 
-/** Command keys that open a module's page — hidden when the module is off. */
+/** Command keys that open a module's page — hidden when the module is off.
+ * Page shortcuts come from the shared nav (src/lib/nav.ts), already filtered. */
 const MODULE_PATH_BY_ACTION: Record<string, string> = {
-  inventory: '/inventory',
-  purchases: '/purchases',
-  suppliers: '/suppliers',
-  'credit-notes': '/credit-notes',
-  reports: '/reports',
   'loading-sheet': '/reports',
   team: '/team',
   'new-purchase': '/purchases',
@@ -65,7 +46,7 @@ export function CommandPalette({
         setOpen(false);
       } else if (!open && e.key.toLowerCase() === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target)) {
         e.preventDefault();
-        router.push('/invoices/new');
+        router.push('/orders/new');
       }
     }
     document.addEventListener('keydown', onKeyDown);
@@ -83,22 +64,23 @@ export function CommandPalette({
   useEffect(() => setActiveIndex(0), [query]);
 
   const modules = useModules();
-  const actions: Action[] = useMemo(
-    () => [
-      { key: 'dashboard', name: 'Go to Dashboard', hint: 'Page', icon: <LayoutDashboard size={15} />, run: () => router.push('/dashboard') },
-      { key: 'invoices', name: 'Go to Invoices', hint: 'Page', icon: <Receipt size={15} />, run: () => router.push('/invoices') },
-      { key: 'customers', name: 'Go to Customers', hint: 'Page', icon: <Users size={15} />, run: () => router.push('/customers') },
-      { key: 'products', name: 'Go to Products', hint: 'Page', icon: <Package size={15} />, run: () => router.push('/products') },
-      { key: 'inventory', name: 'Go to Inventory', hint: 'Page', icon: <Boxes size={15} />, run: () => router.push('/inventory') },
-      { key: 'purchases', name: 'Go to Purchases', hint: 'Page', icon: <ShoppingCart size={15} />, run: () => router.push('/purchases') },
-      { key: 'suppliers', name: 'Go to Suppliers', hint: 'Page', icon: <Truck size={15} />, run: () => router.push('/suppliers') },
-      { key: 'credit-notes', name: 'Go to Credit notes', hint: 'Page', icon: <FileMinus size={15} />, run: () => router.push('/credit-notes') },
-      { key: 'reports', name: 'Go to Reports', hint: 'Page', icon: <BarChart3 size={15} />, run: () => router.push('/reports') },
+  const nav = useVisibleNav();
+  const actions: Action[] = useMemo(() => {
+    // Every sidebar page, in sidebar order. Planned ones say so.
+    const pages: Action[] = [...nav.groups.flatMap((g) => g.items), nav.settings].map((item) => ({
+      key: `page:${item.href}`,
+      name: `Go to ${item.label}`,
+      hint: item.soon ? 'Coming soon' : 'Page',
+      icon: <item.icon size={15} />,
+      run: () => router.push(item.href),
+    }));
+    const more: Action[] = [
       { key: 'loading-sheet', name: "Today's loading sheet", hint: 'Page', icon: <ClipboardList size={15} />, run: () => router.push('/reports/loading-sheet') },
-      { key: 'company', name: 'Go to Company', hint: 'Page', icon: <Building2 size={15} />, run: () => router.push('/company') },
-      { key: 'activity', name: 'Go to Activity log', hint: 'Page', icon: <ActivityIcon size={15} />, run: () => router.push('/activity') },
-      { key: 'team', name: 'Go to Team', hint: 'Page', icon: <UserCog size={15} />, run: () => router.push('/team') },
-      { key: 'new-invoice', name: 'New invoice', hint: 'Shortcut', icon: <Plus size={15} />, run: () => router.push('/invoices/new') },
+      { key: 'company', name: 'Go to Company profile', hint: 'Settings', icon: <Building2 size={15} />, run: () => router.push('/company') },
+      { key: 'team', name: 'Go to Team & logins', hint: 'Settings', icon: <UserCog size={15} />, run: () => router.push('/team') },
+      { key: 'new-order', name: 'New order', hint: 'Shortcut N', icon: <Plus size={15} />, run: () => router.push('/orders/new') },
+      { key: 'quick-sale', name: 'Quick sale (counter)', hint: 'Action', icon: <Zap size={15} />, run: () => router.push('/orders/new?quick=1') },
+      { key: 'new-invoice', name: 'Invoice without an order', hint: 'Action', icon: <Receipt size={15} />, run: () => router.push('/invoices/new') },
       { key: 'new-purchase', name: 'New purchase', hint: 'Action', icon: <ShoppingCart size={15} />, run: () => router.push('/purchases/new') },
       { key: 'add-product', name: 'Add product', hint: 'Action', icon: <Package size={15} />, run: onOpenQuickAddProduct },
       { key: 'add-customer', name: 'Add customer', hint: 'Action', icon: <Users size={15} />, run: onOpenQuickAddCustomer },
@@ -106,9 +88,9 @@ export function CommandPalette({
       // Hide pages of modules switched off for this company (src/lib/modules.ts).
       const path = MODULE_PATH_BY_ACTION[a.key];
       return !path || modules.pathEnabled(path);
-    }),
-    [router, onOpenQuickAddProduct, onOpenQuickAddCustomer, modules]
-  );
+    });
+    return [...pages, ...more];
+  }, [router, onOpenQuickAddProduct, onOpenQuickAddCustomer, modules, nav]);
 
   const q = query.trim().toLowerCase();
   const matchedActions = actions.filter((a) => !q || a.name.toLowerCase().includes(q));

@@ -33,10 +33,10 @@ export const PLANS: Record<PlanKey, Plan> = {
   growth: {
     key: 'growth',
     label: 'Growth',
-    blurb: 'Adds inventory, purchases, reports and exports for a growing business.',
+    blurb: 'Adds inventory, purchases, reports, coupons and an online store for a growing business.',
     monthly: 999,
     yearly: 9990,
-    modules: ['inventory', 'purchases', 'returns', 'reports', 'team'],
+    modules: ['inventory', 'purchases', 'returns', 'reports', 'team', 'marketing', 'storefront'],
     maxUsers: 5,
     maxInvoicesPerMonth: 1000,
   },

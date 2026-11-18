@@ -96,6 +96,12 @@ npm run db:deploy           # applies prisma/migrations
 npm run dev
 ```
 
+If `.env` points at a real (production) database, develop against a local one instead: put
+`DATABASE_URL="postgresql://<you>@localhost:5432/invozy_dev"` and `BLOB_READ_WRITE_TOKEN=""` in
+`.env.local` (git-ignored; `next dev` prefers it over `.env`), then `npm run db:deploy:local` and
+`npm run db:seed` with that URL. New code against an un-migrated database fails with "The column … does
+not exist".
+
 Then either sign up at `/signup`, add a company from `/admin`, or from the command line:
 
 ```bash

@@ -8,10 +8,12 @@ import { istDayRangeUtc, todayIst } from './dates';
 // Reading, editing, recording payments and exporting always keep working —
 // a lapsed subscription never holds a business's own data hostage.
 
-export type Creatable = 'invoice' | 'customer' | 'product' | 'purchase' | 'credit note' | 'supplier' | 'login';
+export type Creatable = 'invoice' | 'order' | 'coupon' | 'customer' | 'product' | 'purchase' | 'credit note' | 'supplier' | 'login';
 
 const NOUN: Record<Creatable, string> = {
   invoice: 'invoices',
+  order: 'orders',
+  coupon: 'coupons',
   customer: 'customers',
   product: 'products',
   purchase: 'purchases',

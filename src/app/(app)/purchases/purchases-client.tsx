@@ -70,7 +70,7 @@ export function PurchasesClient({
     <div>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="flex items-center gap-2 text-[18px] sm:text-[20px] font-extrabold text-ink">
+          <h1 className="flex items-center gap-2 text-[16px] sm:text-[17px] font-extrabold text-ink">
             <ShoppingCart size={18} className="text-brand" /> Purchases
           </h1>
           <p className="mt-1 text-[12px] text-ink-faint">Supplier bills. Each one adds its products to stock and records the input GST.</p>

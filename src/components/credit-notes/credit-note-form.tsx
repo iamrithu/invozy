@@ -163,7 +163,7 @@ export function CreditNoteForm({ source, today }: { source: CreditNoteSource; to
         <ArrowLeft size={13} /> Credit notes
       </Link>
       <div className="mb-4">
-        <h1 className="flex items-center gap-2 text-[18px] font-extrabold text-ink sm:text-[20px]">
+        <h1 className="flex items-center gap-2 text-[16px] font-extrabold text-ink sm:text-[17px]">
           <FileMinus size={18} className="text-brand" /> {isRate ? 'Price correction' : 'Return goods'}
         </h1>
         <p className="mt-1 text-[12px] text-ink-faint">
